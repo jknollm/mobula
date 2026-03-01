@@ -1,0 +1,2 @@
+"""nCube demo package."""
+

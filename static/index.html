@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>nCube Demo</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <header class="panel">
+        <h1>nCube Demo</h1>
+        <p>
+          Local high-dimensional mock cube viewer
+          <code>(sample, pol, t, nu, x, y, z)</code>
+        </p>
+      </header>
+
+      <div id="workspaceRow" class="workspaceRow">
+      <section class="panel controls">
+        <div id="dataControlGroup" class="controlGroup">
+          <h2>Data</h2>
+          <label>
+            Dataset
+            <select id="datasetSelect"></select>
+          </label>
+          <label>
+            Color Map
+            <select id="colorMapSelect">
+              <option value="viridis">Viridis</option>
+              <option value="plasma">Plasma</option>
+              <option value="inferno">Inferno</option>
+              <option value="gray">Gray</option>
+              <option value="diverging">Diverging</option>
+              <option value="circular">Circular</option>
+            </select>
+          </label>
+          <label>
+            Color Range
+            <select id="colorRangeModeSelect">
+              <option value="none">None</option>
+              <option value="time">Time</option>
+              <option value="spectral">Spectral</option>
+              <option value="time_spectral">Time+Spectral</option>
+              <option value="space">Space</option>
+              <option value="full">Full</option>
+            </select>
+          </label>
+          <label>
+            Slice Backend
+            <select id="sliceBackendSelect">
+              <option value="auto" selected>Auto (GPU if beneficial)</option>
+              <option value="gpu">GPU (WebGL2)</option>
+              <option value="cpu">CPU</option>
+            </select>
+          </label>
+          <div class="toggleRow">
+            <span>Flux Scale</span>
+            <div class="miniGroup">
+              <button id="fluxScaleLinearBtn" class="tinyBtn" type="button">Linear</button>
+              <button id="fluxScaleLogBtn" class="tinyBtn" type="button">Log</button>
+            </div>
+          </div>
+          <div id="sampleModeBlock" class="sampleModeBlock">
+            <span class="sampleModeTitle">Sample Mode</span>
+            <div class="sampleModeRow">
+              <button id="sampleModeMeanBtn" class="tinyBtn" type="button">Mean</button>
+              <button id="sampleModeStdBtn" class="tinyBtn" type="button">STD</button>
+              <button id="sampleModeSamplesBtn" class="tinyBtn" type="button">Samples</button>
+              <button id="sampleModeRelBtn" class="tinyBtn" type="button">rel. uncertainty</button>
+            </div>
+            <div id="sampleMosaicControls" class="sampleMosaicControls">
+              <label>
+                # Samples
+                <select id="sampleGridCountSelect">
+                  <option value="1">1</option>
+                  <option value="4">4</option>
+                  <option value="9">9</option>
+                  <option value="16">16</option>
+                </select>
+              </label>
+              <button id="resampleSamplesBtn" class="tinyBtn" type="button">Resample</button>
+            </div>
+          </div>
+          <label id="playSpeedLabel">
+            Playback Speed
+            <select id="playSpeedSelect">
+              <option value="1">1 fps</option>
+              <option value="2">2 fps</option>
+              <option value="4">4 fps</option>
+              <option value="7">7 fps</option>
+              <option value="10">10 fps</option>
+              <option value="15">15 fps</option>
+              <option value="20">20 fps</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="spatialControlGroup" class="controlGroup">
+          <h2>Spatial</h2>
+          <div class="toggleRow">
+            <span>Spatial View</span>
+            <div class="miniGroup">
+              <button id="spatialSliceBtn" class="tinyBtn" type="button">Slice</button>
+              <button id="spatialVolumeBtn" class="tinyBtn" type="button">Volume</button>
+            </div>
+          </div>
+          <label id="planeLabel">
+            Plane
+            <select id="planeSelect">
+              <option value="xy">XY</option>
+              <option value="yz">YZ</option>
+              <option value="zx">ZX</option>
+            </select>
+          </label>
+          <div id="hiddenNavPanel" class="navPanel">
+            <div class="navTitle">
+              <span id="hiddenAxisTitle">Unused Spatial Axis</span>
+              <div class="navControlRow">
+                <span id="hiddenNavValue"></span>
+                <button id="hiddenPlayBtn" class="tinyBtn" type="button">Play</button>
+              </div>
+            </div>
+            <canvas id="hiddenNavCanvas" class="navCanvas" width="300" height="88"></canvas>
+            <div class="navAxisRange">
+              <span id="hiddenAxisMin"></span>
+              <span id="hiddenAxisMax"></span>
+            </div>
+          </div>
+          <div id="volumeRenderControls" class="volumeRenderControls">
+            <h3>Volume Render</h3>
+            <label>
+              Backend
+              <select id="volumeBackendSelect">
+                <option value="auto" selected>Auto (WebGL2)</option>
+                <option value="gpu">GPU (WebGL2)</option>
+                <option value="cpu">CPU</option>
+              </select>
+            </label>
+            <div id="volumeBackendStatus" class="volumeBackendStatus"></div>
+            <label>
+              Quality
+              <select id="volumeQualitySelect">
+                <option value="draft">Draft</option>
+                <option value="balanced" selected>Balanced</option>
+                <option value="fine">Fine</option>
+                <option value="ultra">Ultra</option>
+              </select>
+            </label>
+            <label>
+              Render Mode
+              <select id="volumeRenderModeSelect">
+                <option value="composite" selected>Composite</option>
+                <option value="mip">MIP</option>
+                <option value="minip">MinIP</option>
+                <option value="average">Average</option>
+                <option value="isosurface">Isosurface</option>
+              </select>
+            </label>
+            <label>
+              Transfer Function
+              <select id="volumeTfSelect">
+                <option value="linear" selected>Linear</option>
+                <option value="sqrt">Square Root</option>
+                <option value="square">Square</option>
+                <option value="sigmoid">Sigmoid</option>
+              </select>
+            </label>
+            <label>
+              <span>Opacity</span>
+              <span id="volumeOpacityValue"></span>
+              <input id="volumeOpacityRange" type="range" min="0.1" max="12" step="0.1" value="1.2" />
+            </label>
+            <label>
+              <span>Gamma</span>
+              <span id="volumeGammaValue"></span>
+              <input id="volumeGammaRange" type="range" min="0.5" max="1.8" step="0.05" value="0.9" />
+            </label>
+            <label>
+              <span>Cutoff</span>
+              <span id="volumeCutoffValue"></span>
+              <input id="volumeCutoffRange" type="range" min="0" max="0.45" step="0.01" value="0.06" />
+            </label>
+            <label>
+              <span>Clip Near</span>
+              <span id="volumeClipNearValue"></span>
+              <input id="volumeClipNearRange" type="range" min="0" max="0.85" step="0.01" value="0.00" />
+            </label>
+            <label>
+              <span>Clip Far</span>
+              <span id="volumeClipFarValue"></span>
+              <input id="volumeClipFarRange" type="range" min="0.15" max="1" step="0.01" value="1.00" />
+            </label>
+            <label id="volumeIsoThresholdLabel">
+              <span>Iso Threshold</span>
+              <span id="volumeIsoThresholdValue"></span>
+              <input id="volumeIsoThresholdRange" type="range" min="0.01" max="0.99" step="0.01" value="0.45" />
+            </label>
+          </div>
+        </div>
+
+        <div id="temporalControlGroup" class="controlGroup">
+          <h2>Temporal</h2>
+          <div class="navPanel">
+            <div class="navTitle">
+              <span>Time</span>
+              <div class="navControlRow">
+                <span id="tValue"></span>
+                <button id="timePlayBtn" class="tinyBtn" type="button">Play</button>
+              </div>
+            </div>
+            <canvas id="timeNavCanvas" class="navCanvas" width="300" height="88"></canvas>
+            <div class="navAxisRange">
+              <span id="timeAxisMin"></span>
+              <span id="timeAxisMax"></span>
+            </div>
+          </div>
+        </div>
+
+        <div id="spectralControlGroup" class="controlGroup">
+          <h2>Spectral</h2>
+          <div class="toggleRow">
+            <span>Multi-spectral</span>
+            <button id="multiSpectralBtn" class="tinyBtn" type="button">Off</button>
+          </div>
+          <div class="navPanel">
+            <div class="navTitle">
+              <span>Spectral</span>
+              <div class="navControlRow">
+                <span id="nuValue"></span>
+                <button id="freqPlayBtn" class="tinyBtn" type="button">Play</button>
+              </div>
+            </div>
+            <canvas id="freqNavCanvas" class="navCanvas" width="300" height="88"></canvas>
+            <div class="navAxisRange">
+              <span id="freqAxisMin"></span>
+              <span id="freqAxisMax"></span>
+            </div>
+          </div>
+        </div>
+
+        <div id="polarizationControlGroup" class="controlGroup">
+          <h2>Polarization</h2>
+          <div class="polJump">
+            <div class="pillRow stokesRow">
+              <button id="polBtn0" type="button" data-pol="0">I</button>
+              <button id="polBtn1" type="button" data-pol="1">Q</button>
+              <button id="polBtn2" type="button" data-pol="2">U</button>
+              <button id="polBtn3" type="button" data-pol="3">V</button>
+            </div>
+            <div class="evpaRow">
+              <button id="evpaToggleBtn" type="button">EVPA</button>
+              <label>
+                Density
+                <select id="evpaDensitySelect">
+                  <option value="4">Dense</option>
+                  <option value="8" selected>Medium</option>
+                  <option value="12">Sparse</option>
+                  <option value="16">Very Sparse</option>
+                </select>
+              </label>
+            </div>
+            <div class="evpaThresholdRow">
+              <label for="evpaIThresholdSelect">I threshold (% peak |I|)</label>
+              <select id="evpaIThresholdSelect">
+                <option value="0" selected>Off (0%)</option>
+                <option value="1">1%</option>
+                <option value="3">3%</option>
+                <option value="5">5%</option>
+                <option value="10">10%</option>
+              </select>
+            </div>
+            <div class="pillRow derivedRow">
+              <button id="fracPolBtn" type="button">Fractional Pol</button>
+              <button id="bfieldBtn" type="button">Magnetic Field Angle</button>
+              <button id="linPolBtn" type="button">Linear Pol</button>
+              <button id="circPolBtn" type="button">Circular Pol</button>
+            </div>
+            <div id="polValue" class="polCurrent"></div>
+          </div>
+        </div>
+      </section>
+
+      <div id="leftSplitter" class="colSplitter" role="separator" aria-orientation="vertical" aria-label="Resize left panel"></div>
+
+      <section class="panel viewer">
+        <canvas id="sliceCanvas" width="640" height="640"></canvas>
+        <div class="colorbarPanel">
+          <canvas id="colorbarCanvas" class="colorbarCanvas" width="640" height="26"></canvas>
+          <div class="colorbarLabels">
+            <span id="colorbarMin"></span>
+            <span id="colorbarMid"></span>
+            <span id="colorbarMax"></span>
+          </div>
+        </div>
+        <div class="viewerToolbar">
+          <div class="modeButtons">
+            <button id="modeInspectBtn" type="button">Inspect</button>
+            <button id="modeZoomBtn" type="button">Zoom</button>
+          </div>
+          <button id="resetZoomBtn" class="tinyBtn toolbarReset" type="button">Reset</button>
+        </div>
+      </section>
+
+      <div id="rightSplitter" class="colSplitter" role="separator" aria-orientation="vertical" aria-label="Resize right panel"></div>
+
+      <section id="metricsPanel" class="panel metrics">
+        <h2 id="metricsTitle">Selected Area Profiles</h2>
+        <p id="metricsHint">Click for point or drag for area.</p>
+        <div id="timeProfileBlock">
+          <h2>Time Flux Profile</h2>
+          <canvas id="timeProfileCanvas" class="profileCanvas" width="300" height="180"></canvas>
+        </div>
+        <div id="spectrumProfileBlock">
+          <h2>Spectral Flux Profile</h2>
+          <canvas id="spectrumProfileCanvas" class="profileCanvas" width="300" height="180"></canvas>
+        </div>
+        <div id="spatialProfileBlock">
+          <h2 id="spatialProfileTitle">Spatial Flux Profile</h2>
+          <canvas id="spatialProfileCanvas" class="profileCanvas" width="300" height="180"></canvas>
+        </div>
+      </section>
+      </div>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
