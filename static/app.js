@@ -1,5 +1,7 @@
 import { createGpuRenderers } from "./app_gpu.js";
 import { bindCanvasInteractions } from "./app_interactions.js";
+import { fetchJson, createRequestBuilders } from "./app_requests.js";
+import { resetForDatasetChange, resetForPlaneChange } from "./app_state_transitions.js";
 
 const PLANE_OPTIONS = {
   xy: { planeX: "x", planeY: "y", hidden: "z", label: "XY" },
@@ -1352,21 +1354,6 @@ function onVolumeRenderControlChange() {
   if (isVolumeMode()) rerenderVolumeFrame();
 }
 
-async function fetchJson(url, options) {
-  const res = await fetch(url, options);
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = await res.json();
-      detail = body.detail || detail;
-    } catch (_) {
-      // ignore parse failure
-    }
-    throw new Error(`${res.status}: ${detail}`);
-  }
-  return res.json();
-}
-
 function drawEvpaOverlay(viewRect, drawRect) {
   if (isVolumeMode()) return;
   if (!state.showEvpa || state.plane !== "xy") return;
@@ -1786,19 +1773,6 @@ function createRgbCanvas(width, height, redVals, greenVals, blueVals, payload = 
   return upscaleCanvasNearest(off, fullW, fullH);
 }
 
-function buildVolumeParams(sampleOverride, polOverride = state.values.pol, sampleModeOverride = state.sampleMode) {
-  return new URLSearchParams({
-    sample: String(sampleOverride !== undefined ? sampleOverride : state.values.sample),
-    pol: String(polOverride),
-    t: String(state.values.t),
-    nu: String(state.values.nu),
-    x: String(state.values.x),
-    y: String(state.values.y),
-    z: String(state.values.z),
-    sample_mode: sampleModeOverride,
-  });
-}
-
 function trilinearSample(values, nx, ny, nz, fx, fy, fz) {
   const x0 = Math.floor(fx);
   const y0 = Math.floor(fy);
@@ -1829,6 +1803,12 @@ function trilinearSample(values, nx, ny, nz, fx, fy, fz) {
   const c1 = c01 * (1 - ty) + c11 * ty;
   return c0 * (1 - tz) + c1 * tz;
 }
+
+const { buildVolumeParams, buildSliceParams, buildMultispectralParams, buildRangeParams, profileRequestBody } =
+  createRequestBuilders({
+    state,
+    planeDims,
+  });
 
 const { GpuSliceRenderer, GpuVolumeRenderer, GPU_VOLUME_MAX_STEPS } = createGpuRenderers({
   state,
@@ -2198,81 +2178,6 @@ function renderTileFrame(frameTiles, gridSize, selectedCoords, intensityStats, i
   layoutViewerCanvas();
   drawFrameAndOverlays();
   drawColorbar();
-}
-
-function buildSliceParams(
-  nuOverride,
-  sampleOverride,
-  polOverride = state.values.pol,
-  sampleModeOverride = state.sampleMode,
-  maxPixels = null
-) {
-  const p = planeDims();
-  const params = new URLSearchParams({
-    sample: String(sampleOverride !== undefined ? sampleOverride : state.values.sample),
-    pol: String(polOverride),
-    t: String(state.values.t),
-    nu: String(nuOverride !== undefined ? nuOverride : state.values.nu),
-    x: String(state.values.x),
-    y: String(state.values.y),
-    z: String(state.values.z),
-    sample_mode: sampleModeOverride,
-    plane_x: p.planeX,
-    plane_y: p.planeY,
-  });
-  if (maxPixels && Number.isFinite(maxPixels) && maxPixels > 0) {
-    params.set("max_pixels", String(Math.floor(maxPixels)));
-  }
-  return params;
-}
-
-function buildMultispectralParams(sampleOverride, maxPixels = null) {
-  const p = planeDims();
-  const params = new URLSearchParams({
-    sample: String(sampleOverride !== undefined ? sampleOverride : state.values.sample),
-    pol: String(state.values.pol),
-    t: String(state.values.t),
-    x: String(state.values.x),
-    y: String(state.values.y),
-    z: String(state.values.z),
-    sample_mode: state.sampleMode,
-    plane_x: p.planeX,
-    plane_y: p.planeY,
-  });
-  if (state.axisWindow.nu) {
-    params.set("nu0", String(state.axisWindow.nu.start));
-    params.set("nu1", String(state.axisWindow.nu.end + 1));
-  }
-  if (maxPixels && Number.isFinite(maxPixels) && maxPixels > 0) {
-    params.set("max_pixels", String(Math.floor(maxPixels)));
-  }
-  return params;
-}
-
-function buildRangeParams() {
-  const p = planeDims();
-  const params = new URLSearchParams({
-    sample: String(state.values.sample),
-    pol: String(state.values.pol),
-    t: String(state.values.t),
-    nu: String(state.values.nu),
-    x: String(state.values.x),
-    y: String(state.values.y),
-    z: String(state.values.z),
-    sample_mode: state.sampleMode,
-    range_mode: state.colorRangeMode,
-    plane_x: p.planeX,
-    plane_y: p.planeY,
-  });
-  if (state.axisWindow.t) {
-    params.set("t0", String(state.axisWindow.t.start));
-    params.set("t1", String(state.axisWindow.t.end + 1));
-  }
-  if (state.axisWindow.nu) {
-    params.set("nu0", String(state.axisWindow.nu.start));
-    params.set("nu1", String(state.axisWindow.nu.end + 1));
-  }
-  return params;
 }
 
 function activeIntensityRangeStats() {
@@ -3111,25 +3016,6 @@ function drawSelectionGraphs() {
   updateSpatialProfileTitle(hProfile);
 }
 
-function profileRequestBody(bounds) {
-  const p = planeDims();
-  return {
-    plane_x: p.planeX,
-    plane_y: p.planeY,
-    u0: bounds.u0,
-    u1: bounds.u1,
-    v0: bounds.v0,
-    v1: bounds.v1,
-    sample: state.values.sample,
-    pol: state.values.pol,
-    t: state.values.t,
-    nu: state.values.nu,
-    x: state.values.x,
-    y: state.values.y,
-    z: state.values.z,
-  };
-}
-
 async function refreshSelectionAnalytics() {
   if (!state.dataId || !state.selection) {
     state.profiles = null;
@@ -3434,23 +3320,7 @@ async function onResampleSamples() {
 async function onPlaneChange() {
   stopPlayback();
   state.plane = els.planeSelect.value;
-  state.selection = null;
-  state.selectionDrag = null;
-  state.zoomDrag = null;
-  state.volumeDrag = null;
-  state.profileZoomDrag = null;
-  state.profileZoom = {};
-  state.axisWindow = { t: null, nu: null };
-  state.evpaTicks = [];
-  state.evpaTicksBySample = {};
-  state.profiles = null;
-  state.viewProfiles = null;
-  state.fixedColorRange = null;
-  state.currentVolume = null;
-  state.currentVolumeTiles = null;
-  state.frameTiles = null;
-  state.frameGrid = 1;
-  state.drawTiles = [];
+  resetForPlaneChange(state);
   resetView();
   updateControlCaps();
   drawSelectionGraphs();
@@ -3461,33 +3331,7 @@ async function onDatasetChange() {
   stopPlayback();
   state.dataId = els.datasetSelect.value;
   state.meta = await fetchJson(`/api/datasets/${state.dataId}/meta`);
-  state.values = { sample: 0, pol: 0, t: 0, nu: 0, x: 0, y: 0, z: 0 };
-
-  state.selection = null;
-  state.selectionDrag = null;
-  state.zoomDrag = null;
-  state.volumeDrag = null;
-  state.profileZoomDrag = null;
-  state.profileZoom = {};
-  state.axisWindow = { t: null, nu: null };
-  state.evpaTicks = [];
-  state.evpaTicksBySample = {};
-  state.currentMonoSlice = null;
-  state.currentVolume = null;
-  state.currentVolumeTiles = null;
-  state.currentMultispectralBands = null;
-  state.currentIntensityStats = null;
-  state.currentIntensityUnit = "";
-  state.fixedColorRange = null;
-  state.frameCanvas = null;
-  state.frameTiles = null;
-  state.frameGrid = 1;
-  state.drawTiles = [];
-  state.selectedCoords = null;
-  state.profiles = null;
-  state.viewProfiles = null;
-  state.sampleGridIndices = [0];
-  state.activeSampleTile = 0;
+  resetForDatasetChange(state);
 
   resetView();
   updateControlCaps();
