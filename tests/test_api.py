@@ -21,7 +21,7 @@ def test_mock_dataset_slice_and_roi() -> None:
     body = datasets.json()
     assert body["datasets"]
     data_ids = {d["data_id"] for d in body["datasets"]}
-    assert "mock-wide-image-cube" in data_ids
+    assert "demo-quicklook-7d-pol-samples" in data_ids
     ds0 = body["datasets"][0]
     data_id = ds0["data_id"]
     shape = ds0["shape"]
@@ -32,10 +32,10 @@ def test_mock_dataset_slice_and_roi() -> None:
     )
     assert slice_res.status_code == 200
     slice_body = slice_res.json()
-    assert slice_body["shape"] == [64, 64]
-    assert len(slice_body["values"]) == 64 * 64
+    assert slice_body["shape"] == [shape[4], shape[5]]
+    assert len(slice_body["values"]) == shape[4] * shape[5]
     assert slice_body["sample_mode"] == "single"
-    assert slice_body["full_shape"] == [64, 64]
+    assert slice_body["full_shape"] == [shape[4], shape[5]]
     assert slice_body["sampling_step"] == [1, 1]
 
     lod_slice_res = client.get(
@@ -44,7 +44,7 @@ def test_mock_dataset_slice_and_roi() -> None:
     )
     assert lod_slice_res.status_code == 200
     lod_slice = lod_slice_res.json()
-    assert lod_slice["full_shape"] == [64, 64]
+    assert lod_slice["full_shape"] == [shape[4], shape[5]]
     assert lod_slice["shape"][0] * lod_slice["shape"][1] <= 256
     assert lod_slice["sampling_step"][0] >= 1
     assert lod_slice["sampling_step"][1] >= 1

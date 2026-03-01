@@ -8,6 +8,12 @@ from pydantic import BaseModel, Field
 class LoadLocalRequest(BaseModel):
     path: str
     data_id: str | None = None
+    dims: list[str] | None = None
+    pad_missing_dims: bool = False
+
+
+class PickLocalPathRequest(BaseModel):
+    target: Literal["file", "folder"] = "file"
 
 
 class RoiStatsRequest(BaseModel):
@@ -50,4 +56,3 @@ class PlaneProfilesRequest(BaseModel):
 
 SampleMode = Literal["single", "mean", "std", "rel_uncert"]
 RangeMode = Literal["none", "time", "spectral", "time_spectral", "space", "full"]
-

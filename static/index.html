@@ -24,6 +24,10 @@
             Dataset
             <select id="datasetSelect"></select>
           </label>
+          <div class="buttonRow">
+            <button id="systemPickerBtn" type="button">Load Data</button>
+          </div>
+          <div id="systemPickerStatus" class="pickerStatus"></div>
           <label>
             Color Map
             <select id="colorMapSelect">
@@ -58,6 +62,7 @@
             <span>Flux Scale</span>
             <div class="miniGroup">
               <button id="fluxScaleLinearBtn" class="tinyBtn" type="button">Linear</button>
+              <button id="fluxScaleSqrtBtn" class="tinyBtn" type="button">Sqrt</button>
               <button id="fluxScaleLogBtn" class="tinyBtn" type="button">Log</button>
             </div>
           </div>

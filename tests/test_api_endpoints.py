@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 import numpy as np
 import pytest
 
 from ncube.data.schema import CubeDataset
+from ncube.service import api_routes_core
 
 
 def _data_id(base_dataset) -> str:
@@ -106,6 +108,92 @@ def test_load_local_hdf5_success(client, tmp_path: Path) -> None:
     list_res = client.get("/api/datasets")
     listed = {d["data_id"] for d in list_res.json()["datasets"]}
     assert "tiny-h5" in listed
+
+
+def test_load_local_with_manual_dims_and_padding(client, tmp_path: Path) -> None:
+    h5py = pytest.importorskip("h5py")
+    p = tmp_path / "manual_axes.h5"
+    with h5py.File(p, "w") as f:
+        f.create_dataset("values", data=np.zeros((3, 4), dtype=np.float32))
+
+    res = client.post(
+        "/api/load-local",
+        json={"path": str(p), "data_id": "manual-axes-h5", "dims": ["x", "y"], "pad_missing_dims": True},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["loaded"] == "manual-axes-h5"
+    assert body["dims"] == ["sample", "pol", "t", "nu", "x", "y", "z"]
+    assert body["shape"] == [1, 1, 1, 1, 3, 4, 1]
+    assert body["padded_dims"] == ["sample", "pol", "t", "nu", "z"]
+
+
+def test_fs_pick_reports_cancel(client, monkeypatch) -> None:
+    monkeypatch.setattr(api_routes_core, "_pick_local_path_native", lambda _target="file": None)
+    res = client.post("/api/fs/pick")
+    assert res.status_code == 200
+    assert res.json() == {"canceled": True}
+
+
+def test_fs_pick_defaults_to_file_target(client, monkeypatch) -> None:
+    seen: dict[str, str] = {}
+
+    def fake_pick(target: str = "file") -> None:
+        seen["target"] = target
+        return None
+
+    monkeypatch.setattr(api_routes_core, "_pick_local_path_native", fake_pick)
+    res = client.post("/api/fs/pick")
+    assert res.status_code == 200
+    assert seen["target"] == "file"
+
+
+def test_fs_pick_accepts_folder_target(client, monkeypatch) -> None:
+    seen: dict[str, str] = {}
+
+    def fake_pick(target: str = "file") -> None:
+        seen["target"] = target
+        return None
+
+    monkeypatch.setattr(api_routes_core, "_pick_local_path_native", fake_pick)
+    res = client.post("/api/fs/pick", json={"target": "folder"})
+    assert res.status_code == 200
+    assert seen["target"] == "folder"
+
+
+def test_fs_pick_returns_selected_path(client, tmp_path: Path, monkeypatch) -> None:
+    picked = tmp_path / "picked.fits"
+    picked.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(api_routes_core, "_pick_local_path_native", lambda _target="file": str(picked))
+    res = client.post("/api/fs/pick")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["canceled"] is False
+    assert body["exists"] is True
+    assert body["is_file"] is True
+    assert body["loadable"] is True
+    assert body["path"] == str(picked.resolve())
+
+
+def test_native_picker_darwin_mode_dialog_includes_cancel_button(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, capture_output, text, check):
+        calls.append(cmd)
+        if len(calls) == 1:
+            return subprocess.CompletedProcess(cmd, 0, stdout="File\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="/tmp/test.h5\n", stderr="")
+
+    monkeypatch.setattr(api_routes_core.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(api_routes_core.subprocess, "run", fake_run)
+
+    picked = api_routes_core._pick_local_path_native("dataset")
+    assert picked == "/tmp/test.h5"
+    assert len(calls) == 2
+    mode_script_lines = [calls[0][i] for i in range(1, len(calls[0])) if calls[0][i - 1] == "-e"]
+    mode_dialog = mode_script_lines[1]
+    assert 'buttons {"Cancel", "Folder (.zarr)", "File"}' in mode_dialog
+    assert 'cancel button "Cancel"' in mode_dialog
 
 
 def test_slice_default_shape_and_stats(client, base_dataset) -> None:

@@ -23,6 +23,7 @@ export function bindCanvasInteractions(ctx) {
     refreshSelectionAnalytics,
     refreshSlice,
     refreshViewProfiles,
+    rerenderVolumeFrame,
     screenToData,
     setAxisIndex,
     setAxisWindow,

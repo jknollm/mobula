@@ -1,36 +1,12 @@
-# nCube Demo (Vertical Slice)
+# nCube
 
-This repository now contains a runnable end-to-end demo:
+nCube is a local interactive viewer for high-dimensional cube data with canonical axes:
 
-- Canonical axis model: `sample, pol, t, nu, x, y, z`
-- Deterministic 7D mock dataset generator (standard + higher-resolution profiles)
-- FastAPI backend with metadata/slice/ROI uncertainty endpoints
-- Browser viewer with:
-  - grouped control panels (`Data`, `Spatial`, `Temporal`, `Spectral`, `Polarization`)
-  - slice renderer backend selector (`Auto`/`GPU`/`CPU`) for high-resolution 2D views
-  - spatial plane selector with mutually exclusive views: `XY`, `YZ`, `ZX`
-  - spatial render toggle: `Slice` or `Volume` (ray-marched full `x,y,z` density cube with mouse drag rotation)
-  - hidden-axis navigator + playback control (dynamic `X`/`Y`/`Z` depending on selected spatial plane)
-  - physical-value + unit readout on slider controls
-  - interactive integrated-flux navigation graphs for time/frequency/unused-spatial axis (minimal monochrome style; click/drag to move current index)
-  - per-axis small play/pause controls (mutually exclusive playback)
-  - x-axis min/max physical-value labels for all navigator graphs
-  - linear/log flux scaling toggle (log mode renders negative flux as white)
-  - sample visualization modes: `mean`, `std`, `rel_uncert` (`std/|mean|`), or random sample mosaics (`1x1`, `2x2`, `3x3`, `4x4`) with resampling
-  - polarization jump buttons (`I`, `Q`, `U`, `V`) with EVPA toggle, density, and Stokes-I threshold (% of peak |I|)
-  - drag-mode buttons below the figure: `Inspect` (select point/area for profiles) or `Zoom` (drag-box zoom)
-  - optional multi-spectral RGB image mode toggled by button (full frequency range split into low/mid/high bands)
-  - color-map selection (`Viridis`, `Plasma`, `Inferno`, `Gray`, `Diverging`, `Circular`)
-  - adjustable playback speed
-  - progressive playback rendering (LOD during playback, full-resolution refinement when paused)
-  - wheel zoom + pan (`Alt+drag` or right-button drag) + reset zoom button below the figure
-  - fixed-size viewer panel with padded letterboxing for non-square zoom windows (no layout jump)
-  - fixed-position in-image orientation + scale overlay (`N`/`E` astro convention on `XY`, dynamic axis labels otherwise)
-  - colorbar below the image
-  - independently scrolling/sticky configuration panel
-  - click point or drag area selection
-  - time, spectral, and remaining-spatial-axis flux profiles for selection, with scientific-style axes/ticks/labels and per-sample traces in the background
-  - selector axis-range restriction in `Zoom` mode by dragging on time/spectral navigators (double-click navigator to reset axis range)
+```text
+sample, pol, t, nu, x, y, z
+```
+
+It includes a FastAPI backend, a browser UI, built-in demo datasets, and local FITS/HDF5/Zarr loading.
 
 ## Quick Start
 
@@ -40,68 +16,67 @@ This repository now contains a runnable end-to-end demo:
 
 Open:
 
-- [http://127.0.0.1:8000](http://127.0.0.1:8000)
+- Viewer: [http://127.0.0.1:8000](http://127.0.0.1:8000)
 - API docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
-## Manual Start
+## Documentation
+
+- [Docs Index](./docs/README.md)
+- [Installation Guide](./docs/INSTALL.md)
+- [Quickstart](./docs/QUICKSTART.md)
+- [User Guide](./docs/USER_GUIDE.md)
+- [API Reference](./docs/API.md)
+- [Data Loading and Axis Mapping](./docs/DATA_LOADING.md)
+- [Troubleshooting](./docs/TROUBLESHOOTING.md)
+- [Architecture](./docs/ARCHITECTURE.md)
+- [Development Guide](./docs/DEVELOPMENT.md)
+- [Contributing](./CONTRIBUTING.md)
+
+## Key Capabilities
+
+- Interactive 2D slice navigation across `XY`, `YZ`, `ZX`
+- Volume rendering over `x,y,z`
+- Time/spectral/hidden-spatial playback and linked profile graphs
+- Sample-aware views (`single`, `mean`, `std`, `rel_uncert`) and sample mosaics
+- Polarization tools (I/Q/U/V, EVPA overlay, derived polarization modes)
+- Color map/range controls and multiple flux scales
+- Local file loading via native picker and API
+
+## Manual Startup
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 PYTHONPATH=src uvicorn ncube.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-## Implemented Endpoints
+## Useful Commands
 
-- `GET /api/health`
-- `GET /api/datasets`
-- `POST /api/load-local` (FITS/HDF5/Zarr local files)
-- `GET /api/datasets/{data_id}/meta`
-- `GET /api/datasets/{data_id}/slice`
-- `GET /api/datasets/{data_id}/volume`
-- `GET /api/datasets/{data_id}/evpa`
-- `GET /api/datasets/{data_id}/multispectral`
-- `POST /api/datasets/{data_id}/roi-stats`
-- `POST /api/datasets/{data_id}/profiles`
-- `POST /api/datasets/{data_id}/profiles-plane`
-
-## Benchmark
-
-With the app running:
+Run tests:
 
 ```bash
 source .venv/bin/activate
-python scripts/benchmark.py --n 40 --warmup 10
+pytest
 ```
 
-## Export Mock Files
-
-Generate local mock HDF5/FITS files for loader testing:
+Seed local fixture datasets:
 
 ```bash
 source .venv/bin/activate
-PYTHONPATH=src python scripts/export_mock_files.py
+PYTHONPATH=src python scripts/seed_local_datasets.py --overwrite
 ```
 
-Then load via API:
+Run benchmark (app must already be running):
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/load-local \
-  -H "Content-Type: application/json" \
-  -d '{"path":"/absolute/path/to/mock_7d_cube.h5","data_id":"mock-h5"}'
+source .venv/bin/activate
+python scripts/benchmark.py --dataset demo-quicklook-7d-pol-samples --n 40 --warmup 10
 ```
 
-## Notes
+## Current Scope
 
-- v1 demo assumes local data only.
-- Renderer path is currently WebGL/canvas in-browser without external dependencies.
-- Included mock datasets:
-  - standard: `sample=9, pol=4, t=20, nu=24, x=64, y=64, z=2`
-  - higher-resolution: `sample=9, pol=4, t=12, nu=16, x=128, y=128, z=2`
-  - centrally dense structured volume example: `sample=9, pol=4, t=1, nu=1, x=64, y=64, z=64`
-  - lazy time-evolving 3D volume example: `sample=9, pol=1, t=16, nu=1, x=64, y=64, z=64`
-  - lazy wide image example: `sample=9, pol=1, t=1, nu=10, x=2048, y=1024, z=1`
-  - lazy large volume example (loads on first access): `sample=1, pol=1, t=1, nu=1, x=256, y=256, z=256`
-- The exported mock files generated by `export_mock_files.py` use shape:
-  `sample=6, pol=4, t=8, nu=10, x=64, y=64, z=4`
+- Local data workflows only
+- No packaging/release pipeline configured yet
+- Frontend served as static assets by FastAPI

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from pathlib import Path
 
@@ -40,7 +41,7 @@ def test_list_contains_loaded_and_lazy_summaries() -> None:
     summaries = registry.list()
     ids = {s.data_id for s in summaries}
     assert "listed" in ids
-    assert "mock-volume-256-cube" in ids
+    assert "demo-hires-3d-no-samples" in ids
     listed_summary = next(s for s in summaries if s.data_id == "listed")
     assert listed_summary.shape == ds.shape
 
@@ -80,9 +81,12 @@ def test_ensure_default_datasets_is_idempotent() -> None:
     registry.ensure_default_datasets()
     second = sorted(s.data_id for s in registry.list())
     assert first == second
-    assert "mock-7d-cube" in second
-    assert "mock-hires-cube" in second
-    assert "mock-volume-cube" in second
+    assert "demo-quicklook-7d-pol-samples" in second
+    assert "demo-full-ms-time-3d-samples-no-pol" in second
+    assert "demo-hires-xy-nu-pol-samples" in second
+    assert "demo-hires-3d-no-samples" in second
+    assert "demo-long-2d-movie-pol" in second
+    assert "demo-5d-time-3d-samples" in second
 
 
 def test_load_local_loads_dataset_by_extension(tmp_path: Path) -> None:
@@ -101,6 +105,21 @@ def test_load_local_loads_dataset_by_extension(tmp_path: Path) -> None:
     assert fetched.shape == (2, 3, 4)
 
 
+def test_load_local_with_manual_dims_and_padding(tmp_path: Path) -> None:
+    h5py = pytest.importorskip("h5py")
+    values = np.arange(3 * 4, dtype=np.float32).reshape(3, 4)
+    h5_path = tmp_path / "registry_manual_dims.h5"
+    with h5py.File(h5_path, "w") as f:
+        f.create_dataset("values", data=values)
+
+    registry = DatasetRegistry()
+    loaded = registry.load_local(str(h5_path), data_id="local-manual", dims=("x", "y"), pad_missing_dims=True)
+    assert loaded.data_id == "local-manual"
+    assert loaded.dims == ("sample", "pol", "t", "nu", "x", "y", "z")
+    assert loaded.shape == (1, 1, 1, 1, 3, 4, 1)
+    assert loaded.provenance["padded_dims"] == ["sample", "pol", "t", "nu", "z"]
+
+
 def test_dataset_summary_dataclass_fields_are_stable() -> None:
     summary = DatasetSummary(
         data_id="s",
@@ -116,3 +135,40 @@ def test_dataset_summary_dataclass_fields_are_stable() -> None:
         "intensity_unit": "arb",
         "source": "test",
     }
+
+
+def test_seeded_manifest_registers_lazy_local_dataset(tmp_path: Path) -> None:
+    h5py = pytest.importorskip("h5py")
+    h5_path = tmp_path / "seeded.h5"
+    values = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
+    with h5py.File(h5_path, "w") as f:
+        ds = f.create_dataset("values", data=values)
+        ds.attrs["dims"] = "sample,t,x"
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "datasets": [
+                    {
+                        "data_id": "seed-manifest-local",
+                        "path": h5_path.name,
+                        "dims": ["sample", "t", "x"],
+                        "shape": [2, 3, 4],
+                        "intensity_unit": "arb",
+                        "source": "seeded-local-hdf5",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    registry = DatasetRegistry(seeded_manifest_path=manifest_path)
+    summaries = registry.list()
+    ids = {s.data_id for s in summaries}
+    assert "seed-manifest-local" in ids
+    loaded = registry.get("seed-manifest-local")
+    assert loaded.dims == ("sample", "t", "x")
+    assert loaded.shape == (2, 3, 4)

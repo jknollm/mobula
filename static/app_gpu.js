@@ -521,7 +521,21 @@ class GpuVolumeRenderer {
     gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
-    const typed = volume.values instanceof Float32Array ? volume.values : Float32Array.from(volume.values);
+    const src = volume.values instanceof Float32Array ? volume.values : Float32Array.from(volume.values);
+    // Backend flattens as [x, y, z] in C-order (z-fastest).
+    // WebGL texImage3D expects x-fastest packing for (width=nx, height=ny, depth=nz).
+    // Repack once into [z, y, x] C-order so texture sampling maps uvw=(x,y,z) correctly.
+    const typed = new Float32Array(nx * ny * nz);
+    for (let z = 0; z < nz; z += 1) {
+      const zOff = z * nx * ny;
+      for (let y = 0; y < ny; y += 1) {
+        const yzOff = zOff + y * nx;
+        for (let x = 0; x < nx; x += 1) {
+          const srcIdx = (x * ny + y) * nz + z;
+          typed[yzOff + x] = src[srcIdx];
+        }
+      }
+    }
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.texImage3D(gl.TEXTURE_3D, 0, gl.R32F, nx, ny, nz, 0, gl.RED, gl.FLOAT, typed);
     rec = { texture: tex, nx, ny, nz };

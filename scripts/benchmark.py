@@ -37,7 +37,7 @@ def timed_post(client: httpx.Client, url: str, json: dict[str, Any]) -> float:
 def main() -> None:
     parser = argparse.ArgumentParser(description="nCube demo API benchmark")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="API base URL")
-    parser.add_argument("--dataset", default="mock-7d-cube", help="dataset id")
+    parser.add_argument("--dataset", default="demo-quicklook-7d-pol-samples", help="dataset id")
     parser.add_argument("--n", type=int, default=60, help="number of measured iterations")
     parser.add_argument("--warmup", type=int, default=15, help="number of warmup iterations")
     args = parser.parse_args()

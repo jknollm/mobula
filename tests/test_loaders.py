@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ncube.data.loaders import load_by_extension, load_fits, load_hdf5, load_zarr
+from ncube.data.loaders import load_by_extension, load_fits, load_hdf5, load_zarr, pad_dataset_to_canonical
 
 
 def test_load_hdf5_reads_dims_units_and_coords(tmp_path: Path) -> None:
@@ -125,6 +125,32 @@ def test_load_zarr_reads_dims_units_and_coords(tmp_path: Path) -> None:
     np.testing.assert_allclose(out.coords["x"], np.array([-1.0, -0.2, 0.2, 1.0], dtype=np.float64))
 
 
+def test_load_zarr_supports_xarray_style_array_dimensions(tmp_path: Path) -> None:
+    zarr = pytest.importorskip("zarr")
+    p = tmp_path / "cube_xarray_style.zarr"
+    root = zarr.open_group(str(p), mode="w")
+    values = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
+    arr = root.create_dataset("values", data=values, shape=values.shape, dtype="f4")
+    arr.attrs["_ARRAY_DIMENSIONS"] = ["sample", "t", "x"]
+    arr.attrs["units"] = "mJy"
+    root.attrs["frame"] = "FK5"
+    t = root.create_dataset("t", data=np.array([0.0, 5.0, 10.0], dtype=np.float64))
+    t.attrs["units"] = "s"
+    x = root.create_dataset("x", data=np.array([-1.0, -0.2, 0.2, 1.0], dtype=np.float64))
+    x.attrs["units"] = "arcsec"
+
+    out = load_zarr(p, data_id="zarr-xarray-ds")
+    assert out.data_id == "zarr-xarray-ds"
+    assert out.dims == ("sample", "t", "x")
+    assert out.shape == (2, 3, 4)
+    assert out.intensity_unit == "mJy"
+    assert out.units["t"] == "s"
+    assert out.units["x"] == "arcsec"
+    assert out.wcs["frame"] == "FK5"
+    np.testing.assert_allclose(out.coords["t"], np.array([0.0, 5.0, 10.0], dtype=np.float64))
+    np.testing.assert_allclose(out.coords["x"], np.array([-1.0, -0.2, 0.2, 1.0], dtype=np.float64))
+
+
 def test_load_zarr_requires_dims_attr(tmp_path: Path) -> None:
     zarr = pytest.importorskip("zarr")
     p = tmp_path / "no_dims.zarr"
@@ -132,6 +158,16 @@ def test_load_zarr_requires_dims_attr(tmp_path: Path) -> None:
     root.create_dataset("values", data=np.zeros((2, 2), dtype=np.float32), shape=(2, 2), dtype="f4")
     with pytest.raises(ValueError, match="attrs missing 'dims'"):
         load_zarr(p)
+
+
+def test_load_zarr_accepts_explicit_dims_argument(tmp_path: Path) -> None:
+    zarr = pytest.importorskip("zarr")
+    p = tmp_path / "zarr_manual_dims.zarr"
+    root = zarr.open_group(str(p), mode="w")
+    root.create_dataset("values", data=np.zeros((3, 5), dtype=np.float32), shape=(3, 5), dtype="f4")
+    out = load_zarr(p, dims=("t", "x"))
+    assert out.dims == ("t", "x")
+    assert out.shape == (3, 5)
 
 
 def test_load_zarr_requires_requested_data_key(tmp_path: Path) -> None:
@@ -180,3 +216,18 @@ def test_load_by_extension_rejects_unknown_suffix(tmp_path: Path) -> None:
     p.write_bytes(b"\x00\x01")
     with pytest.raises(ValueError, match="unsupported file extension"):
         load_by_extension(p)
+
+
+def test_pad_dataset_to_canonical_adds_singleton_axes(tmp_path: Path) -> None:
+    h5py = pytest.importorskip("h5py")
+    p = tmp_path / "pad_base.h5"
+    with h5py.File(p, "w") as f:
+        ds = f.create_dataset("values", data=np.zeros((4, 6), dtype=np.float32))
+        ds.attrs["dims"] = "x,y"
+
+    base = load_hdf5(p)
+    padded, missing = pad_dataset_to_canonical(base)
+    assert missing == ("sample", "pol", "t", "nu", "z")
+    assert padded.dims == ("sample", "pol", "t", "nu", "x", "y", "z")
+    assert padded.shape == (1, 1, 1, 1, 4, 6, 1)
+    assert padded.provenance["padded_dims"] == list(missing)

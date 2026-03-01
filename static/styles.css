@@ -245,6 +245,17 @@ button {
   flex: 0 0 auto;
 }
 
+.pickerStatus {
+  min-height: 1.1rem;
+  font-size: 0.76rem;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.pickerStatus.error {
+  color: #ff8f8f;
+}
+
 .pillRow {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -308,7 +319,9 @@ button {
 
 .evpaThresholdRow {
   display: grid;
-  gap: 4px;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
 }
 
 .derivedRow button.activeDerived {

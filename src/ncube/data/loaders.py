@@ -25,6 +25,53 @@ def _default_units(dims: tuple[str, ...]) -> dict[str, str]:
     return {dim: units.get(dim, "unknown") for dim in dims}
 
 
+def _as_text(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)
+
+
+def pad_dataset_to_canonical(dataset: CubeDataset) -> tuple[CubeDataset, tuple[str, ...]]:
+    """Insert singleton axes for missing canonical dimensions."""
+    missing = tuple(dim for dim in CANONICAL_DIMS if dim not in dataset.dims)
+    if not missing:
+        return dataset, ()
+
+    values = np.asarray(dataset.values, dtype=np.float32)
+    mask = None if dataset.mask is None else np.asarray(dataset.mask)
+    dims = list(dataset.dims)
+    coords = {k: np.asarray(v) for k, v in dataset.coords.items()}
+    units = dict(dataset.units)
+    canonical_index = {dim: idx for idx, dim in enumerate(CANONICAL_DIMS)}
+
+    for dim in missing:
+        idx = canonical_index[dim]
+        insert_at = sum(1 for existing in dims if canonical_index[existing] < idx)
+        values = np.expand_dims(values, axis=insert_at)
+        if mask is not None:
+            mask = np.expand_dims(mask, axis=insert_at)
+        dims.insert(insert_at, dim)
+        coords[dim] = np.array([0.0], dtype=np.float64)
+        units[dim] = _default_units((dim,))[dim]
+
+    provenance = dict(dataset.provenance)
+    provenance["padded_dims"] = list(missing)
+    out = CubeDataset(
+        data_id=dataset.data_id,
+        dims=tuple(dims),
+        coords=coords,
+        values=values,
+        units=units,
+        intensity_unit=dataset.intensity_unit,
+        wcs=dict(dataset.wcs),
+        provenance=provenance,
+        mask=mask,
+        uncertainty=dataset.uncertainty,
+    )
+    out.validate()
+    return out, missing
+
+
 def load_hdf5(
     path: str | Path,
     dataset_path: str = "values",
@@ -167,7 +214,12 @@ def load_fits(
     return dataset
 
 
-def load_zarr(path: str | Path, data_key: str = "values", data_id: str | None = None) -> CubeDataset:
+def load_zarr(
+    path: str | Path,
+    data_key: str = "values",
+    dims: tuple[str, ...] | None = None,
+    data_id: str | None = None,
+) -> CubeDataset:
     import zarr
 
     path = Path(path).expanduser().resolve()
@@ -177,11 +229,13 @@ def load_zarr(path: str | Path, data_key: str = "values", data_id: str | None = 
 
     arr = root[data_key]
     values = np.asarray(arr, dtype=np.float32)
-    dims_attr = arr.attrs.get("dims")
-    if dims_attr is None:
-        raise ValueError("zarr array attrs missing 'dims' list")
-
-    dims = tuple(str(x) for x in dims_attr)
+    if dims is None:
+        dims_attr = arr.attrs.get("dims")
+        if dims_attr is None:
+            dims_attr = arr.attrs.get("_ARRAY_DIMENSIONS")
+        if dims_attr is None:
+            raise ValueError("zarr array attrs missing 'dims' or '_ARRAY_DIMENSIONS' list")
+        dims = tuple(str(x) for x in dims_attr)
     values, dims = reorder_to_canonical(values, dims)
 
     coords = _default_coords_from_shape(dims, values.shape)
@@ -191,12 +245,28 @@ def load_zarr(path: str | Path, data_key: str = "values", data_id: str | None = 
         for dim in dims:
             if dim in cg:
                 coords[dim] = np.asarray(cg[dim], dtype=np.float64).reshape(-1)
+    for dim in dims:
+        # xarray-style zarr stores coordinate variables at root with _ARRAY_DIMENSIONS.
+        if dim in root:
+            coord_arr = root[dim]
+            if getattr(coord_arr, "ndim", 0) == 1:
+                coords[dim] = np.asarray(coord_arr, dtype=np.float64).reshape(-1)
+            coord_units = root[dim].attrs.get("units")
+            if coord_units is not None:
+                units[dim] = _as_text(coord_units)
 
-    intensity_unit = str(arr.attrs.get("intensity_unit", "arb"))
+    intensity_unit = arr.attrs.get("intensity_unit")
+    if intensity_unit is None:
+        intensity_unit = arr.attrs.get("units", "arb")
+    intensity_unit = _as_text(intensity_unit)
     for dim in dims:
         key = f"unit_{dim}"
         if key in arr.attrs:
-            units[dim] = str(arr.attrs[key])
+            units[dim] = _as_text(arr.attrs[key])
+
+    frame = arr.attrs.get("frame")
+    if frame is None:
+        frame = root.attrs.get("frame", "unknown")
 
     dataset = CubeDataset(
         data_id=data_id or path.stem,
@@ -205,7 +275,7 @@ def load_zarr(path: str | Path, data_key: str = "values", data_id: str | None = 
         values=values,
         units=units,
         intensity_unit=intensity_unit,
-        wcs={"frame": str(arr.attrs.get("frame", "unknown")), "source": "zarr"},
+        wcs={"frame": _as_text(frame), "source": "zarr"},
         provenance={"source": "zarr", "path": str(path), "data_key": data_key},
     )
     dataset.validate()
@@ -222,4 +292,3 @@ def load_by_extension(path: str | Path, **kwargs: Any) -> CubeDataset:
     if suffix in {".zarr"}:
         return load_zarr(path, **kwargs)
     raise ValueError(f"unsupported file extension: {suffix}")
-

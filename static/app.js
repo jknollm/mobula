@@ -69,10 +69,13 @@ const els = {
   polarizationControlGroup: document.getElementById("polarizationControlGroup"),
 
   datasetSelect: document.getElementById("datasetSelect"),
+  systemPickerBtn: document.getElementById("systemPickerBtn"),
+  systemPickerStatus: document.getElementById("systemPickerStatus"),
   colorMapSelect: document.getElementById("colorMapSelect"),
   colorRangeModeSelect: document.getElementById("colorRangeModeSelect"),
   sliceBackendSelect: document.getElementById("sliceBackendSelect"),
   fluxScaleLinearBtn: document.getElementById("fluxScaleLinearBtn"),
+  fluxScaleSqrtBtn: document.getElementById("fluxScaleSqrtBtn"),
   fluxScaleLogBtn: document.getElementById("fluxScaleLogBtn"),
   sampleModeMeanBtn: document.getElementById("sampleModeMeanBtn"),
   sampleModeStdBtn: document.getElementById("sampleModeStdBtn"),
@@ -400,6 +403,7 @@ function gpuAvailable() {
 }
 
 function volumeBackendMode() {
+  if (state.fluxScale === "sqrt") return "cpu";
   const requested = state.volumeRender.backend;
   if (requested === "cpu") return "cpu";
   if (!gpuAvailableKnown()) ensureVolumeGpuRenderer();
@@ -416,6 +420,7 @@ function sliceGpuAvailable() {
 }
 
 function sliceBackendMode(width = 0, height = 0) {
+  if (state.fluxScale === "sqrt") return "cpu";
   const requested = state.sliceRender.backend;
   if (requested === "cpu") return "cpu";
   if (!sliceGpuAvailableKnown()) ensureSliceGpuRenderer();
@@ -722,11 +727,13 @@ function fmtIntensity(v) {
 
 function fluxPlotValue(v) {
   if (state.fluxScale === "log") return Math.log10(1 + Math.max(v, 0));
+  if (state.fluxScale === "sqrt") return Math.sign(v) * Math.sqrt(Math.abs(v));
   return v;
 }
 
 function fluxFromPlotValue(v) {
   if (state.fluxScale === "log") return Math.max(0, 10 ** v - 1);
+  if (state.fluxScale === "sqrt") return Math.sign(v) * v * v;
   return v;
 }
 
@@ -862,6 +869,23 @@ function normalizeFluxLog(v, maxPositive) {
   if (v < 0) return null;
   if (!(maxPositive > 0)) return 0;
   return Math.log10(1 + v) / Math.log10(1 + maxPositive);
+}
+
+function normalizeFluxSqrt(v, mm) {
+  if (!isFiniteNumber(v)) return null;
+  if (state.colorMap === "circular" && isDerivedPolModeActive() && state.derivedPolMode === "bfield") {
+    return normalizeForColormap(v, mm);
+  }
+  if (state.colorMap === "diverging" && mm.min < 0 && mm.max > 0) {
+    const maxAbs = Math.max(Math.abs(mm.min), Math.abs(mm.max));
+    if (!(maxAbs > 0)) return 0.5;
+    const maxAbsSqrt = Math.sqrt(maxAbs);
+    const transformed = Math.sign(v) * Math.sqrt(Math.abs(v));
+    return (transformed + maxAbsSqrt) / Math.max(1.0e-9, 2 * maxAbsSqrt);
+  }
+  const span = Math.max(1.0e-9, mm.max - mm.min);
+  const t = clamp((v - mm.min) / span, 0, 1);
+  return Math.sqrt(t);
 }
 
 function resetView() {
@@ -1177,6 +1201,28 @@ function updateSpatialProfileTitle(profile) {
 }
 
 function updateDomainVisibility() {
+  const hasData = Boolean(state.dataId && state.meta);
+  if (!hasData) {
+    if (isPlaying()) stopPlayback();
+    setVisible(els.spatialControlGroup, false);
+    setVisible(els.temporalControlGroup, false);
+    setVisible(els.spectralControlGroup, false);
+    setVisible(els.polarizationControlGroup, false);
+    setVisible(els.sampleModeBlock, false);
+    setVisible(els.playSpeedLabel, false);
+    setVisible(els.planeLabel, false);
+    setVisible(els.hiddenNavPanel, false);
+    setVisible(els.volumeRenderControls, false);
+    setVisible(els.timeProfileBlock, false);
+    setVisible(els.spectrumProfileBlock, false);
+    setVisible(els.spatialProfileBlock, false);
+    if (els.metricsHint) {
+      els.metricsHint.textContent = "Load a dataset to enable controls and profiles.";
+    }
+    updateVolumeControlReadouts();
+    return;
+  }
+
   const volumeMode = isVolumeMode();
   const tVarying = axisVarying("t");
   const nuVarying = axisVarying("nu");
@@ -1220,6 +1266,7 @@ function updateDomainVisibility() {
     stopPlayback();
   }
 
+  setVisible(els.spatialControlGroup, true);
   setVisible(els.temporalControlGroup, tVarying);
   setVisible(els.spectralControlGroup, nuVarying);
   setVisible(els.planeLabel, !volumeMode);
@@ -1274,6 +1321,7 @@ function updateControlCaps() {
   els.multiSpectralBtn.textContent = state.multiSpectral ? "On" : "Off";
   els.multiSpectralBtn.classList.toggle("activeAux", state.multiSpectral);
   els.fluxScaleLinearBtn.classList.toggle("activeScale", state.fluxScale === "linear");
+  els.fluxScaleSqrtBtn.classList.toggle("activeScale", state.fluxScale === "sqrt");
   els.fluxScaleLogBtn.classList.toggle("activeScale", state.fluxScale === "log");
   els.resampleSamplesBtn.disabled = !isSamplesMode();
 
@@ -1285,7 +1333,7 @@ function updateControlCaps() {
 }
 
 function setFluxScale(mode) {
-  if (mode !== "linear" && mode !== "log") return;
+  if (!["linear", "sqrt", "log"].includes(mode)) return;
   if (state.fluxScale === mode) return;
   state.fluxScale = mode;
   updateControlCaps();
@@ -1675,6 +1723,9 @@ function createSingleCanvasCpu(slice, rangeOverride = null) {
       if (state.fluxScale === "log") {
         const norm = normalizeFluxLog(v, maxPositive);
         rgb = norm === null ? [255, 255, 255] : colorForNorm(norm);
+      } else if (state.fluxScale === "sqrt") {
+        const norm = normalizeFluxSqrt(v, mm);
+        rgb = norm === null ? [255, 255, 255] : colorForNorm(norm);
       } else {
         const norm = normalizeForColormap(v, mm);
         rgb = norm === null ? [255, 255, 255] : colorForNorm(norm);
@@ -1752,6 +1803,10 @@ function createRgbCanvas(width, height, redVals, greenVals, blueVals, payload = 
           g = normalizeFluxLog(gv, maxG) ?? 0;
           b = normalizeFluxLog(bv, maxB) ?? 0;
         }
+      } else if (state.fluxScale === "sqrt") {
+        r = Math.sqrt(clamp((rv - mmR.min) / spanR, 0, 1));
+        g = Math.sqrt(clamp((gv - mmG.min) / spanG, 0, 1));
+        b = Math.sqrt(clamp((bv - mmB.min) / spanB, 0, 1));
       } else {
         r = clamp((rv - mmR.min) / spanR, 0, 1);
         g = clamp((gv - mmG.min) / spanG, 0, 1);
@@ -1973,6 +2028,9 @@ function createVolumeCanvasCpu(volume, resolution = 240) {
         if (state.fluxScale === "log") {
           norm = normalizeFluxLog(sample, maxPositive);
           if (norm === null) continue;
+        } else if (state.fluxScale === "sqrt") {
+          norm = normalizeFluxSqrt(sample, mm);
+          if (norm === null) continue;
         } else {
           norm = normalizeForColormap(sample, mm);
           if (norm === null) continue;
@@ -2131,6 +2189,10 @@ function drawColorbar() {
         els.colorbarMin.textContent = `0 ${unit}`.trim();
         els.colorbarMid.textContent = `${state.colorMap} (log, neg=white${fixedLabel})`;
         els.colorbarMax.textContent = `${fmtIntensity(Math.max(0, stats.max))} ${unit}`.trim();
+      } else if (state.fluxScale === "sqrt") {
+        els.colorbarMin.textContent = `${fmtIntensity(stats.min)} ${unit}`.trim();
+        els.colorbarMid.textContent = `${state.colorMap} (sqrt${fixedLabel})`;
+        els.colorbarMax.textContent = `${fmtIntensity(stats.max)} ${unit}`.trim();
       } else {
         els.colorbarMin.textContent = `${fmtIntensity(stats.min)} ${unit}`.trim();
         els.colorbarMid.textContent = `${state.colorMap}${fixedLabel}`;
@@ -2441,11 +2503,7 @@ async function refreshSlice(options = {}) {
     state.frameGrid = 1;
   }
 
-  const evpaPromise = state.showEvpa && !isVolumeMode() && !playbackMode ? refreshEvpaTicks() : Promise.resolve();
-  if (playbackMode && state.showEvpa) {
-    state.evpaTicks = [];
-    state.evpaTicksBySample = {};
-  }
+  const evpaPromise = state.showEvpa && !isVolumeMode() ? refreshEvpaTicks() : Promise.resolve();
   if (!playbackMode) {
     await refreshFixedColorRange();
   }
@@ -3327,9 +3385,186 @@ async function onPlaneChange() {
   await refreshSlice();
 }
 
+function isDemoDatasetSummary(ds) {
+  const source = String(ds?.source || "").toLowerCase();
+  const dataId = String(ds?.data_id || "").toLowerCase();
+  return source.includes("demo") || dataId.startsWith("demo-");
+}
+
+function isSeededDatasetSummary(ds) {
+  const source = String(ds?.source || "").toLowerCase();
+  return source.includes("seeded-local") || source.startsWith("seeded");
+}
+
+async function refreshDatasetOptions(preferredDataId = null) {
+  const list = await fetchJson("/api/datasets");
+  const visibleDatasets = Array.isArray(list.datasets) ? list.datasets.filter((ds) => !isSeededDatasetSummary(ds)) : [];
+  const previous = state.dataId;
+  const selected = preferredDataId || previous;
+  els.datasetSelect.innerHTML = "";
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "-- Select dataset --";
+  els.datasetSelect.appendChild(placeholder);
+
+  for (const ds of visibleDatasets) {
+    const opt = document.createElement("option");
+    opt.value = ds.data_id;
+    const isDemo = isDemoDatasetSummary(ds);
+    const demoPrefix = isDemo ? "[DEMO] " : "";
+    opt.textContent = `${demoPrefix}${ds.data_id} (${ds.shape.join("x")})`;
+    els.datasetSelect.appendChild(opt);
+  }
+
+  if (!visibleDatasets.length) {
+    state.dataId = null;
+    els.datasetSelect.value = "";
+    return { datasets: [] };
+  }
+
+  const ids = new Set(visibleDatasets.map((ds) => ds.data_id));
+  const nextDataId = selected && ids.has(selected) ? selected : "";
+  els.datasetSelect.value = nextDataId;
+  return { datasets: visibleDatasets };
+}
+
+function setSystemPickerStatus(message, isError = false) {
+  if (!els.systemPickerStatus) return;
+  els.systemPickerStatus.textContent = message || "";
+  els.systemPickerStatus.classList.toggle("error", Boolean(isError));
+}
+
+function shouldOfferAxisMapping(message) {
+  if (!message) return false;
+  const lowered = String(message).toLowerCase();
+  return (
+    lowered.includes("missing 'dims'") ||
+    lowered.includes("unknown dimensions") ||
+    lowered.includes("dims length") ||
+    lowered.includes("dims contain duplicates") ||
+    lowered.includes("dims not in canonical order")
+  );
+}
+
+function parseAxisMappingInput(raw) {
+  const dims = String(raw || "")
+    .split(",")
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean);
+  if (!dims.length) throw new Error("No axes provided.");
+  const valid = new Set(["sample", "pol", "t", "nu", "x", "y", "z"]);
+  const invalid = dims.filter((dim) => !valid.has(dim));
+  if (invalid.length) throw new Error(`Unknown axes: ${invalid.join(", ")}`);
+  if (new Set(dims).size !== dims.length) throw new Error("Duplicate axes are not allowed.");
+  return dims;
+}
+
+function promptForAxisMapping() {
+  const help =
+    "Enter axis names in file order (comma-separated).\nAllowed: sample, pol, t, nu, x, y, z\nExample: t,nu,x,y";
+  // Keep prompting until user provides a valid mapping or cancels.
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const raw = window.prompt(help, "t,nu,x,y");
+    if (raw === null) return null;
+    try {
+      return parseAxisMappingInput(raw);
+    } catch (err) {
+      window.alert(err.message);
+    }
+  }
+}
+
+async function loadDatasetFromLocalPath(path, options = {}) {
+  const dims = Array.isArray(options.dims) ? options.dims : null;
+  const padMissingDims = Boolean(options.padMissingDims);
+  if (dims && dims.length) {
+    setSystemPickerStatus(`Loading dataset with manual axes: ${dims.join(", ")}`);
+  } else {
+    setSystemPickerStatus(`Loading dataset: ${path}`);
+  }
+  try {
+    const body = { path };
+    if (dims && dims.length) {
+      body.dims = dims;
+      body.pad_missing_dims = padMissingDims;
+    }
+    const payload = await fetchJson("/api/load-local", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    await refreshDatasetOptions(payload.loaded);
+    els.datasetSelect.value = payload.loaded;
+    await onDatasetChange();
+    const padded = Array.isArray(payload.padded_dims) ? payload.padded_dims : [];
+    if (padded.length) {
+      setSystemPickerStatus(
+        `Loaded ${payload.loaded} (${payload.shape.join("x")}); padded axes: ${padded.join(", ")}`
+      );
+      return;
+    }
+    setSystemPickerStatus(`Loaded ${payload.loaded} (${payload.shape.join("x")})`);
+  } catch (err) {
+    if (!dims && shouldOfferAxisMapping(err.message)) {
+      const mapping = promptForAxisMapping();
+      if (mapping) {
+        await loadDatasetFromLocalPath(path, { dims: mapping, padMissingDims: true });
+        return;
+      }
+      setSystemPickerStatus("Load canceled (manual axis mapping not provided).", true);
+      return;
+    }
+    setSystemPickerStatus(`Load failed: ${err.message}`, true);
+  }
+}
+
+async function pickPathWithSystemDialog() {
+  setSystemPickerStatus("Opening system picker...");
+  try {
+    const payload = await fetchJson("/api/fs/pick", {
+      method: "POST",
+    });
+    if (payload.canceled) {
+      setSystemPickerStatus("Selection canceled");
+      return;
+    }
+    if (!payload.exists) {
+      setSystemPickerStatus(`Selected path no longer exists: ${payload.path}`, true);
+      return;
+    }
+
+    if (payload.loadable) {
+      await loadDatasetFromLocalPath(payload.path);
+      return;
+    }
+
+    setSystemPickerStatus("Selected path is not a supported dataset format", true);
+  } catch (err) {
+    setSystemPickerStatus(`System picker failed: ${err.message}`, true);
+  }
+}
+
 async function onDatasetChange() {
   stopPlayback();
-  state.dataId = els.datasetSelect.value;
+  const selectedId = els.datasetSelect.value;
+  if (!selectedId) {
+    state.dataId = null;
+    state.meta = null;
+    resetForDatasetChange(state);
+    resetView();
+    updateControlCaps();
+    drawFrameAndOverlays();
+    drawNavigationGraphs();
+    drawSelectionGraphs();
+    drawColorbar();
+    setSystemPickerStatus("No dataset loaded.");
+    return;
+  }
+
+  state.dataId = selectedId;
+  setSystemPickerStatus("");
   state.meta = await fetchJson(`/api/datasets/${state.dataId}/meta`);
   resetForDatasetChange(state);
 
@@ -3340,20 +3575,7 @@ async function onDatasetChange() {
 }
 
 async function init() {
-  const list = await fetchJson("/api/datasets");
-  els.datasetSelect.innerHTML = "";
-
-  for (const ds of list.datasets) {
-    const opt = document.createElement("option");
-    opt.value = ds.data_id;
-    opt.textContent = `${ds.data_id} (${ds.shape.join("x")})`;
-    els.datasetSelect.appendChild(opt);
-  }
-
-  if (!list.datasets.length) {
-    console.warn("No datasets loaded");
-    return;
-  }
+  await refreshDatasetOptions();
 
   els.canvas.width = 640;
   els.canvas.height = 640;
@@ -3361,17 +3583,11 @@ async function init() {
   els.colorbarCanvas.height = 26;
   initPanelResize();
 
-  state.dataId = list.datasets[0].data_id;
-  state.meta = await fetchJson(`/api/datasets/${state.dataId}/meta`);
   if (state.sliceRender.backend !== "cpu") ensureSliceGpuRenderer();
   if (state.volumeRender.backend !== "cpu") ensureVolumeGpuRenderer();
-  resetView();
-  updateControlCaps();
-  drawSelectionGraphs();
-  drawColorbar();
-  await refreshSlice();
 
   els.datasetSelect.addEventListener("change", onDatasetChange);
+  els.systemPickerBtn.addEventListener("click", () => pickPathWithSystemDialog());
 
   els.colorMapSelect.addEventListener("change", async () => {
     state.colorMap = els.colorMapSelect.value;
@@ -3396,6 +3612,7 @@ async function init() {
   });
 
   els.fluxScaleLinearBtn.addEventListener("click", () => setFluxScale("linear"));
+  els.fluxScaleSqrtBtn.addEventListener("click", () => setFluxScale("sqrt"));
   els.fluxScaleLogBtn.addEventListener("click", () => setFluxScale("log"));
 
   els.sampleModeMeanBtn.addEventListener("click", () => onSampleModeChange("mean"));
@@ -3545,6 +3762,7 @@ async function init() {
     refreshSelectionAnalytics,
     refreshSlice,
     refreshViewProfiles,
+    rerenderVolumeFrame,
     screenToData,
     setAxisIndex,
     setAxisWindow,
@@ -3560,6 +3778,7 @@ async function init() {
   });
 
   updatePlayUi();
+  await onDatasetChange();
 }
 
 init().catch((err) => {
