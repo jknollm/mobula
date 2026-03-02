@@ -3,9 +3,10 @@ from __future__ import annotations
 import platform
 from pathlib import Path
 import subprocess
+import tempfile
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from ncube.service.api_models import LoadLocalRequest, PickLocalPathRequest
 from ncube.service.api_utils import _coords_summary, _dim_size, _safe_dataset
@@ -158,6 +159,66 @@ def _register_core_routes(router: APIRouter, registry: DatasetRegistry) -> None:
             "dims": list(ds.dims),
             "shape": list(ds.shape),
             "path": str(p),
+            "padded_dims": [str(d) for d in padded_dims],
+        }
+
+    @router.post("/upload-local")
+    async def upload_local(
+        file: UploadFile = File(...),
+        data_id: str | None = Form(None),
+        dims: str | None = Form(None),
+        pad_missing_dims: bool = Form(False),
+    ) -> dict[str, Any]:
+        filename = str(file.filename or "").strip()
+        suffix = Path(filename).suffix.lower()
+        inferred_data_id = Path(filename).stem if filename else None
+        effective_data_id = data_id or inferred_data_id
+        if suffix == ".zarr":
+            raise HTTPException(status_code=400, detail="zarr folder upload is not supported by drag-and-drop")
+        if suffix not in SUPPORTED_LOCAL_DATASET_EXTS:
+            raise HTTPException(status_code=400, detail=f"unsupported file extension: {suffix or '(none)'}")
+
+        parsed_dims: tuple[str, ...] | None = None
+        if dims is not None and dims.strip():
+            parsed_dims = tuple(d.strip().lower() for d in dims.split(",") if d.strip())
+
+        tmp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".tmp") as tmp:
+                tmp_path = Path(tmp.name)
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    tmp.write(chunk)
+
+            ds = registry.load_local(
+                str(tmp_path),
+                data_id=effective_data_id,
+                dims=parsed_dims,
+                pad_missing_dims=pad_missing_dims,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            label = filename or "upload"
+            raise HTTPException(status_code=400, detail=f"failed to load {label}: {exc}") from exc
+        finally:
+            await file.close()
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+        padded_dims = ds.provenance.get("padded_dims", [])
+        if not isinstance(padded_dims, list):
+            padded_dims = []
+        return {
+            "loaded": ds.data_id,
+            "dims": list(ds.dims),
+            "shape": list(ds.shape),
+            "path": filename,
             "padded_dims": [str(d) for d in padded_dims],
         }
 

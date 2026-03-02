@@ -40,7 +40,7 @@ Open:
 - Sample-aware views (`single`, `mean`, `std`, `rel_uncert`) and sample mosaics
 - Polarization tools (I/Q/U/V, EVPA overlay, derived polarization modes)
 - Color map/range controls and multiple flux scales
-- Local file loading via native picker and API
+- Local file loading via native picker, drag-and-drop (file datasets), and API
 
 ## Manual Startup
 

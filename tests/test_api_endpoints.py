@@ -128,6 +128,88 @@ def test_load_local_with_manual_dims_and_padding(client, tmp_path: Path) -> None
     assert body["padded_dims"] == ["sample", "pol", "t", "nu", "z"]
 
 
+def test_upload_local_hdf5_success(client, tmp_path: Path) -> None:
+    h5py = pytest.importorskip("h5py")
+    p = tmp_path / "upload.h5"
+    values = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
+    with h5py.File(p, "w") as f:
+        ds = f.create_dataset("values", data=values)
+        ds.attrs["dims"] = "t,nu,x"
+        ds.attrs["intensity_unit"] = "Jy"
+
+    with p.open("rb") as fh:
+        res = client.post(
+            "/api/upload-local",
+            data={"data_id": "upload-h5"},
+            files={"file": ("upload.h5", fh, "application/octet-stream")},
+        )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["loaded"] == "upload-h5"
+    assert body["dims"] == ["t", "nu", "x"]
+    assert body["shape"] == [2, 3, 4]
+    assert body["path"] == "upload.h5"
+
+    list_res = client.get("/api/datasets")
+    listed = {d["data_id"] for d in list_res.json()["datasets"]}
+    assert "upload-h5" in listed
+
+
+def test_upload_local_uses_filename_stem_when_data_id_missing(client, tmp_path: Path) -> None:
+    h5py = pytest.importorskip("h5py")
+    p = tmp_path / "natural_name.h5"
+    with h5py.File(p, "w") as f:
+        ds = f.create_dataset("values", data=np.zeros((2, 2), dtype=np.float32))
+        ds.attrs["dims"] = "x,y"
+
+    with p.open("rb") as fh:
+        res = client.post(
+            "/api/upload-local",
+            files={"file": ("natural_name.h5", fh, "application/octet-stream")},
+        )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["loaded"] == "natural_name"
+
+
+def test_upload_local_with_manual_dims_and_padding(client, tmp_path: Path) -> None:
+    h5py = pytest.importorskip("h5py")
+    p = tmp_path / "upload_manual_axes.h5"
+    with h5py.File(p, "w") as f:
+        f.create_dataset("values", data=np.zeros((3, 4), dtype=np.float32))
+
+    with p.open("rb") as fh:
+        res = client.post(
+            "/api/upload-local",
+            data={"data_id": "upload-manual-axes-h5", "dims": "x,y", "pad_missing_dims": "true"},
+            files={"file": ("upload_manual_axes.h5", fh, "application/octet-stream")},
+        )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["loaded"] == "upload-manual-axes-h5"
+    assert body["dims"] == ["sample", "pol", "t", "nu", "x", "y", "z"]
+    assert body["shape"] == [1, 1, 1, 1, 3, 4, 1]
+    assert body["padded_dims"] == ["sample", "pol", "t", "nu", "z"]
+
+
+def test_upload_local_unsupported_extension_returns_400(client) -> None:
+    res = client.post(
+        "/api/upload-local",
+        files={"file": ("data.txt", b"not a cube", "text/plain")},
+    )
+    assert res.status_code == 400
+    assert "unsupported file extension" in res.json()["detail"]
+
+
+def test_upload_local_rejects_zarr_extension(client) -> None:
+    res = client.post(
+        "/api/upload-local",
+        files={"file": ("dataset.zarr", b"placeholder", "application/octet-stream")},
+    )
+    assert res.status_code == 400
+    assert "zarr folder upload is not supported" in res.json()["detail"]
+
+
 def test_fs_pick_reports_cancel(client, monkeypatch) -> None:
     monkeypatch.setattr(api_routes_core, "_pick_local_path_native", lambda _target="file": None)
     res = client.post("/api/fs/pick")

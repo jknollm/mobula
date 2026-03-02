@@ -118,6 +118,42 @@ Response example:
 }
 ```
 
+### `POST /api/upload-local`
+
+Uploads a dataset file with multipart form data and registers it under `data_id`.
+
+Supported upload suffixes:
+
+- `.h5`
+- `.hdf5`
+- `.fits`
+- `.fit`
+- `.fts`
+
+Notes:
+
+- `.zarr` drag/drop upload is not supported; use `POST /api/load-local` with a local folder path instead.
+- `dims` is optional and should be comma-separated when provided (for example `t,nu,x,y`).
+
+Form fields:
+
+- `file` (required)
+- `data_id` (optional)
+- `dims` (optional)
+- `pad_missing_dims` (optional boolean)
+
+Response example:
+
+```json
+{
+  "loaded": "upload-h5",
+  "dims": ["t", "nu", "x"],
+  "shape": [2, 3, 4],
+  "path": "upload.h5",
+  "padded_dims": []
+}
+```
+
 ## View Endpoints
 
 Common query params (as applicable):

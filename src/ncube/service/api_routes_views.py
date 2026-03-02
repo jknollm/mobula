@@ -123,7 +123,7 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
         nu: int | None = Query(default=None),
         z: int | None = Query(default=None),
         sample_mode: str = Query(default="mean"),
-        step: int = Query(default=8, ge=4, le=32),
+        step: int = Query(default=8, ge=2, le=32),
         min_fraction: float = Query(default=0.05, ge=0.0, le=1.0),
         i_min_fraction: float = Query(default=0.0, ge=0.0, le=1.0),
     ) -> dict[str, Any]:

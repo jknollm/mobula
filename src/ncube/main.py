@@ -16,8 +16,8 @@ registry = DatasetRegistry()
 registry.ensure_default_datasets()
 
 app = FastAPI(
-    title="nCube Demo",
-    description="Interactive high-dimensional cube demo with local mock data",
+    title="mobula",
+    description="Interactive high-dimensional cube viewer with local mock data",
     version="0.1.0",
 )
 app.include_router(build_router(registry))
@@ -27,4 +27,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(
+        STATIC_DIR / "index.html",
+        headers={"Cache-Control": "no-store, max-age=0, must-revalidate"},
+    )

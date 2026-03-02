@@ -1,11 +1,14 @@
 :root {
-  --bg: #101216;
-  --panel: #171b22;
-  --panel-soft: #202632;
-  --text: #edf2f7;
-  --muted: #9fb0c3;
-  --accent: #49b8ff;
-  --line: #2d3846;
+  --bg: #080c14;
+  --panel: #101721;
+  --panel-soft: #172131;
+  --text: #e7edf6;
+  --muted: #b2b8c3;
+  --accent: #56cddd;
+  --accent-rgb: 86, 205, 221;
+  --line: #283246;
+  --font-body: "Manrope", "Segoe UI", sans-serif;
+  --font-brand: "Michroma", "Avenir Next", sans-serif;
   --left-col: 320px;
   --right-col: 300px;
   --splitter-w: 10px;
@@ -22,9 +25,12 @@ body {
 
 body {
   margin: 0;
-  background: radial-gradient(circle at top left, #1b2536, var(--bg) 60%);
+  background:
+    radial-gradient(circle at 18% -12%, #1a324a 0%, rgba(26, 50, 74, 0) 44%),
+    radial-gradient(circle at 84% -18%, #102235 0%, rgba(16, 34, 53, 0) 50%),
+    var(--bg);
   color: var(--text);
-  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-family: var(--font-body);
   overflow: hidden;
 }
 
@@ -51,6 +57,50 @@ header.panel {
   margin-bottom: 12px;
 }
 
+.brandPanel {
+  padding: 7px 14px;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(var(--accent-rgb), 0.18), rgba(var(--accent-rgb), 0) 40%),
+    linear-gradient(180deg, var(--panel-soft), var(--panel));
+}
+
+.brandLockup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brandText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.brandLogo {
+  width: clamp(58px, 5.4vw, 74px);
+  height: auto;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 6px 18px rgba(0, 30, 90, 0.42));
+}
+
+.brandWordmark {
+  margin: 0;
+  font-family: var(--font-brand);
+  font-size: clamp(0.88rem, 1.75vw, 1.18rem);
+  letter-spacing: 0.28em;
+  font-weight: 400;
+  line-height: 1;
+  color: #f5f8ff;
+  text-transform: uppercase;
+}
+
+.brandTagline {
+  margin: 0;
+  color: var(--muted);
+  font-size: clamp(0.76rem, 1.05vw, 0.9rem);
+  letter-spacing: 0.03em;
+}
+
 .workspaceRow {
   flex: 1 1 auto;
   min-height: 0;
@@ -64,7 +114,7 @@ header.panel {
   flex: 0 0 var(--splitter-w);
   width: var(--splitter-w);
   cursor: col-resize;
-  background: linear-gradient(180deg, rgba(73, 184, 255, 0.06), rgba(73, 184, 255, 0.02));
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.06), rgba(var(--accent-rgb), 0.02));
 }
 
 .colSplitter::before {
@@ -75,12 +125,12 @@ header.panel {
   bottom: 16px;
   width: 1px;
   transform: translateX(-50%);
-  background: rgba(73, 184, 255, 0.35);
+  background: rgba(var(--accent-rgb), 0.34);
 }
 
 .colSplitter:hover::before,
 .colSplitter.active::before {
-  background: rgba(73, 184, 255, 0.85);
+  background: rgba(var(--accent-rgb), 0.88);
 }
 
 body.resizing-panels {
@@ -88,12 +138,7 @@ body.resizing-panels {
   cursor: col-resize;
 }
 
-header h1 {
-  margin: 0 0 4px;
-  font-size: 1.3rem;
-}
-
-header p {
+header p:not(.brandTagline) {
   margin: 0;
   color: var(--muted);
 }
@@ -119,7 +164,7 @@ header p {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: #111723;
+  background: #0f141d;
 }
 
 .controlGroup h2 {
@@ -147,8 +192,25 @@ button {
   padding: 8px;
   border-radius: 7px;
   border: 1px solid var(--line);
-  background: #121723;
+  background: #0f1520;
   color: var(--text);
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+}
+
+select option {
+  background: #0f1520;
+  color: var(--text);
+}
+
+select:focus,
+button:focus {
+  outline: none;
+}
+
+select:focus-visible,
+button:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.3), 0 0 12px rgba(var(--accent-rgb), 0.2);
 }
 
 .buttonRow {
@@ -166,13 +228,14 @@ button {
 
 .tinyBtn.activePlay {
   border-color: var(--accent);
-  background: #18283c;
+  background: #142b45;
 }
 
 .tinyBtn.activeAux {
-  border-color: #ffe37a;
-  background: #3b2f11;
-  color: #fff4c3;
+  border-color: var(--accent);
+  background: #12344e;
+  color: #e9f4ff;
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.28), 0 0 14px rgba(var(--accent-rgb), 0.22);
 }
 
 .toggleRow {
@@ -195,12 +258,12 @@ button {
 
 .tinyBtn.activeScale {
   border-color: var(--accent);
-  background: #18283c;
+  background: #142b45;
 }
 
 .tinyBtn.activeSpatial {
   border-color: var(--accent);
-  background: #18283c;
+  background: #142b45;
 }
 
 .sampleModeBlock {
@@ -228,7 +291,7 @@ button {
 
 .sampleModeRow .tinyBtn.activeSampleMode {
   border-color: var(--accent);
-  background: #18283c;
+  background: #142b45;
 }
 
 .sampleMosaicControls {
@@ -283,13 +346,14 @@ button {
 
 .pillRow button.activePol {
   border-color: var(--accent);
-  background: #18283c;
+  background: #142b45;
 }
 
 .pillRow button.activeAux {
-  border-color: #ffe37a;
-  background: #3b2f11;
-  color: #fff4c3;
+  border-color: var(--accent);
+  background: #12344e;
+  color: #e9f4ff;
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.28), 0 0 14px rgba(var(--accent-rgb), 0.22);
 }
 
 .polJump {
@@ -311,6 +375,13 @@ button {
   min-width: 74px;
 }
 
+.evpaRow > button.activeAux {
+  border-color: var(--accent);
+  background: #12344e;
+  color: #e9f4ff;
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.34), 0 0 18px rgba(var(--accent-rgb), 0.25);
+}
+
 .evpaRow label {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -325,8 +396,8 @@ button {
 }
 
 .derivedRow button.activeDerived {
-  border-color: #7dd3fc;
-  background: #163047;
+  border-color: var(--accent);
+  background: #15334f;
 }
 
 button:hover {
@@ -339,10 +410,40 @@ button:hover {
   align-self: stretch;
   min-width: 0;
   min-height: 0;
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   overflow: hidden;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.viewer::before {
+  content: "Drop dataset file to load";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px dashed rgba(var(--accent-rgb), 0.9);
+  background: rgba(9, 16, 25, 0.82);
+  color: #eef6ff;
+  font-size: 0.8rem;
+  letter-spacing: 0.01em;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 4;
+  transition: opacity 120ms ease;
+}
+
+.viewer.isDropActive {
+  border-color: rgba(var(--accent-rgb), 1);
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.45), 0 0 22px rgba(var(--accent-rgb), 0.18);
+}
+
+.viewer.isDropActive::before {
+  opacity: 1;
 }
 
 .metrics {
@@ -460,26 +561,26 @@ canvas {
 .viewerToolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 6px;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   position: sticky;
   bottom: 0;
-  background: linear-gradient(180deg, rgba(23, 27, 34, 0), rgba(23, 27, 34, 0.95) 45%);
-  padding-top: 6px;
+  background: linear-gradient(180deg, rgba(16, 23, 33, 0), rgba(16, 23, 33, 0.95) 45%);
+  padding-top: 3px;
   z-index: 2;
 }
 
 .modeButtons {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: auto;
 }
 
 .modeButtons button.activeMode {
   border-color: var(--accent);
-  background: #18283c;
+  background: #142b45;
 }
 
 .modeButtons button {
@@ -488,7 +589,7 @@ canvas {
 }
 
 .toolbarReset {
-  margin-left: auto;
+  margin-left: 8px;
   width: auto;
   min-width: 90px;
   font-size: 0.76rem;
@@ -508,7 +609,10 @@ canvas {
 .colorbarPanel {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 1px;
+  align-self: center;
+  width: 100%;
+  max-width: 100%;
 }
 
 .colorbarCanvas {
@@ -521,7 +625,7 @@ canvas {
 .colorbarLabels {
   display: flex;
   justify-content: space-between;
-  color: #8ea1b5;
+  color: #a7adb6;
   font-size: 0.78rem;
 }
 
@@ -568,5 +672,19 @@ canvas {
     width: 100%;
     height: auto;
     align-self: stretch;
+  }
+}
+
+@media (max-width: 760px) {
+  .brandLockup {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .brandLogo {
+    width: 58px;
+  }
+  .brandWordmark {
+    letter-spacing: 0.22em;
   }
 }

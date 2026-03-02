@@ -31,6 +31,27 @@ const COLOR_RAMPS = {
     [0.75, 249, 142, 9],
     [1.0, 252, 255, 164],
   ],
+  // Sampled from ehtplot `ehtorange.ctab` (GPL-3.0 project):
+  // https://github.com/liamedeiros/ehtplot
+  ehtplot: [
+    [0.0, 9, 9, 9],
+    [0.0625, 31, 20, 17],
+    [0.125, 53, 30, 21],
+    [0.1875, 75, 37, 23],
+    [0.25, 99, 43, 22],
+    [0.3125, 123, 47, 18],
+    [0.375, 148, 48, 9],
+    [0.4375, 169, 57, 0],
+    [0.5, 178, 79, 0],
+    [0.5625, 185, 99, 0],
+    [0.625, 192, 120, 0],
+    [0.6875, 198, 141, 0],
+    [0.75, 202, 162, 0],
+    [0.8125, 214, 180, 0],
+    [0.875, 232, 196, 0],
+    [0.9375, 252, 212, 0],
+    [1.0, 255, 233, 126],
+  ],
   gray: [
     [0.0, 0, 0, 0],
     [1.0, 255, 255, 255],
@@ -52,6 +73,16 @@ const COLOR_RAMPS = {
     [1.0, 255, 68, 68],
   ],
 };
+
+const PROFILE_THEME = {
+  dragFill: "rgba(245, 250, 255, 0.08)",
+  dragStroke: "rgba(245, 250, 255, 0.92)",
+  indicator: "#f7fbff",
+  time: "#57daff",
+  spectral: "#36d7d8",
+  spatial: "#52efbc",
+};
+const SUPPORTED_DROP_UPLOAD_EXTS = new Set([".h5", ".hdf5", ".fits", ".fit", ".fts"]);
 
 const els = {
   layout: document.querySelector(".layout"),
@@ -261,8 +292,8 @@ const state = {
   },
 };
 
-const PROFILE_MARGIN = { l: 92, r: 18, t: 16, b: 54 };
-const NAV_MARGIN = { l: 36, r: 8, t: 6, b: 8 };
+const PROFILE_MARGIN = { l: 102, r: 18, t: 16, b: 62 };
+const NAV_MARGIN = { l: 40, r: 8, t: 6, b: 8 };
 const COLOR_RANGE_MODE_LABEL = {
   none: "dynamic",
   time: "time-fixed",
@@ -278,6 +309,7 @@ const DERIVED_POL_MODES = {
   linear: { label: "Linear Polarisation" },
   circular: { label: "Circular Polarisation" },
 };
+let viewerDropDragDepth = 0;
 
 function planeDims() {
   return PLANE_OPTIONS[state.plane] || PLANE_OPTIONS.xy;
@@ -559,11 +591,42 @@ function requestResizeRedraw() {
   });
 }
 
+function syncCanvasToDisplaySize(canvasEl) {
+  if (!canvasEl) return;
+  const rect = canvasEl.getBoundingClientRect();
+  const cssW = Math.max(1, Math.round(canvasEl.clientWidth || rect.width || canvasEl.width || 1));
+  const cssH = Math.max(1, Math.round(canvasEl.clientHeight || rect.height || canvasEl.height || 1));
+  const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+  const pixelW = Math.max(1, Math.round(cssW * dpr));
+  const pixelH = Math.max(1, Math.round(cssH * dpr));
+  if (canvasEl.width !== pixelW || canvasEl.height !== pixelH) {
+    canvasEl.width = pixelW;
+    canvasEl.height = pixelH;
+  }
+}
+
+function canvasPixelRatio(canvasEl) {
+  if (!canvasEl) return 1;
+  const rect = canvasEl.getBoundingClientRect();
+  const cssW = Math.max(1, rect.width || canvasEl.clientWidth || canvasEl.width || 1);
+  return Math.max(1, canvasEl.width / cssW);
+}
+
+function scaleInsets(insets, scale) {
+  return {
+    l: insets.l * scale,
+    r: insets.r * scale,
+    t: insets.t * scale,
+    b: insets.b * scale,
+  };
+}
+
 function layoutViewerCanvas() {
   if (!els.viewerPanel || !els.canvas) return;
   if (isNarrowLayout()) {
     els.canvas.style.width = "100%";
     els.canvas.style.height = "auto";
+    if (els.colorbarPanel) els.colorbarPanel.style.width = "100%";
     return;
   }
 
@@ -588,9 +651,11 @@ function layoutViewerCanvas() {
     window.innerHeight - panelRect.top - panelPadBottom - reservedH - 8
   );
   const size = Math.max(120, Math.min(panelW, availablePanelH, availableViewportH));
+  const sizePx = `${Math.floor(size)}px`;
 
-  els.canvas.style.width = `${Math.floor(size)}px`;
-  els.canvas.style.height = `${Math.floor(size)}px`;
+  els.canvas.style.width = sizePx;
+  els.canvas.style.height = sizePx;
+  if (els.colorbarPanel) els.colorbarPanel.style.width = sizePx;
 }
 
 function applyPanelWidths(left, right, persist = true) {
@@ -966,10 +1031,11 @@ function getGridDrawRects(viewRect) {
   const grid = Math.max(1, state.frameGrid || 1);
   const cw = els.canvas.width;
   const ch = els.canvas.height;
-  const gap = grid > 1 ? 6 : 0;
+  const s = canvasPixelRatio(els.canvas);
+  const gap = grid > 1 ? 6 * s : 0;
   const maxCellW = (cw - gap * (grid - 1)) / grid;
   const maxCellH = (ch - gap * (grid - 1)) / grid;
-  const cell = Math.max(8, Math.floor(Math.min(maxCellW, maxCellH)));
+  const cell = Math.max(8 * s, Math.floor(Math.min(maxCellW, maxCellH)));
   const gridW = cell * grid + gap * (grid - 1);
   const gridH = cell * grid + gap * (grid - 1);
   const startX = (cw - gridW) / 2;
@@ -1406,6 +1472,7 @@ function drawEvpaOverlay(viewRect, drawRect) {
   if (isVolumeMode()) return;
   if (!state.showEvpa || state.plane !== "xy") return;
   const ctx = els.canvas.getContext("2d");
+  const s = canvasPixelRatio(els.canvas);
   const tiles = state.drawTiles && state.drawTiles.length ? state.drawTiles : [drawRect];
   const hasTicks = state.evpaTicks.length > 0 || Object.keys(state.evpaTicksBySample || {}).length > 0;
   if (!hasTicks) return;
@@ -1416,8 +1483,8 @@ function drawEvpaOverlay(viewRect, drawRect) {
     ctx.beginPath();
     ctx.rect(tileRect.x, tileRect.y, tileRect.w, tileRect.h);
     ctx.clip();
-    ctx.strokeStyle = "#ffe37a";
-    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = "#f8fafc";
+    ctx.lineWidth = 1.2 * s;
 
     let ticks = state.evpaTicks;
     if (isSamplesMode() && state.frameTiles && state.frameTiles.length > 1) {
@@ -1442,6 +1509,7 @@ function drawSelectionOverlay(viewRect, drawRect) {
   const b = selectionBounds();
   if (!b) return;
   const tileRects = state.drawTiles && state.drawTiles.length ? state.drawTiles : [drawRect];
+  const s = canvasPixelRatio(els.canvas);
 
   const ctx = els.canvas.getContext("2d");
   for (const tileRect of tileRects) {
@@ -1450,8 +1518,8 @@ function drawSelectionOverlay(viewRect, drawRect) {
     ctx.rect(tileRect.x, tileRect.y, tileRect.w, tileRect.h);
     ctx.clip();
     ctx.strokeStyle = "#49b8ff";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([8, 4]);
+    ctx.lineWidth = 2 * s;
+    ctx.setLineDash([8 * s, 4 * s]);
 
     const p0 = dataToScreen(b.u0, b.v0, viewRect, tileRect);
     const p1 = dataToScreen(b.u1, b.v1, viewRect, tileRect);
@@ -1460,9 +1528,9 @@ function drawSelectionOverlay(viewRect, drawRect) {
     const w = Math.abs(p1.x - p0.x);
     const h = Math.abs(p1.y - p0.y);
 
-    if (w <= 2 && h <= 2) {
+    if (w <= 2 * s && h <= 2 * s) {
       ctx.beginPath();
-      ctx.arc(x, y, 4, 0, 2 * Math.PI);
+      ctx.arc(x, y, 4 * s, 0, 2 * Math.PI);
       ctx.stroke();
     } else {
       ctx.strokeRect(x, y, Math.max(1, w), Math.max(1, h));
@@ -1474,6 +1542,7 @@ function drawSelectionOverlay(viewRect, drawRect) {
 function drawZoomDragOverlay(viewRect, drawRect) {
   if (isVolumeMode()) return;
   if (!state.zoomDrag) return;
+  const s = canvasPixelRatio(els.canvas);
   const tileRect =
     state.drawTiles && state.drawTiles.length
       ? state.drawTiles[clamp(state.zoomDrag.tile || 0, 0, state.drawTiles.length - 1)]
@@ -1483,9 +1552,16 @@ function drawZoomDragOverlay(viewRect, drawRect) {
 
   const ctx = els.canvas.getContext("2d");
   ctx.save();
-  ctx.strokeStyle = "#f59e0b";
-  ctx.lineWidth = 2;
-  ctx.setLineDash([6, 4]);
+  ctx.fillStyle = PROFILE_THEME.dragFill;
+  ctx.strokeStyle = PROFILE_THEME.dragStroke;
+  ctx.lineWidth = 2 * s;
+  ctx.setLineDash([6 * s, 4 * s]);
+  ctx.fillRect(
+    Math.min(p0.x, p1.x),
+    Math.min(p0.y, p1.y),
+    Math.max(1, Math.abs(p1.x - p0.x)),
+    Math.max(1, Math.abs(p1.y - p0.y))
+  );
   ctx.strokeRect(
     Math.min(p0.x, p1.x),
     Math.min(p0.y, p1.y),
@@ -1516,17 +1592,18 @@ function fmtScale(dim, value, unit) {
 function drawOrientationAndScale(viewRect, drawRect) {
   if (isVolumeMode()) return;
   const ctx = els.canvas.getContext("2d");
+  const s = canvasPixelRatio(els.canvas);
   ctx.save();
   const canvasW = els.canvas.width;
   const canvasH = els.canvas.height;
-  const baseX = canvasW - 56;
-  const baseY = 58;
-  const arrow = 26;
+  const baseX = canvasW - 56 * s;
+  const baseY = 58 * s;
+  const arrow = 26 * s;
 
   ctx.strokeStyle = "rgba(237, 242, 247, 0.9)";
   ctx.fillStyle = "rgba(237, 242, 247, 0.9)";
-  ctx.lineWidth = 1.5;
-  ctx.font = "11px sans-serif";
+  ctx.lineWidth = 1.5 * s;
+  ctx.font = `${Math.round(11 * s)}px sans-serif`;
 
   if (state.plane === "xy") {
     ctx.beginPath();
@@ -1537,8 +1614,8 @@ function drawOrientationAndScale(viewRect, drawRect) {
     ctx.moveTo(baseX, baseY);
     ctx.lineTo(baseX - arrow, baseY);
     ctx.stroke();
-    ctx.fillText("N", baseX - 3, baseY - arrow - 6);
-    ctx.fillText("E", baseX - arrow - 16, baseY + 4);
+    ctx.fillText("N", baseX - 3 * s, baseY - arrow - 6 * s);
+    ctx.fillText("E", baseX - arrow - 16 * s, baseY + 4 * s);
   } else {
     const p = planeDims();
     ctx.beginPath();
@@ -1549,8 +1626,8 @@ function drawOrientationAndScale(viewRect, drawRect) {
     ctx.moveTo(baseX, baseY);
     ctx.lineTo(baseX + arrow, baseY);
     ctx.stroke();
-    ctx.fillText(`+${p.planeY.toUpperCase()}`, baseX - 6, baseY - arrow - 4);
-    ctx.fillText(`+${p.planeX.toUpperCase()}`, baseX + arrow + 2, baseY + 4);
+    ctx.fillText(`+${p.planeY.toUpperCase()}`, baseX - 6 * s, baseY - arrow - 4 * s);
+    ctx.fillText(`+${p.planeX.toUpperCase()}`, baseX + arrow + 2 * s, baseY + 4 * s);
   }
 
   const p = planeDims();
@@ -1564,24 +1641,24 @@ function drawOrientationAndScale(viewRect, drawRect) {
     const length = niceScaleValue(target);
     if (length && span > 0) {
       const px = (length / span) * canvasW * 0.55;
-      if (px >= 20 && px <= canvasW * 0.6) {
-        const sx = 30;
-        const sy = canvasH - 26;
+      if (px >= 20 * s && px <= canvasW * 0.6) {
+        const sx = 30 * s;
+        const sy = canvasH - 26 * s;
         ctx.strokeStyle = "rgba(237, 242, 247, 0.95)";
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 2 * s;
         ctx.beginPath();
         ctx.moveTo(sx, sy);
         ctx.lineTo(sx + px, sy);
         ctx.stroke();
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1.5 * s;
         ctx.beginPath();
-        ctx.moveTo(sx, sy - 4);
-        ctx.lineTo(sx, sy + 4);
-        ctx.moveTo(sx + px, sy - 4);
-        ctx.lineTo(sx + px, sy + 4);
+        ctx.moveTo(sx, sy - 4 * s);
+        ctx.lineTo(sx, sy + 4 * s);
+        ctx.moveTo(sx + px, sy - 4 * s);
+        ctx.lineTo(sx + px, sy + 4 * s);
         ctx.stroke();
         ctx.fillStyle = "rgba(237, 242, 247, 0.95)";
-        ctx.fillText(fmtScale(dim, length, unit), sx, sy - 7);
+        ctx.fillText(fmtScale(dim, length, unit), sx, sy - 7 * s);
       }
     }
   }
@@ -1590,7 +1667,9 @@ function drawOrientationAndScale(viewRect, drawRect) {
 }
 
 function drawFrameAndOverlays() {
+  syncCanvasToDisplaySize(els.canvas);
   const ctx = els.canvas.getContext("2d");
+  const s = canvasPixelRatio(els.canvas);
   ctx.clearRect(0, 0, els.canvas.width, els.canvas.height);
   ctx.fillStyle = "#070a11";
   ctx.fillRect(0, 0, els.canvas.width, els.canvas.height);
@@ -1625,11 +1704,11 @@ function drawFrameAndOverlays() {
       if (isSamplesMode() && Number.isInteger(state.sampleGridIndices[i])) {
         const label = `S${state.sampleGridIndices[i]}`;
         ctx.save();
-        ctx.font = "11px sans-serif";
+        ctx.font = `${Math.round(11 * s)}px sans-serif`;
         ctx.fillStyle = "#d9e6f5";
         ctx.textBaseline = "top";
-        const lx = (tileRect.cellX ?? tileRect.x) + 8;
-        const ly = (tileRect.cellY ?? tileRect.y) + 7;
+        const lx = (tileRect.cellX ?? tileRect.x) + 8 * s;
+        const ly = (tileRect.cellY ?? tileRect.y) + 7 * s;
         ctx.fillText(label, lx, ly);
         ctx.restore();
       }
@@ -1650,6 +1729,10 @@ function drawFrameAndOverlays() {
     );
   }
   state.drawRect = drawRect;
+  if (els.colorbarPanel) {
+    const cssBarW = Math.max(1, Math.round(drawRect.w / Math.max(1, s)));
+    els.colorbarPanel.style.width = `${cssBarW}px`;
+  }
 
   drawOrientationAndScale(viewRect, drawRect);
   drawEvpaOverlay(viewRect, drawRect);
@@ -2136,6 +2219,7 @@ function sharedStatsFromPayloads(payloads) {
 }
 
 function drawColorbar() {
+  syncCanvasToDisplaySize(els.colorbarCanvas);
   const ctx = els.colorbarCanvas.getContext("2d");
   const w = els.colorbarCanvas.width;
   const h = els.colorbarCanvas.height;
@@ -2681,6 +2765,7 @@ function clampIndexToWindow(axis, idx) {
 
 function drawNavigator(canvasEl, profile, indicatorIdx, axis) {
   const ctx = canvasEl.getContext("2d");
+  const s = canvasPixelRatio(canvasEl);
   const w = canvasEl.width;
   const h = canvasEl.height;
   ctx.clearRect(0, 0, w, h);
@@ -2689,12 +2774,12 @@ function drawNavigator(canvasEl, profile, indicatorIdx, axis) {
 
   if (!profile || !profile.series_mean || profile.series_mean.length < 2) {
     ctx.fillStyle = "#98a8ba";
-    ctx.font = "11px sans-serif";
-    ctx.fillText("No data", 8, 16);
+    ctx.font = `${Math.round(11 * s)}px sans-serif`;
+    ctx.fillText("No data", 8 * s, 16 * s);
     return;
   }
 
-  const margin = NAV_MARGIN;
+  const margin = scaleInsets(NAV_MARGIN, s);
   const pxW = w - margin.l - margin.r;
   const pxH = h - margin.t - margin.b;
 
@@ -2725,7 +2810,7 @@ function drawNavigator(canvasEl, profile, indicatorIdx, axis) {
   const yOf = (v) => margin.t + (1 - (v - yMin) / ySpan) * pxH;
 
   ctx.strokeStyle = "#334155";
-  ctx.lineWidth = 1;
+  ctx.lineWidth = 1 * s;
   ctx.beginPath();
   ctx.moveTo(margin.l, margin.t);
   ctx.lineTo(margin.l, margin.t + pxH);
@@ -2733,7 +2818,7 @@ function drawNavigator(canvasEl, profile, indicatorIdx, axis) {
   ctx.stroke();
 
   ctx.strokeStyle = "#cfd7e3";
-  ctx.lineWidth = 1.6;
+  ctx.lineWidth = 1.6 * s;
   ctx.beginPath();
   for (let i = 0; i < n; i += 1) {
     const x = xOf(i);
@@ -2748,7 +2833,7 @@ function drawNavigator(canvasEl, profile, indicatorIdx, axis) {
       const i = indicatorIdx - startIdx;
       const x = xOf(i);
       ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 1 * s;
       ctx.beginPath();
       ctx.moveTo(x, margin.t);
       ctx.lineTo(x, margin.t + pxH);
@@ -2757,9 +2842,9 @@ function drawNavigator(canvasEl, profile, indicatorIdx, axis) {
   }
 
   ctx.fillStyle = "#8ea1b5";
-  ctx.font = "10px sans-serif";
-  ctx.fillText(yMax.toExponential(1), 2, margin.t + 9);
-  ctx.fillText(yMin.toExponential(1), 2, margin.t + pxH);
+  ctx.font = `${Math.round(10 * s)}px sans-serif`;
+  ctx.fillText(yMax.toExponential(1), 2 * s, margin.t + 9 * s);
+  ctx.fillText(yMin.toExponential(1), 2 * s, margin.t + pxH);
 }
 
 function drawNavigatorZoomDrag(canvasEl, profile, axis, drag) {
@@ -2772,7 +2857,8 @@ function drawNavigatorZoomDrag(canvasEl, profile, axis, drag) {
   const xmap = buildAxisXMapper(visibleCoords);
   const local0 = clamp(Math.min(drag.startIdx, drag.lastIdx) - startIdx, 0, visibleCoords.length - 1);
   const local1 = clamp(Math.max(drag.startIdx, drag.lastIdx) - startIdx, 0, visibleCoords.length - 1);
-  const margin = NAV_MARGIN;
+  const s = canvasPixelRatio(canvasEl);
+  const margin = scaleInsets(NAV_MARGIN, s);
   const pxW = canvasEl.width - margin.l - margin.r;
   const pxH = canvasEl.height - margin.t - margin.b;
   const x0 = margin.l + xmap.toNorm(local0) * pxW;
@@ -2780,10 +2866,10 @@ function drawNavigatorZoomDrag(canvasEl, profile, axis, drag) {
 
   const ctx = canvasEl.getContext("2d");
   ctx.save();
-  ctx.fillStyle = "rgba(245, 158, 11, 0.12)";
-  ctx.strokeStyle = "rgba(245, 158, 11, 0.95)";
-  ctx.lineWidth = 1.1;
-  ctx.setLineDash([4, 3]);
+  ctx.fillStyle = PROFILE_THEME.dragFill;
+  ctx.strokeStyle = PROFILE_THEME.dragStroke;
+  ctx.lineWidth = 1.1 * s;
+  ctx.setLineDash([4 * s, 3 * s]);
   ctx.fillRect(Math.min(x0, x1), margin.t, Math.max(1, Math.abs(x1 - x0)), pxH);
   ctx.strokeRect(Math.min(x0, x1), margin.t, Math.max(1, Math.abs(x1 - x0)), pxH);
   ctx.restore();
@@ -2821,13 +2907,15 @@ function profileIndexFromEvent(canvas, profile, ev) {
   const axis = profile.axis || hiddenDim();
   const [startIdx, endIdx] = getProfileZoomWindow(profile);
   if (endIdx - startIdx < 1) return startIdx;
+  const s = canvasPixelRatio(canvas);
+  const margin = scaleInsets(PROFILE_MARGIN, s);
   const visibleCoords = profile.coords.slice(startIdx, endIdx + 1);
   const xmap = buildAxisXMapper(visibleCoords);
 
   const rect = canvas.getBoundingClientRect();
   const cx = (ev.clientX - rect.left) * (canvas.width / Math.max(1, rect.width));
-  const pxW = canvas.width - PROFILE_MARGIN.l - PROFILE_MARGIN.r;
-  const u = clamp((cx - PROFILE_MARGIN.l) / Math.max(1e-6, pxW), 0, 1);
+  const pxW = canvas.width - margin.l - margin.r;
+  const u = clamp((cx - margin.l) / Math.max(1e-6, pxW), 0, 1);
   const local = xmap.nearestIndex(u);
   return startIdx + local;
 }
@@ -2839,27 +2927,30 @@ function drawProfileZoomDragOverlay() {
   if (!profile || !profile.coords || profile.coords.length < 2) return;
 
   const canvas = profileCanvasForKind(state.profileZoomDrag.kind);
+  const s = canvasPixelRatio(canvas);
+  const margin = scaleInsets(PROFILE_MARGIN, s);
   const rect = canvas.getBoundingClientRect();
   const x0 = (state.profileZoomDrag.startClientX - rect.left) * (canvas.width / Math.max(1, rect.width));
   const x1 = (state.profileZoomDrag.currentClientX - rect.left) * (canvas.width / Math.max(1, rect.width));
-  const left = clamp(Math.min(x0, x1), PROFILE_MARGIN.l, canvas.width - PROFILE_MARGIN.r);
-  const right = clamp(Math.max(x0, x1), PROFILE_MARGIN.l, canvas.width - PROFILE_MARGIN.r);
+  const left = clamp(Math.min(x0, x1), margin.l, canvas.width - margin.r);
+  const right = clamp(Math.max(x0, x1), margin.l, canvas.width - margin.r);
   const w = Math.max(1, right - left);
-  const h = canvas.height - PROFILE_MARGIN.t - PROFILE_MARGIN.b;
+  const h = canvas.height - margin.t - margin.b;
 
   const ctx = canvas.getContext("2d");
   ctx.save();
-  ctx.fillStyle = "rgba(245, 158, 11, 0.10)";
-  ctx.strokeStyle = "rgba(245, 158, 11, 0.95)";
-  ctx.lineWidth = 1.4;
-  ctx.setLineDash([4, 3]);
-  ctx.fillRect(left, PROFILE_MARGIN.t, w, h);
-  ctx.strokeRect(left, PROFILE_MARGIN.t, w, h);
+  ctx.fillStyle = PROFILE_THEME.dragFill;
+  ctx.strokeStyle = PROFILE_THEME.dragStroke;
+  ctx.lineWidth = 1.4 * s;
+  ctx.setLineDash([4 * s, 3 * s]);
+  ctx.fillRect(left, margin.t, w, h);
+  ctx.strokeRect(left, margin.t, w, h);
   ctx.restore();
 }
 
 function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
   const ctx = canvasEl.getContext("2d");
+  const scale = canvasPixelRatio(canvasEl);
   const w = canvasEl.width;
   const h = canvasEl.height;
   ctx.clearRect(0, 0, w, h);
@@ -2868,12 +2959,12 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
 
   if (!profile || !profile.coords || profile.coords.length < 2) {
     ctx.fillStyle = "#9fb0c3";
-    ctx.font = "12px sans-serif";
-    ctx.fillText("No selected area", 10, 20);
+    ctx.font = `${Math.round(13 * scale)}px Manrope, sans-serif`;
+    ctx.fillText("No selected area", 10 * scale, 20 * scale);
     return;
   }
 
-  const margin = PROFILE_MARGIN;
+  const margin = scaleInsets(PROFILE_MARGIN, scale);
   const pxW = w - margin.l - margin.r;
   const pxH = h - margin.t - margin.b;
   const [startIdx, endIdx] = getProfileZoomWindow(profile);
@@ -2912,15 +3003,15 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
   const yOf = (v) => margin.t + (1 - (v - yMin) / ySpan) * pxH;
 
   ctx.strokeStyle = "#2a3648";
-  ctx.lineWidth = 1;
+  ctx.lineWidth = 1 * scale;
   ctx.strokeRect(margin.l, margin.t, pxW, pxH);
 
-  const xTickCount = Math.min(5, Math.max(3, Math.floor(pxW / 120) + 1), n);
+  const xTickCount = Math.min(5, Math.max(3, Math.floor(pxW / (120 * scale)) + 1), n);
   const yTickCount = 5;
 
   ctx.strokeStyle = "rgba(130, 148, 170, 0.25)";
-  ctx.lineWidth = 1;
-  ctx.setLineDash([3, 3]);
+  ctx.lineWidth = 1 * scale;
+  ctx.setLineDash([3 * scale, 3 * scale]);
   for (let ti = 0; ti < yTickCount; ti += 1) {
     const t = ti / (yTickCount - 1);
     const y = margin.t + t * pxH;
@@ -2939,13 +3030,13 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
   }
   ctx.setLineDash([]);
 
-  for (const s of perSampleY) {
-    ctx.strokeStyle = "rgba(155, 179, 204, 0.22)";
-    ctx.lineWidth = 1;
+  for (const sampleSeries of perSampleY) {
+    ctx.strokeStyle = "rgba(110, 170, 220, 0.24)";
+    ctx.lineWidth = 1.1 * scale;
     ctx.beginPath();
-    for (let i = 0; i < s.length; i += 1) {
+    for (let i = 0; i < sampleSeries.length; i += 1) {
       const x = xOf(i);
-      const y = yOf(s[i]);
+      const y = yOf(sampleSeries[i]);
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
@@ -2953,7 +3044,7 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
   }
 
   if (std.length === mean.length && mean.length > 1) {
-    ctx.fillStyle = "rgba(148, 163, 184, 0.16)";
+    ctx.fillStyle = "rgba(99, 177, 231, 0.19)";
     ctx.beginPath();
     for (let i = 0; i < meanY.length; i += 1) {
       const x = xOf(i);
@@ -2971,7 +3062,7 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
   }
 
   ctx.strokeStyle = lineColor;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2.2 * scale;
   ctx.beginPath();
   for (let i = 0; i < meanY.length; i += 1) {
     const x = xOf(i);
@@ -2985,8 +3076,8 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
     if (indicatorIdx >= startIdx && indicatorIdx <= endIdx) {
       const i = indicatorIdx - startIdx;
       const x = xOf(i);
-      ctx.strokeStyle = "#f59e0b";
-      ctx.lineWidth = 1.4;
+      ctx.strokeStyle = PROFILE_THEME.indicator;
+      ctx.lineWidth = 1.5 * scale;
       ctx.beginPath();
       ctx.moveTo(x, margin.t);
       ctx.lineTo(x, margin.t + pxH);
@@ -2994,15 +3085,15 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
     }
   }
 
-  ctx.fillStyle = "#9eb0c7";
-  ctx.font = "10px sans-serif";
+  ctx.fillStyle = "#b8c9de";
+  ctx.font = `${Math.round(11 * scale)}px Manrope, sans-serif`;
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
   for (let ti = 0; ti < yTickCount; ti += 1) {
     const t = ti / (yTickCount - 1);
     const value = fluxFromPlotValue(yMax - t * (yMax - yMin));
     const y = margin.t + t * pxH;
-    ctx.fillText(fmtIntensity(value), margin.l - 8, y);
+    ctx.fillText(fmtIntensity(value), margin.l - 8 * scale, y);
   }
 
   ctx.textAlign = "center";
@@ -3014,19 +3105,19 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
     const label = fmtAxisTick(axisName, axisUnit, c);
     const tw = ctx.measureText(label).width;
     const clampedX = clamp(x, margin.l + tw / 2, margin.l + pxW - tw / 2);
-    ctx.fillText(label, clampedX, h - 28);
+    ctx.fillText(label, clampedX, h - 33 * scale);
   }
 
-  ctx.fillStyle = "#b8c8dc";
-  ctx.font = "11px sans-serif";
+  ctx.fillStyle = "#d3e2f4";
+  ctx.font = `${Math.round(13 * scale)}px Manrope, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   const xLabelBase = axisUnit ? `${axisName.toUpperCase()} [${axisUnit}]` : axisName.toUpperCase();
   const xLabel = xLabelBase;
-  ctx.fillText(xLabel, margin.l + pxW / 2, h - 13);
+  ctx.fillText(xLabel, margin.l + pxW / 2, h - 15 * scale);
 
   ctx.save();
-  ctx.translate(28, margin.t + pxH / 2);
+  ctx.translate(34 * scale, margin.t + pxH / 2);
   ctx.rotate(-Math.PI / 2);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -3040,6 +3131,10 @@ function drawNavigationGraphs() {
   const tProfile = profileForAxis(state.viewProfiles, "t");
   const fProfile = profileForAxis(state.viewProfiles, "nu");
   const hProfile = profileForAxis(state.viewProfiles, hiddenAxis);
+
+  syncCanvasToDisplaySize(els.timeNavCanvas);
+  syncCanvasToDisplaySize(els.freqNavCanvas);
+  syncCanvasToDisplaySize(els.hiddenNavCanvas);
 
   drawNavigator(els.timeNavCanvas, tProfile, state.values.t, "t");
   drawNavigator(els.freqNavCanvas, fProfile, state.values.nu, "nu");
@@ -3066,9 +3161,13 @@ function drawSelectionGraphs() {
   const fProfile = profileForAxis(state.profiles, "nu");
   const hProfile = profileForAxis(state.profiles, hiddenAxis);
 
-  drawSelectionProfile(els.timeProfileCanvas, tProfile, "#7dd3fc", state.values.t);
-  drawSelectionProfile(els.spectrumProfileCanvas, fProfile, "#f472b6", state.values.nu);
-  drawSelectionProfile(els.spatialProfileCanvas, hProfile, "#6ee7b7", state.values[hiddenAxis]);
+  syncCanvasToDisplaySize(els.timeProfileCanvas);
+  syncCanvasToDisplaySize(els.spectrumProfileCanvas);
+  syncCanvasToDisplaySize(els.spatialProfileCanvas);
+
+  drawSelectionProfile(els.timeProfileCanvas, tProfile, PROFILE_THEME.time, state.values.t);
+  drawSelectionProfile(els.spectrumProfileCanvas, fProfile, PROFILE_THEME.spectral, state.values.nu);
+  drawSelectionProfile(els.spatialProfileCanvas, hProfile, PROFILE_THEME.spatial, state.values[hiddenAxis]);
 
   drawProfileZoomDragOverlay();
   updateSpatialProfileTitle(hProfile);
@@ -3246,13 +3345,15 @@ function handleWheelZoom(ev) {
 function navIndexFromEvent(canvas, ev, profile, axis) {
   const len = profile && profile.coords ? profile.coords.length : 0;
   if (len <= 1) return 0;
+  const s = canvasPixelRatio(canvas);
+  const margin = scaleInsets(NAV_MARGIN, s);
   const [startIdx, endIdx] = getAxisWindow(axis, len);
   const visibleCoords = profile.coords.slice(startIdx, endIdx + 1);
   const xmap = buildAxisXMapper(visibleCoords);
   const rect = canvas.getBoundingClientRect();
   const cx = (ev.clientX - rect.left) * (canvas.width / Math.max(1, rect.width));
-  const pxW = canvas.width - NAV_MARGIN.l - NAV_MARGIN.r;
-  const u = clamp((cx - NAV_MARGIN.l) / Math.max(1e-6, pxW), 0, 1);
+  const pxW = canvas.width - margin.l - margin.r;
+  const u = clamp((cx - margin.l) / Math.max(1e-6, pxW), 0, 1);
   return startIdx + xmap.nearestIndex(u);
 }
 
@@ -3476,6 +3577,104 @@ function promptForAxisMapping() {
   }
 }
 
+function dropUploadExt(name) {
+  const lower = String(name || "").toLowerCase();
+  const dot = lower.lastIndexOf(".");
+  if (dot < 0) return "";
+  return lower.slice(dot);
+}
+
+function updateViewerDropActive(active) {
+  if (!els.viewerPanel) return;
+  els.viewerPanel.classList.toggle("isDropActive", Boolean(active));
+}
+
+function resetViewerDropActive() {
+  viewerDropDragDepth = 0;
+  updateViewerDropActive(false);
+}
+
+function isFileDragEvent(ev) {
+  const types = ev?.dataTransfer?.types;
+  if (!types) return false;
+  return Array.from(types).includes("Files");
+}
+
+function isValidDroppedDatasetFile(file) {
+  const ext = dropUploadExt(file?.name);
+  if (!ext) {
+    setSystemPickerStatus("Dropped file has no extension.", true);
+    return false;
+  }
+  if (ext === ".zarr") {
+    setSystemPickerStatus("Drag-and-drop does not support .zarr folders yet. Use Load Data.", true);
+    return false;
+  }
+  if (!SUPPORTED_DROP_UPLOAD_EXTS.has(ext)) {
+    setSystemPickerStatus(`Unsupported file type: ${ext}`, true);
+    return false;
+  }
+  return true;
+}
+
+function installDatasetDropHandlers() {
+  if (!els.viewerPanel) return;
+
+  els.viewerPanel.addEventListener("dragenter", (ev) => {
+    if (!isFileDragEvent(ev)) return;
+    ev.preventDefault();
+    viewerDropDragDepth += 1;
+    updateViewerDropActive(true);
+  });
+
+  els.viewerPanel.addEventListener("dragover", (ev) => {
+    if (!isFileDragEvent(ev)) return;
+    ev.preventDefault();
+    updateViewerDropActive(true);
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = "copy";
+  });
+
+  els.viewerPanel.addEventListener("dragleave", (ev) => {
+    if (!isFileDragEvent(ev)) return;
+    ev.preventDefault();
+    viewerDropDragDepth = Math.max(0, viewerDropDragDepth - 1);
+    if (viewerDropDragDepth === 0) updateViewerDropActive(false);
+  });
+
+  // Prevent default browser file-open on drop anywhere in the app window.
+  window.addEventListener("dragover", (ev) => {
+    if (!isFileDragEvent(ev)) return;
+    ev.preventDefault();
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = "copy";
+  });
+
+  window.addEventListener("drop", (ev) => {
+    if (!isFileDragEvent(ev)) return;
+    ev.preventDefault();
+    resetViewerDropActive();
+  });
+
+  els.viewerPanel.addEventListener("drop", async (ev) => {
+    if (!isFileDragEvent(ev)) return;
+    ev.preventDefault();
+    resetViewerDropActive();
+
+    const droppedFiles = ev.dataTransfer?.files;
+    if (!droppedFiles || !droppedFiles.length) {
+      setSystemPickerStatus("No dataset file detected in drop.", true);
+      return;
+    }
+    if (droppedFiles.length > 1) {
+      setSystemPickerStatus("Please drop a single dataset file.", true);
+      return;
+    }
+
+    const file = droppedFiles[0];
+    if (!isValidDroppedDatasetFile(file)) return;
+    await loadDatasetFromUpload(file);
+  });
+}
+
 async function loadDatasetFromLocalPath(path, options = {}) {
   const dims = Array.isArray(options.dims) ? options.dims : null;
   const padMissingDims = Boolean(options.padMissingDims);
@@ -3511,6 +3710,51 @@ async function loadDatasetFromLocalPath(path, options = {}) {
       const mapping = promptForAxisMapping();
       if (mapping) {
         await loadDatasetFromLocalPath(path, { dims: mapping, padMissingDims: true });
+        return;
+      }
+      setSystemPickerStatus("Load canceled (manual axis mapping not provided).", true);
+      return;
+    }
+    setSystemPickerStatus(`Load failed: ${err.message}`, true);
+  }
+}
+
+async function loadDatasetFromUpload(file, options = {}) {
+  const dims = Array.isArray(options.dims) ? options.dims : null;
+  const padMissingDims = Boolean(options.padMissingDims);
+  if (dims && dims.length) {
+    setSystemPickerStatus(`Loading dataset with manual axes: ${dims.join(", ")}`);
+  } else {
+    setSystemPickerStatus(`Uploading dataset: ${file.name}`);
+  }
+  try {
+    const body = new FormData();
+    body.append("file", file, file.name || "dataset");
+    if (dims && dims.length) {
+      body.append("dims", dims.join(","));
+      body.append("pad_missing_dims", String(padMissingDims));
+    }
+
+    const payload = await fetchJson("/api/upload-local", {
+      method: "POST",
+      body,
+    });
+    await refreshDatasetOptions(payload.loaded);
+    els.datasetSelect.value = payload.loaded;
+    await onDatasetChange();
+    const padded = Array.isArray(payload.padded_dims) ? payload.padded_dims : [];
+    if (padded.length) {
+      setSystemPickerStatus(
+        `Loaded ${payload.loaded} (${payload.shape.join("x")}); padded axes: ${padded.join(", ")}`
+      );
+      return;
+    }
+    setSystemPickerStatus(`Loaded ${payload.loaded} (${payload.shape.join("x")})`);
+  } catch (err) {
+    if (!dims && shouldOfferAxisMapping(err.message)) {
+      const mapping = promptForAxisMapping();
+      if (mapping) {
+        await loadDatasetFromUpload(file, { dims: mapping, padMissingDims: true });
         return;
       }
       setSystemPickerStatus("Load canceled (manual axis mapping not provided).", true);
@@ -3586,6 +3830,7 @@ async function init() {
   if (state.sliceRender.backend !== "cpu") ensureSliceGpuRenderer();
   if (state.volumeRender.backend !== "cpu") ensureVolumeGpuRenderer();
 
+  installDatasetDropHandlers();
   els.datasetSelect.addEventListener("change", onDatasetChange);
   els.systemPickerBtn.addEventListener("click", () => pickPathWithSystemDialog());
 
@@ -3674,7 +3919,7 @@ async function init() {
   els.evpaDensitySelect.addEventListener("change", async () => {
     const step = Number.parseInt(els.evpaDensitySelect.value, 10);
     if (Number.isFinite(step)) {
-      state.evpaStep = clamp(step, 4, 32);
+      state.evpaStep = clamp(step, 2, 32);
       updatePolButtonState();
       if (state.showEvpa) await refreshSlice();
     }

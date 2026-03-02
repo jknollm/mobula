@@ -3,17 +3,25 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>nCube Demo</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <title>mobula</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Michroma&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css?v=20260302e" />
   </head>
   <body>
     <main class="layout">
-      <header class="panel">
-        <h1>nCube Demo</h1>
-        <p>
-          Local high-dimensional mock cube viewer
-          <code>(sample, pol, t, nu, x, y, z)</code>
-        </p>
+      <header class="panel brandPanel">
+        <div class="brandLockup">
+          <img class="brandLogo" src="/static/assets/mobula_logo.png" alt="Mobula logo" />
+          <div class="brandText">
+            <h1 class="brandWordmark">MOBULA</h1>
+            <p class="brandTagline">Navigating Domains</p>
+          </div>
+        </div>
       </header>
 
       <div id="workspaceRow" class="workspaceRow">
@@ -34,6 +42,7 @@
               <option value="viridis">Viridis</option>
               <option value="plasma">Plasma</option>
               <option value="inferno">Inferno</option>
+              <option value="ehtplot">ehtplot</option>
               <option value="gray">Gray</option>
               <option value="diverging">Diverging</option>
               <option value="circular">Circular</option>
@@ -258,10 +267,9 @@
               <label>
                 Density
                 <select id="evpaDensitySelect">
-                  <option value="4">Dense</option>
-                  <option value="8" selected>Medium</option>
-                  <option value="12">Sparse</option>
-                  <option value="16">Very Sparse</option>
+                  <option value="8" selected>Sparse</option>
+                  <option value="4">Medium</option>
+                  <option value="2">Dense</option>
                 </select>
               </label>
             </div>
@@ -327,6 +335,6 @@
       </section>
       </div>
     </main>
-    <script type="module" src="/static/app.js"></script>
+    <script type="module" src="/static/app.js?v=20260302f"></script>
   </body>
 </html>

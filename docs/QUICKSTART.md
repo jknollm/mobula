@@ -15,6 +15,7 @@ Open `http://127.0.0.1:8000`.
 - In the **Data** panel, choose a dataset from the **Dataset** dropdown.
 - Demo datasets are labeled with `[DEMO]`.
 - Or click **Load Data** to select a local `.h5`, `.hdf5`, `.fits`, `.fit`, `.fts`, or `.zarr` dataset.
+- Or drag and drop a local `.h5`, `.hdf5`, `.fits`, `.fit`, or `.fts` file into the central viewer panel.
 
 ## 3. Inspect slices
 

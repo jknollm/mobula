@@ -9,9 +9,8 @@ from ncube.service.registry import DatasetRegistry
 
 
 def build_router(registry: DatasetRegistry) -> APIRouter:
-    router = APIRouter(prefix="/api", tags=["ncube"])
+    router = APIRouter(prefix="/api", tags=["mobula"])
     _register_core_routes(router, registry)
     _register_slice_routes(router, registry)
     _register_profile_routes(router, registry)
     return router
-
