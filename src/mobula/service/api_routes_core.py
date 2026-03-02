@@ -8,9 +8,9 @@ from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from ncube.service.api_models import LoadLocalRequest, PickLocalPathRequest
-from ncube.service.api_utils import _coords_summary, _dim_size, _safe_dataset
-from ncube.service.registry import DatasetRegistry
+from mobula.service.api_models import LoadLocalRequest, PickLocalPathRequest
+from mobula.service.api_utils import _coords_summary, _dim_size, _safe_dataset
+from mobula.service.registry import DatasetRegistry
 
 SUPPORTED_LOCAL_DATASET_EXTS = {".h5", ".hdf5", ".fits", ".fit", ".fts", ".zarr"}
 

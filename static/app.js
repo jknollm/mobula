@@ -674,7 +674,7 @@ function isMultiSpectralActive() {
   return state.multiSpectral && canUseMultiSpectral();
 }
 
-const PANEL_WIDTH_STORAGE_KEY = "ncube-panel-widths-v1";
+const PANEL_WIDTH_STORAGE_KEY = "mobula-panel-widths-v1";
 
 function isNarrowLayout() {
   return window.matchMedia("(max-width: 1100px)").matches;

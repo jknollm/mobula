@@ -5,10 +5,10 @@ from typing import Any
 import numpy as np
 from fastapi import HTTPException
 
-from ncube.data.schema import CubeDataset
-from ncube.service.api_compute import _profile_series, _profile_series_for_region
-from ncube.service.api_models import PlaneProfilesRequest, ProfilesRequest, RoiStatsRequest
-from ncube.service.api_utils import _clamp_dim_bounds, _clamp_roi_bounds, _index_or_mid
+from mobula.data.schema import CubeDataset
+from mobula.service.api_compute import _profile_series, _profile_series_for_region
+from mobula.service.api_models import PlaneProfilesRequest, ProfilesRequest, RoiStatsRequest
+from mobula.service.api_utils import _clamp_dim_bounds, _clamp_roi_bounds, _index_or_mid
 
 
 def build_profiles_response(ds: CubeDataset, req: ProfilesRequest) -> dict[str, Any]:

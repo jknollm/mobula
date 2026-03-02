@@ -12,7 +12,7 @@ python -m pip install -r requirements.txt
 Run app:
 
 ```bash
-PYTHONPATH=src uvicorn ncube.main:app --host 127.0.0.1 --port 8000 --reload
+PYTHONPATH=src uvicorn mobula.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ## Test Suite
@@ -65,7 +65,7 @@ Requires app to be running.
 
 ## Project Layout
 
-- `src/ncube/`: backend application and data/model logic
+- `src/mobula/`: backend application and data/model logic
 - `static/`: browser UI assets
 - `tests/`: pytest coverage for API, loaders, and registry
 - `scripts/`: utility scripts for benchmark and dataset generation

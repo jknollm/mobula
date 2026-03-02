@@ -4,7 +4,7 @@
 
 Symptom:
 
-- `ModuleNotFoundError: No module named 'ncube'`
+- `ModuleNotFoundError: No module named 'mobula'`
 
 Fix:
 

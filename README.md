@@ -1,6 +1,6 @@
-# nCube
+# mobula
 
-nCube is a local interactive viewer for high-dimensional cube data with canonical axes:
+mobula is a local interactive viewer for high-dimensional cube data with canonical axes:
 
 ```text
 sample, pol, t, nu, x, y, z
@@ -49,7 +49,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-PYTHONPATH=src uvicorn ncube.main:app --host 127.0.0.1 --port 8000 --reload
+PYTHONPATH=src uvicorn mobula.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ## Useful Commands

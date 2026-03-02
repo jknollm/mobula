@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from fastapi import HTTPException
 
-from ncube.service.api import (
+from mobula.service.api import (
     _clamp_dim_bounds,
     _clamp_roi_bounds,
     _downsample_2d,

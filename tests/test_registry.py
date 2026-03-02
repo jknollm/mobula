@@ -7,9 +7,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ncube.data.mock_cube import MockCubeConfig, generate_mock_dataset
-from ncube.data.schema import CubeDataset
-from ncube.service.registry import DatasetRegistry, DatasetSummary
+from mobula.data.mock_cube import MockCubeConfig, generate_mock_dataset
+from mobula.data.schema import CubeDataset
+from mobula.service.registry import DatasetRegistry, DatasetSummary
 
 
 def _tiny_dataset(data_id: str = "tiny") -> CubeDataset:

@@ -4,10 +4,10 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from ncube.service.api_models import PlaneProfilesRequest, ProfilesRequest, RoiStatsRequest
-from ncube.service.api_utils import _safe_dataset
-from ncube.service.profile_service import build_plane_profiles_response, build_profiles_response, build_roi_stats_response
-from ncube.service.registry import DatasetRegistry
+from mobula.service.api_models import PlaneProfilesRequest, ProfilesRequest, RoiStatsRequest
+from mobula.service.api_utils import _safe_dataset
+from mobula.service.profile_service import build_plane_profiles_response, build_profiles_response, build_roi_stats_response
+from mobula.service.registry import DatasetRegistry
 
 
 def _register_profile_routes(router: APIRouter, registry: DatasetRegistry) -> None:

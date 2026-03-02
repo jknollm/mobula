@@ -1,4 +1,4 @@
-# nCube Documentation
+# mobula Documentation
 
 This project ships a FastAPI backend and a browser-based viewer for local high-dimensional cubes.
 

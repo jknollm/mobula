@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 
-from ncube.data.loaders import load_by_extension, pad_dataset_to_canonical
-from ncube.data.mock_cube import MockCubeConfig, generate_mock_dataset
-from ncube.data.schema import CubeDataset
+from mobula.data.loaders import load_by_extension, pad_dataset_to_canonical
+from mobula.data.mock_cube import MockCubeConfig, generate_mock_dataset
+from mobula.data.schema import CubeDataset
 
 
 @dataclass(slots=True)

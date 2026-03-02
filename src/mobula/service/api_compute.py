@@ -5,9 +5,9 @@ from typing import Any
 import numpy as np
 from fastapi import HTTPException
 
-from ncube.data.schema import CubeDataset
-from ncube.service.api_models import SampleMode
-from ncube.service.api_utils import _index_or_mid, _relative_uncertainty
+from mobula.data.schema import CubeDataset
+from mobula.service.api_models import SampleMode
+from mobula.service.api_utils import _index_or_mid, _relative_uncertainty
 
 
 def _profile_series_for_region(

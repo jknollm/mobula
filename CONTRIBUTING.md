@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for contributing to nCube.
+Thanks for contributing to mobula.
 
 ## Before You Start
 

@@ -14,4 +14,4 @@ python -m pip install -r requirements.txt >/dev/null
 PYTHONPATH="${ROOT_DIR}/src" python scripts/seed_local_datasets.py >/dev/null
 
 export PYTHONPATH="${ROOT_DIR}/src"
-exec uvicorn ncube.main:app --host 127.0.0.1 --port 8000 --reload
+exec uvicorn mobula.main:app --host 127.0.0.1 --port 8000 --reload

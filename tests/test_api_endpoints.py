@@ -6,8 +6,8 @@ import subprocess
 import numpy as np
 import pytest
 
-from ncube.data.schema import CubeDataset
-from ncube.service import api_routes_core
+from mobula.data.schema import CubeDataset
+from mobula.service import api_routes_core
 
 
 def _data_id(base_dataset) -> str:

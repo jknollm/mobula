@@ -35,7 +35,7 @@ def timed_post(client: httpx.Client, url: str, json: dict[str, Any]) -> float:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="nCube demo API benchmark")
+    parser = argparse.ArgumentParser(description="mobula demo API benchmark")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="API base URL")
     parser.add_argument("--dataset", default="demo-quicklook-7d-pol-samples", help="dataset id")
     parser.add_argument("--n", type=int, default=60, help="number of measured iterations")
@@ -96,7 +96,7 @@ def main() -> None:
             }
             roi_lat.append(timed_post(client, roi_url, body))
 
-    print("nCube demo benchmark")
+    print("mobula demo benchmark")
     print(f"dataset: {args.dataset}")
     print(f"iterations: {args.n}")
     print("slice latency (ms):")

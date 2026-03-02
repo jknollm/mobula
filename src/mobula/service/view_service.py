@@ -5,10 +5,10 @@ from typing import Any
 import numpy as np
 from fastapi import HTTPException
 
-from ncube.data.schema import CubeDataset
-from ncube.service.api_compute import _extract_2d_slice, _extract_3d_volume
-from ncube.service.api_models import RangeMode, SampleMode
-from ncube.service.api_utils import _clamp_dim_bounds, _dim_size, _downsample_2d, _index_or_mid, _relative_uncertainty
+from mobula.data.schema import CubeDataset
+from mobula.service.api_compute import _extract_2d_slice, _extract_3d_volume
+from mobula.service.api_models import RangeMode, SampleMode
+from mobula.service.api_utils import _clamp_dim_bounds, _dim_size, _downsample_2d, _index_or_mid, _relative_uncertainty
 
 
 def build_slice_response(

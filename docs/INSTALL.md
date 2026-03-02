@@ -1,6 +1,6 @@
 # Installation Guide
 
-This guide installs nCube for local development and demo usage.
+This guide installs mobula for local development and demo usage.
 
 ## Requirements
 
@@ -40,7 +40,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-PYTHONPATH=src uvicorn ncube.main:app --host 127.0.0.1 --port 8000 --reload
+PYTHONPATH=src uvicorn mobula.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ## Install Notes

@@ -7,7 +7,7 @@ import h5py
 import numpy as np
 from astropy.io import fits
 
-from ncube.data.mock_cube import MockCubeConfig, generate_mock_dataset
+from mobula.data.mock_cube import MockCubeConfig, generate_mock_dataset
 
 
 def export_hdf5(ds_values: np.ndarray, out_path: Path) -> None:

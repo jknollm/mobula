@@ -6,8 +6,8 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from ncube.service.api import build_router
-from ncube.service.registry import DatasetRegistry
+from mobula.service.api import build_router
+from mobula.service.registry import DatasetRegistry
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 STATIC_DIR = BASE_DIR / "static"

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from ncube.service.api_compute import _extract_2d_slice, _extract_3d_volume, _profile_series_for_region
-from ncube.service.api_models import PlaneProfilesRequest, ProfilesRequest, RangeMode, RoiStatsRequest, SampleMode
-from ncube.service.api_router import build_router
-from ncube.service.api_utils import (
+from mobula.service.api_compute import _extract_2d_slice, _extract_3d_volume, _profile_series_for_region
+from mobula.service.api_models import PlaneProfilesRequest, ProfilesRequest, RangeMode, RoiStatsRequest, SampleMode
+from mobula.service.api_router import build_router
+from mobula.service.api_utils import (
     _clamp_dim_bounds,
     _clamp_roi_bounds,
     _downsample_2d,

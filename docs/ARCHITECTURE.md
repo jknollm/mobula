@@ -1,37 +1,37 @@
 # Architecture
 
-nCube is a single-process FastAPI app serving both API endpoints and static browser UI.
+mobula is a single-process FastAPI app serving both API endpoints and static browser UI.
 
 ## Runtime Topology
 
-- FastAPI app in `src/ncube/main.py`
-- API router under `/api` composed in `src/ncube/service/api_router.py`
+- FastAPI app in `src/mobula/main.py`
+- API router under `/api` composed in `src/mobula/service/api_router.py`
 - Static frontend served from `static/`
 - In-memory dataset registry with lazy dataset materialization
 
 ## Core Backend Modules
 
-- `src/ncube/data/schema.py`
+- `src/mobula/data/schema.py`
   - canonical dims
   - dataset model and validation
   - reorder-to-canonical utilities
-- `src/ncube/data/loaders.py`
+- `src/mobula/data/loaders.py`
   - FITS/HDF5/Zarr ingestion
   - metadata extraction and dim normalization
   - optional canonical padding
-- `src/ncube/service/registry.py`
+- `src/mobula/service/registry.py`
   - dataset registry
   - built-in demo dataset specs
   - optional seeded-manifest lazy datasets
-- `src/ncube/service/api_routes_core.py`
+- `src/mobula/service/api_routes_core.py`
   - health, dataset listing, local file picker, local loader, dataset metadata
-- `src/ncube/service/api_routes_views.py`
+- `src/mobula/service/api_routes_views.py`
   - slice, volume, intensity-range, multispectral, EVPA
-- `src/ncube/service/api_routes_profiles.py`
+- `src/mobula/service/api_routes_profiles.py`
   - ROI stats and profile endpoints
-- `src/ncube/service/view_service.py`
+- `src/mobula/service/view_service.py`
   - view payload construction and statistical summaries
-- `src/ncube/service/profile_service.py`
+- `src/mobula/service/profile_service.py`
   - ROI and profile computations
 
 ## Frontend Structure

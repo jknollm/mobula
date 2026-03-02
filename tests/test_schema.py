@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ncube.data.schema import CANONICAL_DIMS, CubeDataset, is_canonical_order, reorder_to_canonical
+from mobula.data.schema import CANONICAL_DIMS, CubeDataset, is_canonical_order, reorder_to_canonical
 
 
 def _valid_dataset() -> CubeDataset:

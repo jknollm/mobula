@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from fastapi.testclient import TestClient
 
-from ncube.main import app
+from mobula.main import app
 
 
 def test_health() -> None:

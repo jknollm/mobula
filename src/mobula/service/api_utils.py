@@ -5,9 +5,9 @@ from typing import Any
 import numpy as np
 from fastapi import HTTPException
 
-from ncube.data.schema import CubeDataset
-from ncube.service.api_models import RangeMode, SampleMode
-from ncube.service.registry import DatasetRegistry
+from mobula.data.schema import CubeDataset
+from mobula.service.api_models import RangeMode, SampleMode
+from mobula.service.registry import DatasetRegistry
 
 
 def _safe_dataset(registry: DatasetRegistry, data_id: str) -> CubeDataset:

@@ -4,9 +4,9 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
-from ncube.service.api_utils import _parse_range_mode, _parse_sample_mode, _safe_dataset
-from ncube.service.registry import DatasetRegistry
-from ncube.service.view_service import (
+from mobula.service.api_utils import _parse_range_mode, _parse_sample_mode, _safe_dataset
+from mobula.service.registry import DatasetRegistry
+from mobula.service.view_service import (
     build_evpa_response,
     build_intensity_range_response,
     build_multispectral_response,

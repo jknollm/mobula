@@ -1,6 +1,6 @@
 # Data Loading and Axis Mapping
 
-nCube normalizes all datasets into canonical axis order:
+mobula normalizes all datasets into canonical axis order:
 
 ```text
 sample, pol, t, nu, x, y, z

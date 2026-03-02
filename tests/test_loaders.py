@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ncube.data.loaders import load_by_extension, load_fits, load_hdf5, load_zarr, pad_dataset_to_canonical
+from mobula.data.loaders import load_by_extension, load_fits, load_hdf5, load_zarr, pad_dataset_to_canonical
 
 
 def test_load_hdf5_reads_dims_units_and_coords(tmp_path: Path) -> None:

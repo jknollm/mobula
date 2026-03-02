@@ -12,7 +12,7 @@ import numpy as np
 from astropy.io import fits
 import zarr
 
-from ncube.data.mock_cube import MockCubeConfig, generate_mock_dataset
+from mobula.data.mock_cube import MockCubeConfig, generate_mock_dataset
 
 
 SEED_CONFIG = MockCubeConfig(sample=3, pol=4, t=6, nu=8, x=32, y=32, z=3, seed=2026, model="dynamic")
@@ -147,7 +147,7 @@ def write_manifest(out_dir: Path, dims: tuple[str, ...], shape: tuple[int, ...],
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Seed local test datasets and manifest for nCube.")
+    parser = argparse.ArgumentParser(description="Seed local test datasets and manifest for mobula.")
     parser.add_argument(
         "--out-dir",
         default="data/seeded",

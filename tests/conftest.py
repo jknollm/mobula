@@ -8,10 +8,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from ncube.data.mock_cube import MockCubeConfig, generate_mock_dataset
-from ncube.data.schema import CubeDataset
-from ncube.service.api import build_router
-from ncube.service.registry import DatasetRegistry
+from mobula.data.mock_cube import MockCubeConfig, generate_mock_dataset
+from mobula.data.schema import CubeDataset
+from mobula.service.api import build_router
+from mobula.service.registry import DatasetRegistry
 
 
 @pytest.fixture()
