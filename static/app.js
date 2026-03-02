@@ -104,6 +104,14 @@ const els = {
   systemPickerStatus: document.getElementById("systemPickerStatus"),
   colorMapSelect: document.getElementById("colorMapSelect"),
   colorRangeModeSelect: document.getElementById("colorRangeModeSelect"),
+  colorNormRangeBlock: document.getElementById("colorNormRangeBlock"),
+  colorNormTrack: document.getElementById("colorNormTrack"),
+  colorNormMinRange: document.getElementById("colorNormMinRange"),
+  colorNormMaxRange: document.getElementById("colorNormMaxRange"),
+  colorNormMinValue: document.getElementById("colorNormMinValue"),
+  colorNormMaxValue: document.getElementById("colorNormMaxValue"),
+  colorNormBoundMin: document.getElementById("colorNormBoundMin"),
+  colorNormBoundMax: document.getElementById("colorNormBoundMax"),
   sliceBackendSelect: document.getElementById("sliceBackendSelect"),
   fluxScaleLinearBtn: document.getElementById("fluxScaleLinearBtn"),
   fluxScaleSqrtBtn: document.getElementById("fluxScaleSqrtBtn"),
@@ -113,10 +121,16 @@ const els = {
   sampleModeRelBtn: document.getElementById("sampleModeRelBtn"),
   sampleModeSamplesBtn: document.getElementById("sampleModeSamplesBtn"),
   sampleModeBlock: document.getElementById("sampleModeBlock"),
+  sampleViewControls: document.getElementById("sampleViewControls"),
+  sampleViewMosaicBtn: document.getElementById("sampleViewMosaicBtn"),
+  sampleViewMorphBtn: document.getElementById("sampleViewMorphBtn"),
   sampleMosaicControls: document.getElementById("sampleMosaicControls"),
+  sampleMorphControls: document.getElementById("sampleMorphControls"),
+  sampleMorphDeltaSelect: document.getElementById("sampleMorphDeltaSelect"),
+  sampleMorphStatus: document.getElementById("sampleMorphStatus"),
   sampleGridCountSelect: document.getElementById("sampleGridCountSelect"),
   resampleSamplesBtn: document.getElementById("resampleSamplesBtn"),
-  playSpeedLabel: document.getElementById("playSpeedLabel"),
+  playbackTimingControls: document.getElementById("playbackTimingControls"),
   playSpeedSelect: document.getElementById("playSpeedSelect"),
 
   planeSelect: document.getElementById("planeSelect"),
@@ -128,7 +142,6 @@ const els = {
   hiddenPlayBtn: document.getElementById("hiddenPlayBtn"),
   hiddenNavPanel: document.getElementById("hiddenNavPanel"),
   volumeRenderControls: document.getElementById("volumeRenderControls"),
-  volumeBackendSelect: document.getElementById("volumeBackendSelect"),
   volumeBackendStatus: document.getElementById("volumeBackendStatus"),
   volumeQualitySelect: document.getElementById("volumeQualitySelect"),
   volumeRenderModeSelect: document.getElementById("volumeRenderModeSelect"),
@@ -137,8 +150,6 @@ const els = {
   volumeOpacityValue: document.getElementById("volumeOpacityValue"),
   volumeGammaRange: document.getElementById("volumeGammaRange"),
   volumeGammaValue: document.getElementById("volumeGammaValue"),
-  volumeCutoffRange: document.getElementById("volumeCutoffRange"),
-  volumeCutoffValue: document.getElementById("volumeCutoffValue"),
   volumeClipNearRange: document.getElementById("volumeClipNearRange"),
   volumeClipNearValue: document.getElementById("volumeClipNearValue"),
   volumeClipFarRange: document.getElementById("volumeClipFarRange"),
@@ -206,11 +217,32 @@ const state = {
   values: { sample: 0, pol: 0, t: 0, nu: 0, x: 0, y: 0, z: 0 },
 
   sampleMode: "mean",
+  sampleSingleView: "mosaic",
+  sampleMorphDeltaT: 0.5,
   sampleGridSize: 1,
   sampleGridIndices: [0],
   activeSampleTile: 0,
+  sampleMorph: {
+    token: 0,
+    fromSample: 0,
+    toSample: 0,
+    alpha: 0,
+    initializing: false,
+    sharedStats: null,
+    fromSlice: null,
+    toSlice: null,
+    fromVolume: null,
+    toVolume: null,
+    fromEvpaTicks: [],
+    toEvpaTicks: [],
+    fromCanvas: null,
+    toCanvas: null,
+    blendCanvas: null,
+    multispectral: false,
+  },
   colorMap: "viridis",
-  colorRangeMode: "none",
+  colorRangeMode: "full",
+  colorNormValueWindow: { min: null, max: null },
   spatialMode: "slice",
   fluxScale: "linear",
   multiSpectral: false,
@@ -230,6 +262,7 @@ const state = {
   frameGrid: 1,
   drawTiles: [],
   currentMonoSlice: null,
+  currentMonoSliceTiles: null,
   currentVolume: null,
   currentVolumeTiles: null,
   currentIntensityStats: null,
@@ -256,6 +289,7 @@ const state = {
   playbackAxis: null,
   playbackFps: 7,
   playbackTimer: null,
+  sampleMorphTimer: null,
   playbackBusy: false,
   playbackRefineToken: 0,
   playbackPreviewMaxPixels: 360000,
@@ -263,19 +297,19 @@ const state = {
   _selectionToken: 0,
   _viewProfileToken: 0,
   _resizePanelsRaf: 0,
+  _colorNormRerenderTimer: null,
   profileZoom: {},
   panelWidths: { left: null, right: null },
   volumeYaw: 0.65,
   volumePitch: -0.45,
   volumeZoom: 1.0,
   volumeRender: {
-    backend: "auto",
     quality: "balanced",
     mode: "composite",
     tf: "linear",
     opacity: 1.2,
     gamma: 0.9,
-    cutoff: 0.06,
+    cutoff: 0.0,
     clipNear: 0.0,
     clipFar: 1.0,
     isoThreshold: 0.45,
@@ -302,6 +336,17 @@ const COLOR_RANGE_MODE_LABEL = {
   space: "space-fixed",
   full: "full-fixed",
 };
+const COLOR_RANGE_MODE_OPTIONS = [
+  { value: "none", label: "None" },
+  { value: "time", label: "Time" },
+  { value: "spectral", label: "Spectral" },
+  { value: "time_spectral", label: "Time+Spectral" },
+  { value: "space", label: "Space" },
+  { value: "full", label: "Full" },
+];
+const COLOR_NORM_SLIDER_STEPS = 1000;
+const COLOR_NORM_SLIDER_MIN_GAP = 1 / COLOR_NORM_SLIDER_STEPS;
+const SAMPLE_MORPH_AXIS = "__sample_morph__";
 const DERIVED_POL_MODES = {
   none: { label: "None" },
   frac: { label: "Fractional Polarisation" },
@@ -436,7 +481,7 @@ function gpuAvailable() {
 
 function volumeBackendMode() {
   if (state.fluxScale === "sqrt") return "cpu";
-  const requested = state.volumeRender.backend;
+  const requested = state.sliceRender.backend;
   if (requested === "cpu") return "cpu";
   if (!gpuAvailableKnown()) ensureVolumeGpuRenderer();
   if (requested === "gpu") return gpuAvailable() ? "gpu" : "cpu";
@@ -462,20 +507,38 @@ function sliceBackendMode(width = 0, height = 0) {
   return pixels >= 512 * 512 ? "gpu" : "cpu";
 }
 
+function setSliderFill(rangeEl) {
+  if (!rangeEl) return;
+  const min = Number.parseFloat(rangeEl.min);
+  const max = Number.parseFloat(rangeEl.max);
+  const value = Number.parseFloat(rangeEl.value);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || !Number.isFinite(value) || max <= min) {
+    rangeEl.style.setProperty("--slider-pct", "50%");
+    return;
+  }
+  const pct = ((value - min) / (max - min)) * 100;
+  rangeEl.style.setProperty("--slider-pct", `${clamp(pct, 0, 100).toFixed(3)}%`);
+}
+
+function updateVolumeSliderTrackFill() {
+  setSliderFill(els.volumeOpacityRange);
+  setSliderFill(els.volumeGammaRange);
+  setSliderFill(els.volumeClipNearRange);
+  setSliderFill(els.volumeClipFarRange);
+  setSliderFill(els.volumeIsoThresholdRange);
+}
+
 function updateVolumeControlReadouts() {
-  if (els.volumeBackendSelect) els.volumeBackendSelect.value = state.volumeRender.backend;
   if (els.volumeQualitySelect) els.volumeQualitySelect.value = state.volumeRender.quality;
   if (els.volumeRenderModeSelect) els.volumeRenderModeSelect.value = state.volumeRender.mode;
   if (els.volumeTfSelect) els.volumeTfSelect.value = state.volumeRender.tf;
   if (els.volumeOpacityRange) els.volumeOpacityRange.value = String(state.volumeRender.opacity);
   if (els.volumeGammaRange) els.volumeGammaRange.value = String(state.volumeRender.gamma);
-  if (els.volumeCutoffRange) els.volumeCutoffRange.value = String(state.volumeRender.cutoff);
   if (els.volumeClipNearRange) els.volumeClipNearRange.value = String(state.volumeRender.clipNear);
   if (els.volumeClipFarRange) els.volumeClipFarRange.value = String(state.volumeRender.clipFar);
   if (els.volumeIsoThresholdRange) els.volumeIsoThresholdRange.value = String(state.volumeRender.isoThreshold);
   if (els.volumeOpacityValue) els.volumeOpacityValue.textContent = `${state.volumeRender.opacity.toFixed(1)}x`;
   if (els.volumeGammaValue) els.volumeGammaValue.textContent = state.volumeRender.gamma.toFixed(2);
-  if (els.volumeCutoffValue) els.volumeCutoffValue.textContent = state.volumeRender.cutoff.toFixed(2);
   if (els.volumeClipNearValue) els.volumeClipNearValue.textContent = state.volumeRender.clipNear.toFixed(2);
   if (els.volumeClipFarValue) els.volumeClipFarValue.textContent = state.volumeRender.clipFar.toFixed(2);
   if (els.volumeIsoThresholdValue) els.volumeIsoThresholdValue.textContent = state.volumeRender.isoThreshold.toFixed(2);
@@ -484,26 +547,74 @@ function updateVolumeControlReadouts() {
   setVisible(els.volumeTfSelect ? els.volumeTfSelect.closest("label") : null, compositeLike);
   setVisible(els.volumeOpacityRange ? els.volumeOpacityRange.closest("label") : null, compositeLike);
   setVisible(els.volumeGammaRange ? els.volumeGammaRange.closest("label") : null, compositeLike);
-  setVisible(els.volumeCutoffRange ? els.volumeCutoffRange.closest("label") : null, compositeLike);
   setVisible(els.volumeIsoThresholdLabel, isoMode);
+  updateVolumeSliderTrackFill();
   if (els.volumeBackendStatus) {
     const zoomMsg = `Scroll: zoom ${state.volumeZoom.toFixed(2)}x`;
     const modeMsg = `Mode: ${state.volumeRender.mode}`;
+    const requested = state.sliceRender.backend;
+    const requestMsg = `follows Backend (${requested.toUpperCase()})`;
+    if (state.fluxScale === "sqrt") {
+      els.volumeBackendStatus.textContent = `GPU backend: ${requestMsg}, using CPU for sqrt scale. ${modeMsg}. ${zoomMsg}`;
+      return;
+    }
     if (!gpuAvailableKnown()) {
-      els.volumeBackendStatus.textContent = `GPU backend: probing WebGL2 support. ${modeMsg}. ${zoomMsg}`;
+      els.volumeBackendStatus.textContent = `GPU backend: ${requestMsg}, probing WebGL2 support. ${modeMsg}. ${zoomMsg}`;
     } else if (gpuAvailable()) {
       const mode = volumeBackendMode() === "gpu" ? "using GPU" : "available, currently on CPU";
-      els.volumeBackendStatus.textContent = `GPU backend: WebGL2 available, ${mode}. ${modeMsg}. ${zoomMsg}`;
+      els.volumeBackendStatus.textContent = `GPU backend: WebGL2 available, ${requestMsg}, ${mode}. ${modeMsg}. ${zoomMsg}`;
     } else if (state.volumeGpu.lastError) {
-      els.volumeBackendStatus.textContent = `GPU backend unavailable (${state.volumeGpu.lastError}); using CPU. ${modeMsg}. ${zoomMsg}`;
+      els.volumeBackendStatus.textContent = `GPU backend unavailable (${state.volumeGpu.lastError}); ${requestMsg}, using CPU. ${modeMsg}. ${zoomMsg}`;
     } else {
-      els.volumeBackendStatus.textContent = `GPU backend unavailable; using CPU. ${modeMsg}. ${zoomMsg}`;
+      els.volumeBackendStatus.textContent = `GPU backend unavailable; ${requestMsg}, using CPU. ${modeMsg}. ${zoomMsg}`;
     }
   }
 }
 
 function isPlaying() {
   return state.playbackTimer !== null;
+}
+
+function isSampleMorphPlaybackActive() {
+  return state.sampleMorphTimer !== null;
+}
+
+function shouldAutoPlaySampleMorph() {
+  return Boolean(state.dataId) && isSampleMorphMode() && sampleCount() > 1 && !isPlaying() && !state.sampleMorph.initializing;
+}
+
+function stopSampleMorphPlayback() {
+  if (state.sampleMorphTimer) {
+    clearInterval(state.sampleMorphTimer);
+    state.sampleMorphTimer = null;
+  }
+}
+
+function startSampleMorphPlayback() {
+  if (!shouldAutoPlaySampleMorph()) {
+    stopSampleMorphPlayback();
+    return;
+  }
+  if (state.sampleMorphTimer) return;
+
+  const intervalMs = Math.max(30, Math.floor(1000 / Math.max(1, state.playbackFps)));
+  state.sampleMorphTimer = setInterval(async () => {
+    if (state.playbackBusy) return;
+    state.playbackBusy = true;
+    try {
+      await advanceSampleMorphPlayback(intervalMs / 1000);
+    } finally {
+      state.playbackBusy = false;
+    }
+  }, intervalMs);
+}
+
+function syncSampleMorphPlayback() {
+  if (shouldAutoPlaySampleMorph()) {
+    startSampleMorphPlayback();
+  } else {
+    stopSampleMorphPlayback();
+  }
 }
 
 function playbackMaxPixelsForFrame() {
@@ -520,8 +631,47 @@ function isSamplesMode() {
   return state.sampleMode === "single";
 }
 
+function isSampleMorphMode() {
+  return isSamplesMode() && state.sampleSingleView === "morph";
+}
+
+function sampleModeForApi(mode = state.sampleMode) {
+  return mode;
+}
+
+function resetSampleMorphState() {
+  state.sampleMorph.token += 1;
+  state.sampleMorph.fromSample = clamp(state.values.sample, 0, Math.max(0, sampleCount() - 1));
+  state.sampleMorph.toSample = state.sampleMorph.fromSample;
+  state.sampleMorph.alpha = 0;
+  state.sampleMorph.initializing = false;
+  state.sampleMorph.sharedStats = null;
+  state.sampleMorph.fromSlice = null;
+  state.sampleMorph.toSlice = null;
+  state.sampleMorph.fromVolume = null;
+  state.sampleMorph.toVolume = null;
+  state.sampleMorph.fromEvpaTicks = [];
+  state.sampleMorph.toEvpaTicks = [];
+  state.sampleMorph.fromCanvas = null;
+  state.sampleMorph.toCanvas = null;
+  state.sampleMorph.blendCanvas = null;
+  state.sampleMorph.multispectral = false;
+}
+
 function isVolumeMode() {
   return state.spatialMode === "volume";
+}
+
+function canUseVolumeMode() {
+  return axisSize(hiddenDim()) > 1;
+}
+
+function canUseMultiSpectral() {
+  return axisSize("nu") >= 3 && state.sampleMode !== "rel_uncert" && !isDerivedPolModeActive() && !isVolumeMode();
+}
+
+function isMultiSpectralActive() {
+  return state.multiSpectral && canUseMultiSpectral();
 }
 
 const PANEL_WIDTH_STORAGE_KEY = "ncube-panel-widths-v1";
@@ -908,6 +1058,196 @@ function isValidRangeStats(stats) {
   return Number.isFinite(stats.min) && Number.isFinite(stats.max) && stats.max > stats.min;
 }
 
+function availableColorRangeModes() {
+  const tVarying = axisSize("t") > 1;
+  const nuVarying = axisSize("nu") > 1;
+  const hiddenSpatialVarying = axisSize(hiddenDim()) > 1;
+  const modes = ["none"];
+  if (tVarying) modes.push("time");
+  if (nuVarying) modes.push("spectral");
+  if (tVarying && nuVarying) modes.push("time_spectral");
+  if (hiddenSpatialVarying) modes.push("space");
+  if (hiddenSpatialVarying || tVarying || nuVarying) modes.push("full");
+  return modes;
+}
+
+function updateColorRangeModeOptions() {
+  if (!els.colorRangeModeSelect) return;
+  const available = new Set(availableColorRangeModes());
+  if (!available.has(state.colorRangeMode)) {
+    state.colorRangeMode = "none";
+    state.fixedColorRange = null;
+  }
+
+  const desired = COLOR_RANGE_MODE_OPTIONS.filter((mode) => available.has(mode.value));
+  const current = Array.from(els.colorRangeModeSelect.options).map((opt) => opt.value);
+  const changed = current.length !== desired.length || desired.some((mode, idx) => current[idx] !== mode.value);
+  if (changed) {
+    els.colorRangeModeSelect.innerHTML = "";
+    for (const mode of desired) {
+      const opt = document.createElement("option");
+      opt.value = mode.value;
+      opt.textContent = mode.label;
+      els.colorRangeModeSelect.appendChild(opt);
+    }
+  }
+  els.colorRangeModeSelect.value = state.colorRangeMode;
+}
+
+function colorNormDomainForScale(stats) {
+  if (!isValidRangeStats(stats)) return null;
+  if (state.fluxScale === "log") {
+    const min = Math.max(0, stats.min);
+    const max = stats.max;
+    if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return null;
+    return { min, max };
+  }
+  return { min: stats.min, max: stats.max };
+}
+
+function colorNormToScale(v) {
+  if (state.fluxScale === "log") return Math.log10(1 + Math.max(0, v));
+  if (state.fluxScale === "sqrt") return Math.sign(v) * Math.sqrt(Math.abs(v));
+  return v;
+}
+
+function colorNormFromScale(v) {
+  if (state.fluxScale === "log") return Math.max(0, 10 ** v - 1);
+  if (state.fluxScale === "sqrt") return Math.sign(v) * v * v;
+  return v;
+}
+
+function resolveColorNormWindow(stats) {
+  const domain = colorNormDomainForScale(stats);
+  if (!domain) return null;
+
+  const domainMinT = colorNormToScale(domain.min);
+  const domainMaxT = colorNormToScale(domain.max);
+  const spanT = Math.max(1.0e-9, domainMaxT - domainMinT);
+  const minGapT = spanT * COLOR_NORM_SLIDER_MIN_GAP;
+
+  let minV = Number.isFinite(state.colorNormValueWindow?.min) ? state.colorNormValueWindow.min : domain.min;
+  let maxV = Number.isFinite(state.colorNormValueWindow?.max) ? state.colorNormValueWindow.max : domain.max;
+  minV = clamp(minV, domain.min, domain.max);
+  maxV = clamp(maxV, domain.min, domain.max);
+
+  let minT = clamp(colorNormToScale(minV), domainMinT, domainMaxT);
+  let maxT = clamp(colorNormToScale(maxV), domainMinT, domainMaxT);
+  if (maxT - minT < minGapT) {
+    if (maxT >= domainMaxT) {
+      minT = Math.max(domainMinT, domainMaxT - minGapT);
+      maxT = domainMaxT;
+    } else {
+      maxT = Math.min(domainMaxT, minT + minGapT);
+    }
+  }
+  if (maxT <= minT) {
+    maxT = Math.min(domainMaxT, minT + minGapT);
+    minT = Math.max(domainMinT, maxT - minGapT);
+  }
+
+  minV = clamp(colorNormFromScale(minT), domain.min, domain.max);
+  maxV = clamp(colorNormFromScale(maxT), domain.min, domain.max);
+  if (!Number.isFinite(minV) || !Number.isFinite(maxV) || maxV <= minV) {
+    return {
+      min: domain.min,
+      max: domain.max,
+      minT: domainMinT,
+      maxT: domainMaxT,
+      domain,
+      domainMinT,
+      domainMaxT,
+    };
+  }
+
+  return { min: minV, max: maxV, minT, maxT, domain, domainMinT, domainMaxT };
+}
+
+function isColorNormWindowDefault() {
+  const base = activeIntensityBaseStats();
+  const resolved = resolveColorNormWindow(base);
+  if (!resolved) return true;
+  const tol = Math.max(1.0e-9, Math.abs(resolved.domain.max - resolved.domain.min) * 1.0e-6);
+  return Math.abs(resolved.min - resolved.domain.min) <= tol && Math.abs(resolved.max - resolved.domain.max) <= tol;
+}
+
+function resolveColorNormStats(stats) {
+  const resolved = resolveColorNormWindow(stats);
+  if (!resolved) return stats;
+  return { min: resolved.min, max: resolved.max };
+}
+
+function activeIntensityBaseStats() {
+  if (isValidRangeStats(state.fixedColorRange)) return state.fixedColorRange;
+  if (isValidRangeStats(state.currentIntensityStats)) return state.currentIntensityStats;
+  return null;
+}
+
+function updateColorNormalizationControls() {
+  if (!els.colorNormMinRange || !els.colorNormMaxRange || !els.colorNormTrack) return;
+  const base = activeIntensityBaseStats();
+  const resolved = resolveColorNormWindow(base);
+  const enabled = Boolean(resolved) && !state.multiSpectral;
+
+  const lowStep = resolved
+    ? Math.round(
+        (COLOR_NORM_SLIDER_STEPS * (resolved.minT - resolved.domainMinT)) /
+          Math.max(1.0e-9, resolved.domainMaxT - resolved.domainMinT)
+      )
+    : 0;
+  const highStep = resolved
+    ? Math.round(
+        (COLOR_NORM_SLIDER_STEPS * (resolved.maxT - resolved.domainMinT)) /
+          Math.max(1.0e-9, resolved.domainMaxT - resolved.domainMinT)
+      )
+    : COLOR_NORM_SLIDER_STEPS;
+  els.colorNormMinRange.value = String(lowStep);
+  els.colorNormMaxRange.value = String(highStep);
+
+  const leftPct = (100 * lowStep) / COLOR_NORM_SLIDER_STEPS;
+  const rightPct = (100 * highStep) / COLOR_NORM_SLIDER_STEPS;
+  els.colorNormTrack.style.setProperty("--range-left", `${leftPct.toFixed(3)}%`);
+  els.colorNormTrack.style.setProperty("--range-right", `${rightPct.toFixed(3)}%`);
+
+  els.colorNormMinRange.disabled = !enabled;
+  els.colorNormMaxRange.disabled = !enabled;
+
+  if (els.colorNormRangeBlock) {
+    els.colorNormRangeBlock.classList.toggle("isDisabled", !enabled);
+  }
+
+  const setRangeValueLabel = (el, text, pct) => {
+    if (!el) return;
+    el.textContent = text;
+    if (!Number.isFinite(pct)) {
+      el.style.left = "50%";
+      el.style.visibility = "hidden";
+      return;
+    }
+    el.style.left = `${clamp(pct, 2, 98).toFixed(3)}%`;
+    el.style.visibility = "visible";
+  };
+
+  if (!base) {
+    setRangeValueLabel(els.colorNormMinValue, "--", NaN);
+    setRangeValueLabel(els.colorNormMaxValue, "--", NaN);
+    if (els.colorNormBoundMin) els.colorNormBoundMin.textContent = "--";
+    if (els.colorNormBoundMax) els.colorNormBoundMax.textContent = "--";
+    return;
+  }
+
+  const unit = state.currentIntensityUnit || (state.meta ? state.meta.intensity_unit || "" : "");
+  if (els.colorNormBoundMin) els.colorNormBoundMin.textContent = `${fmtIntensity(base.min)} ${unit}`.trim();
+  if (els.colorNormBoundMax) els.colorNormBoundMax.textContent = `${fmtIntensity(base.max)} ${unit}`.trim();
+  if (resolved) {
+    setRangeValueLabel(els.colorNormMinValue, `${fmtIntensity(resolved.min)} ${unit}`.trim(), leftPct);
+    setRangeValueLabel(els.colorNormMaxValue, `${fmtIntensity(resolved.max)} ${unit}`.trim(), rightPct);
+    return;
+  }
+  setRangeValueLabel(els.colorNormMinValue, "n/a", 25);
+  setRangeValueLabel(els.colorNormMaxValue, "n/a", 75);
+}
+
 function colorForSpectralNu(freqHz, bands) {
   if (!bands) return [255, 255, 255];
   const b = bands.blue || [0, 1];
@@ -930,10 +1270,17 @@ function colorForSpectralNu(freqHz, bands) {
   return [Math.round(255 * t), Math.round(255 * (1 - t)), 0];
 }
 
-function normalizeFluxLog(v, maxPositive) {
-  if (v < 0) return null;
-  if (!(maxPositive > 0)) return 0;
-  return Math.log10(1 + v) / Math.log10(1 + maxPositive);
+function normalizeFluxLog(v, maxPositive, minPositive = 0) {
+  const lo = Math.max(0, minPositive);
+  if (v < 0 && lo <= 0) return null;
+  const hi = Math.max(lo, maxPositive);
+  if (!(hi > lo)) return 0;
+  const sample = Math.max(v, lo);
+  const loLog = Math.log10(1 + lo);
+  const hiLog = Math.log10(1 + hi);
+  const span = hiLog - loLog;
+  if (!(span > 0)) return 0;
+  return (Math.log10(1 + sample) - loLog) / span;
 }
 
 function normalizeFluxSqrt(v, mm) {
@@ -1165,6 +1512,30 @@ function updateModeButtons() {
   els.modeZoomBtn.classList.toggle("activeMode", state.dragMode === "zoom");
 }
 
+function playbackAxisLength(axis) {
+  const hidden = hiddenDim();
+  if (axis === SAMPLE_MORPH_AXIS) {
+    return isSampleMorphMode() ? axisSize("sample") : 1;
+  }
+  if (isVolumeMode() && axis === hidden) return 1;
+  return axisSize(axis);
+}
+
+function sampleMorphDeltaTSec() {
+  return Math.max(0.01, state.sampleMorphDeltaT || 0.5);
+}
+
+function volumeFrameResolution(tileCount = 1) {
+  const qCfg = volumeQualityConfig();
+  const normal = tileCount > 1
+    ? clamp(Math.round(volumeBaseResolution(tileCount) * qCfg.resMul), 140, 420)
+    : clamp(Math.round(volumeBaseResolution(1) * qCfg.resMul), 180, 520);
+  if (!state.volumeDrag) return normal;
+  const min = tileCount > 1 ? 96 : 120;
+  const max = tileCount > 1 ? 260 : 300;
+  return clamp(Math.round(normal * 0.55), min, max);
+}
+
 function updatePlaybackButtons() {
   const hidden = hiddenDim();
   const activeAxis = isPlaying() ? state.playbackAxis : null;
@@ -1175,7 +1546,7 @@ function updatePlaybackButtons() {
   ];
 
   for (const [btn, axis] of buttonState) {
-    const axisLen = isVolumeMode() && axis === hidden ? 1 : axisSize(axis);
+    const axisLen = playbackAxisLength(axis);
     const active = activeAxis === axis;
     btn.disabled = axisLen <= 1;
     btn.textContent = active ? "Pause" : "Play";
@@ -1185,7 +1556,18 @@ function updatePlaybackButtons() {
 
 function updatePlayUi() {
   els.playSpeedSelect.value = String(state.playbackFps);
+  if (els.sampleMorphDeltaSelect) {
+    els.sampleMorphDeltaSelect.value = String(state.sampleMorphDeltaT);
+  }
   updatePlaybackButtons();
+  if (els.sampleMorphStatus) {
+    if (!isSampleMorphMode() || !state.sampleMorph.fromCanvas || !state.sampleMorph.toCanvas) {
+      els.sampleMorphStatus.textContent = "";
+    } else {
+      const pct = Math.round(clamp(state.sampleMorph.alpha, 0, 1) * 100);
+      els.sampleMorphStatus.textContent = `S${state.sampleMorph.fromSample} -> S${state.sampleMorph.toSample} (${pct}%)`;
+    }
+  }
 }
 
 function updatePolButtonState() {
@@ -1270,12 +1652,13 @@ function updateDomainVisibility() {
   const hasData = Boolean(state.dataId && state.meta);
   if (!hasData) {
     if (isPlaying()) stopPlayback();
+    stopSampleMorphPlayback();
     setVisible(els.spatialControlGroup, false);
     setVisible(els.temporalControlGroup, false);
     setVisible(els.spectralControlGroup, false);
     setVisible(els.polarizationControlGroup, false);
     setVisible(els.sampleModeBlock, false);
-    setVisible(els.playSpeedLabel, false);
+    setVisible(els.playbackTimingControls, false);
     setVisible(els.planeLabel, false);
     setVisible(els.hiddenNavPanel, false);
     setVisible(els.volumeRenderControls, false);
@@ -1289,19 +1672,25 @@ function updateDomainVisibility() {
     return;
   }
 
-  const volumeMode = isVolumeMode();
+  let volumeMode = isVolumeMode();
   const tVarying = axisVarying("t");
   const nuVarying = axisVarying("nu");
   const sampleVarying = axisVarying("sample");
   const polVarying = axisVarying("pol");
   const hiddenAxis = hiddenDim();
   const hiddenSpatialVarying = axisVarying(hiddenAxis);
+  if (volumeMode && !hiddenSpatialVarying) {
+    state.spatialMode = "slice";
+    state.volumeDrag = null;
+    volumeMode = false;
+  }
 
-  if (!sampleVarying && isSamplesMode()) {
+  if (!sampleVarying && (isSamplesMode() || isSampleMorphMode())) {
     state.sampleMode = "mean";
     state.sampleGridSize = 1;
     state.sampleGridIndices = [0];
     state.activeSampleTile = 0;
+    resetSampleMorphState();
   }
 
   if (!tVarying) {
@@ -1325,14 +1714,18 @@ function updateDomainVisibility() {
     state.values.pol = 0;
   }
 
-  if (isPlaying() && (!state.playbackAxis || axisSize(state.playbackAxis) <= 1)) {
+  if (isPlaying() && (!state.playbackAxis || playbackAxisLength(state.playbackAxis) <= 1)) {
     stopPlayback();
   }
   if (volumeMode && state.playbackAxis === hiddenAxis) {
     stopPlayback();
   }
+  if (!sampleVarying) {
+    stopSampleMorphPlayback();
+  }
 
   setVisible(els.spatialControlGroup, true);
+  setVisible(els.spatialVolumeBtn, hiddenSpatialVarying);
   setVisible(els.temporalControlGroup, tVarying);
   setVisible(els.spectralControlGroup, nuVarying);
   setVisible(els.planeLabel, !volumeMode);
@@ -1340,7 +1733,10 @@ function updateDomainVisibility() {
   setVisible(els.volumeRenderControls, volumeMode);
   setVisible(els.polarizationControlGroup, polVarying);
   setVisible(els.sampleModeBlock, sampleVarying);
-  setVisible(els.playSpeedLabel, tVarying || nuVarying || (!volumeMode && hiddenSpatialVarying));
+  setVisible(
+    els.playbackTimingControls,
+    tVarying || nuVarying || (!volumeMode && hiddenSpatialVarying) || (sampleVarying && isSampleMorphMode())
+  );
 
   setVisible(els.timeProfileBlock, tVarying);
   setVisible(els.spectrumProfileBlock, nuVarying);
@@ -1374,14 +1770,26 @@ function updateControlCaps() {
   els.sampleModeStdBtn.classList.toggle("activeSampleMode", state.sampleMode === "std");
   els.sampleModeRelBtn.classList.toggle("activeSampleMode", state.sampleMode === "rel_uncert");
   els.sampleModeSamplesBtn.classList.toggle("activeSampleMode", isSamplesMode());
-  els.sampleMosaicControls.style.display = isSamplesMode() ? "flex" : "none";
-  els.colorRangeModeSelect.value = state.colorRangeMode;
+  if (els.sampleViewControls) {
+    els.sampleViewControls.style.display = isSamplesMode() ? "flex" : "none";
+  }
+  if (els.sampleViewMosaicBtn) {
+    els.sampleViewMosaicBtn.classList.toggle("activeSampleMode", isSamplesMode() && !isSampleMorphMode());
+  }
+  if (els.sampleViewMorphBtn) {
+    els.sampleViewMorphBtn.classList.toggle("activeSampleMode", isSampleMorphMode());
+  }
+  els.sampleMosaicControls.style.display = isSamplesMode() && !isSampleMorphMode() ? "flex" : "none";
+  if (els.sampleMorphControls) {
+    els.sampleMorphControls.style.display = isSamplesMode() && isSampleMorphMode() ? "flex" : "none";
+  }
+  updateColorRangeModeOptions();
   if (els.sliceBackendSelect) {
     els.sliceBackendSelect.value = state.sliceRender.backend;
   }
   els.planeSelect.value = state.plane;
   els.planeSelect.disabled = isVolumeMode();
-  const msAvailable = axisSize("nu") >= 3 && state.sampleMode !== "rel_uncert" && !isDerivedPolModeActive() && !isVolumeMode();
+  const msAvailable = canUseMultiSpectral();
   if (!msAvailable) state.multiSpectral = false;
   els.multiSpectralBtn.disabled = !msAvailable;
   els.multiSpectralBtn.textContent = state.multiSpectral ? "On" : "Off";
@@ -1393,8 +1801,10 @@ function updateControlCaps() {
 
   updatePolButtonState();
   updateModeButtons();
+  syncSampleMorphPlayback();
   updatePlayUi();
   updateSliderReadouts(state.selectedCoords);
+  updateColorNormalizationControls();
   updateSpatialProfileTitle(state.profiles ? state.profiles.spatial_profile : null);
 }
 
@@ -1408,12 +1818,6 @@ function setFluxScale(mode) {
 }
 
 function onVolumeRenderControlChange() {
-  if (els.volumeBackendSelect) {
-    const backend = els.volumeBackendSelect.value;
-    if (backend === "auto" || backend === "gpu" || backend === "cpu") {
-      state.volumeRender.backend = backend;
-    }
-  }
   if (els.volumeRenderModeSelect) {
     const mode = els.volumeRenderModeSelect.value;
     if (["composite", "mip", "minip", "average", "isosurface"].includes(mode)) {
@@ -1438,10 +1842,6 @@ function onVolumeRenderControlChange() {
     const v = Number.parseFloat(els.volumeGammaRange.value);
     if (Number.isFinite(v)) state.volumeRender.gamma = clamp(v, 0.4, 2.4);
   }
-  if (els.volumeCutoffRange) {
-    const v = Number.parseFloat(els.volumeCutoffRange.value);
-    if (Number.isFinite(v)) state.volumeRender.cutoff = clamp(v, 0, 0.9);
-  }
   if (els.volumeClipNearRange) {
     const v = Number.parseFloat(els.volumeClipNearRange.value);
     if (Number.isFinite(v)) state.volumeRender.clipNear = clamp(v, 0, 0.95);
@@ -1461,7 +1861,7 @@ function onVolumeRenderControlChange() {
     const v = Number.parseFloat(els.volumeIsoThresholdRange.value);
     if (Number.isFinite(v)) state.volumeRender.isoThreshold = clamp(v, 0.01, 0.99);
   }
-  if (state.volumeRender.backend !== "cpu") {
+  if (state.sliceRender.backend !== "cpu") {
     ensureVolumeGpuRenderer();
   }
   updateVolumeControlReadouts();
@@ -1778,22 +2178,17 @@ function createSingleCanvasCpu(slice, rangeOverride = null) {
       ? state.fixedColorRange
       : null;
   const sliceStats = isValidRangeStats(slice.stats) ? slice.stats : null;
-  const mm = fixedStats
+  const baseStats = fixedStats
     ? { min: fixedStats.min, max: fixedStats.max }
     : sliceStats
     ? { min: sliceStats.min, max: sliceStats.max }
     : minMax(values);
+  const mm = resolveColorNormStats(baseStats);
   let maxPositive = 0;
+  let minPositive = 0;
   if (state.fluxScale === "log") {
-    if (fixedStats) {
-      maxPositive = Math.max(0, fixedStats.max);
-    } else if (sliceStats) {
-      maxPositive = Math.max(0, sliceStats.max);
-    } else {
-      for (let i = 0; i < values.length; i += 1) {
-        if (values[i] > maxPositive) maxPositive = values[i];
-      }
-    }
+    minPositive = Math.max(0, mm.min);
+    maxPositive = Math.max(minPositive, mm.max);
   }
 
   // Backend flattens as (plane_x, plane_y) in C-order: idx = x * height + y.
@@ -1804,7 +2199,7 @@ function createSingleCanvasCpu(slice, rangeOverride = null) {
       const v = values[src];
       let rgb;
       if (state.fluxScale === "log") {
-        const norm = normalizeFluxLog(v, maxPositive);
+        const norm = normalizeFluxLog(v, maxPositive, minPositive);
         rgb = norm === null ? [255, 255, 255] : colorForNorm(norm);
       } else if (state.fluxScale === "sqrt") {
         const norm = normalizeFluxSqrt(v, mm);
@@ -1946,6 +2341,7 @@ const { buildVolumeParams, buildSliceParams, buildMultispectralParams, buildRang
   createRequestBuilders({
     state,
     planeDims,
+    normalizeSampleMode: sampleModeForApi,
   });
 
 const { GpuSliceRenderer, GpuVolumeRenderer, GPU_VOLUME_MAX_STEPS } = createGpuRenderers({
@@ -1953,6 +2349,7 @@ const { GpuSliceRenderer, GpuVolumeRenderer, GPU_VOLUME_MAX_STEPS } = createGpuR
   colorForNorm,
   isValidRangeStats,
   minMax,
+  resolveColorNormStats,
   volumeQualityConfig,
   clamp,
   isDerivedPolModeActive,
@@ -2001,13 +2398,13 @@ function ensureVolumeGpuRenderer() {
   }
 }
 
-function createVolumeCanvasAuto(volume, resolution = 240) {
+function createVolumeCanvasAuto(volume, resolution = 240, rangeOverride = null) {
   const backend = volumeBackendMode();
   if (backend === "gpu") {
     const renderer = ensureVolumeGpuRenderer();
     if (renderer) {
       try {
-        const gpu = renderer.render(volume, resolution);
+        const gpu = renderer.render(volume, resolution, rangeOverride);
         if (gpu) return gpu;
       } catch (err) {
         state.volumeGpu.lastError = err && err.message ? err.message : "render failed";
@@ -2017,10 +2414,10 @@ function createVolumeCanvasAuto(volume, resolution = 240) {
       }
     }
   }
-  return createVolumeCanvasCpu(volume, resolution);
+  return createVolumeCanvasCpu(volume, resolution, rangeOverride);
 }
 
-function createVolumeCanvasCpu(volume, resolution = 240) {
+function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null) {
   const off = document.createElement("canvas");
   off.width = resolution;
   off.height = resolution;
@@ -2036,13 +2433,23 @@ function createVolumeCanvasCpu(volume, resolution = 240) {
   if (nx < 2 || ny < 2 || nz < 2 || values.length !== nx * ny * nz) return off;
 
   const img = els.canvas.getContext("2d").createImageData(resolution, resolution);
-  const mm = minMax(values);
-  const maxAbs = Math.max(Math.abs(mm.min), Math.abs(mm.max), 1.0e-9);
+  const fixedStats =
+    rangeOverride && isValidRangeStats(rangeOverride)
+      ? rangeOverride
+      : isValidRangeStats(state.fixedColorRange)
+      ? state.fixedColorRange
+      : null;
+  const baseStats = fixedStats
+    ? { min: fixedStats.min, max: fixedStats.max }
+    : volume.stats && Number.isFinite(volume.stats.min) && Number.isFinite(volume.stats.max) && volume.stats.max > volume.stats.min
+    ? { min: volume.stats.min, max: volume.stats.max }
+    : minMax(values);
+  const mm = resolveColorNormStats(baseStats);
   let maxPositive = 0;
+  let minPositive = 0;
   if (state.fluxScale === "log") {
-    for (let i = 0; i < values.length; i += 1) {
-      if (values[i] > maxPositive) maxPositive = values[i];
-    }
+    minPositive = Math.max(0, mm.min);
+    maxPositive = Math.max(minPositive, mm.max);
   }
 
   const yaw = state.volumeYaw;
@@ -2056,7 +2463,7 @@ function createVolumeCanvasCpu(volume, resolution = 240) {
   const steps = clamp(Math.round(Math.max(nx, ny, nz) * qCfg.stepMul), 24, 160);
   const opacityGain = clamp(state.volumeRender.opacity, 0.1, 12.0);
   const gamma = clamp(state.volumeRender.gamma, 0.4, 2.4);
-  const cutoff = clamp(state.volumeRender.cutoff, 0, 0.9);
+  const cutoff = 0;
   const clipNear = clamp(state.volumeRender.clipNear, 0, 0.95);
   const clipFar = clamp(state.volumeRender.clipFar, clipNear + 0.01, 1.0);
   const isoThreshold = clamp(state.volumeRender.isoThreshold, 0.01, 0.99);
@@ -2109,7 +2516,7 @@ function createVolumeCanvasCpu(volume, resolution = 240) {
 
         let norm;
         if (state.fluxScale === "log") {
-          norm = normalizeFluxLog(sample, maxPositive);
+          norm = normalizeFluxLog(sample, maxPositive, minPositive);
           if (norm === null) continue;
         } else if (state.fluxScale === "sqrt") {
           norm = normalizeFluxSqrt(sample, mm);
@@ -2122,7 +2529,7 @@ function createVolumeCanvasCpu(volume, resolution = 240) {
 
         let density;
         if (state.colorMap === "diverging" && mm.min < 0 && mm.max > 0) {
-          density = Math.abs(sample) / maxAbs;
+          density = Math.abs(norm * 2 - 1);
         } else if (state.colorMap === "circular" && isDerivedPolModeActive() && state.derivedPolMode === "bfield") {
           density = 0.58;
         } else {
@@ -2268,9 +2675,12 @@ function drawColorbar() {
       ctx.fillRect(x, 0, 1, h);
     }
     if (stats) {
-      const fixedLabel = state.fixedColorRange ? `, ${COLOR_RANGE_MODE_LABEL[state.colorRangeMode] || "fixed"}` : "";
+      const modeLabel = state.fixedColorRange ? COLOR_RANGE_MODE_LABEL[state.colorRangeMode] || "fixed" : "";
+      const windowLabel = isColorNormWindowDefault() ? "" : "windowed";
+      const fixedLabel =
+        modeLabel && windowLabel ? `, ${modeLabel}, ${windowLabel}` : modeLabel ? `, ${modeLabel}` : windowLabel ? `, ${windowLabel}` : "";
       if (state.fluxScale === "log") {
-        els.colorbarMin.textContent = `0 ${unit}`.trim();
+        els.colorbarMin.textContent = `${fmtIntensity(Math.max(0, stats.min))} ${unit}`.trim();
         els.colorbarMid.textContent = `${state.colorMap} (log, neg=white${fixedLabel})`;
         els.colorbarMax.textContent = `${fmtIntensity(Math.max(0, stats.max))} ${unit}`.trim();
       } else if (state.fluxScale === "sqrt") {
@@ -2307,6 +2717,7 @@ function renderFrame(frameCanvas, selectedCoords, intensityStats, intensityUnit 
   state.currentIntensityStats = intensityStats || null;
   state.currentIntensityUnit = intensityUnit || (state.meta ? state.meta.intensity_unit || "" : "");
   updateSliderReadouts(state.selectedCoords);
+  updateColorNormalizationControls();
   layoutViewerCanvas();
   drawFrameAndOverlays();
   drawColorbar();
@@ -2321,14 +2732,542 @@ function renderTileFrame(frameTiles, gridSize, selectedCoords, intensityStats, i
   state.currentIntensityStats = intensityStats || null;
   state.currentIntensityUnit = intensityUnit || (state.meta ? state.meta.intensity_unit || "" : "");
   updateSliderReadouts(state.selectedCoords);
+  updateColorNormalizationControls();
   layoutViewerCanvas();
   drawFrameAndOverlays();
   drawColorbar();
 }
 
+function nextSampleIndex(idx) {
+  const n = sampleCount();
+  if (n <= 1) return 0;
+  return (idx + 1) % n;
+}
+
+function blendCanvasPair(fromCanvas, toCanvas, alpha, reuseCanvas = null) {
+  if (!fromCanvas) return toCanvas;
+  if (!toCanvas || alpha <= 0) return fromCanvas;
+  if (alpha >= 1) return toCanvas;
+  const w = fromCanvas.width;
+  const h = fromCanvas.height;
+  let out = reuseCanvas;
+  if (!out || out.width !== w || out.height !== h) {
+    out = document.createElement("canvas");
+    out.width = w;
+    out.height = h;
+  }
+  const ctx = out.getContext("2d");
+  ctx.clearRect(0, 0, w, h);
+  ctx.imageSmoothingEnabled = false;
+  ctx.globalAlpha = 1;
+  ctx.drawImage(fromCanvas, 0, 0);
+  ctx.globalAlpha = clamp(alpha, 0, 1);
+  ctx.drawImage(toCanvas, 0, 0);
+  ctx.globalAlpha = 1;
+  return out;
+}
+
+function blendSampleMorphCanvas(fromCanvas, toCanvas, alpha) {
+  state.sampleMorph.blendCanvas = blendCanvasPair(fromCanvas, toCanvas, alpha, state.sampleMorph.blendCanvas);
+  return state.sampleMorph.blendCanvas;
+}
+
+function interpolateSelectedCoords(fromCoords, toCoords, alpha) {
+  if (!fromCoords && !toCoords) return null;
+  const out = {};
+  const keys = new Set([...Object.keys(fromCoords || {}), ...Object.keys(toCoords || {})]);
+  const a = clamp(alpha, 0, 1);
+  for (const key of keys) {
+    const v0 = fromCoords ? fromCoords[key] : undefined;
+    const v1 = toCoords ? toCoords[key] : undefined;
+    if (Number.isFinite(v0) && Number.isFinite(v1)) {
+      out[key] = v0 + (v1 - v0) * a;
+    } else if (v1 !== undefined) {
+      out[key] = v1;
+    } else if (v0 !== undefined) {
+      out[key] = v0;
+    }
+  }
+  return out;
+}
+
+function sampleMorphSelectedCoords(fromSlice, toSlice, alpha) {
+  const fromCoords = fromSlice ? fromSlice.selected_coords || indicesToCoords(fromSlice.selected_indices) : null;
+  const toCoords = toSlice ? toSlice.selected_coords || indicesToCoords(toSlice.selected_indices) : null;
+  const out = interpolateSelectedCoords(fromCoords, toCoords, alpha) || {};
+  const fromSampleCoord = Number.isFinite(fromCoords?.sample) ? fromCoords.sample : dimCoord("sample", state.sampleMorph.fromSample);
+  const toSampleCoord = Number.isFinite(toCoords?.sample) ? toCoords.sample : dimCoord("sample", state.sampleMorph.toSample);
+  if (Number.isFinite(fromSampleCoord) && Number.isFinite(toSampleCoord)) {
+    out.sample = fromSampleCoord + (toSampleCoord - fromSampleCoord) * clamp(alpha, 0, 1);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function interpolateBandWindow(fromBand, toBand, alpha) {
+  const a = clamp(alpha, 0, 1);
+  const fromOk = Array.isArray(fromBand) && fromBand.length >= 2 && Number.isFinite(fromBand[0]) && Number.isFinite(fromBand[1]);
+  const toOk = Array.isArray(toBand) && toBand.length >= 2 && Number.isFinite(toBand[0]) && Number.isFinite(toBand[1]);
+  if (fromOk && toOk) {
+    return [fromBand[0] + (toBand[0] - fromBand[0]) * a, fromBand[1] + (toBand[1] - fromBand[1]) * a];
+  }
+  if (toOk) return [toBand[0], toBand[1]];
+  if (fromOk) return [fromBand[0], fromBand[1]];
+  return null;
+}
+
+function sampleMorphMultispectralBands(fromSlice, toSlice, alpha) {
+  const fromBands = fromSlice?.bands || null;
+  const toBands = toSlice?.bands || null;
+  if (!fromBands && !toBands) return null;
+  if (!fromBands) return toBands;
+  if (!toBands) return fromBands;
+  return {
+    blue: interpolateBandWindow(fromBands.blue, toBands.blue, alpha),
+    green: interpolateBandWindow(fromBands.green, toBands.green, alpha),
+    red: interpolateBandWindow(fromBands.red, toBands.red, alpha),
+    unit: toBands.unit || fromBands.unit || dimUnit("nu") || "Hz",
+  };
+}
+
+function sampleMorphPayloadStats() {
+  const payloads = [];
+  if (state.sampleMorph.fromSlice) payloads.push(state.sampleMorph.fromSlice);
+  else if (state.sampleMorph.fromVolume) payloads.push(state.sampleMorph.fromVolume);
+  if (state.sampleMorph.toSlice) payloads.push(state.sampleMorph.toSlice);
+  else if (state.sampleMorph.toVolume) payloads.push(state.sampleMorph.toVolume);
+  return sharedStatsFromPayloads(payloads);
+}
+
+function sampleMorphEvpaActive() {
+  return Boolean(state.showEvpa) && !isVolumeMode() && state.plane === "xy";
+}
+
+function evpaTickKey(tick) {
+  if (!tick || !Number.isFinite(tick.x) || !Number.isFinite(tick.y)) return null;
+  const qx = Math.round(tick.x * 1000);
+  const qy = Math.round(tick.y * 1000);
+  return `${qx}:${qy}`;
+}
+
+function buildEvpaTickMap(ticks) {
+  const map = new Map();
+  const arr = Array.isArray(ticks) ? ticks : [];
+  for (const tick of arr) {
+    if (!tick || !Number.isFinite(tick.x) || !Number.isFinite(tick.y)) continue;
+    if (!Number.isFinite(tick.dx) || !Number.isFinite(tick.dy)) continue;
+    const key = evpaTickKey(tick);
+    if (!key) continue;
+    map.set(key, tick);
+  }
+  return map;
+}
+
+function interpolateEvpaTicks(fromTicks, toTicks, alpha) {
+  const a = clamp(alpha, 0, 1);
+  const fromMap = buildEvpaTickMap(fromTicks);
+  const toMap = buildEvpaTickMap(toTicks);
+  if (!fromMap.size && !toMap.size) return [];
+
+  const keys = new Set([...fromMap.keys(), ...toMap.keys()]);
+  const out = [];
+  for (const key of keys) {
+    const f = fromMap.get(key);
+    const t = toMap.get(key);
+    const base = f || t;
+    if (!base) continue;
+
+    let dx = 0;
+    let dy = 0;
+    if (f && t) {
+      dx = f.dx + (t.dx - f.dx) * a;
+      dy = f.dy + (t.dy - f.dy) * a;
+    } else if (f) {
+      // Fade vectors out when a location disappears in the target sample.
+      dx = f.dx * (1 - a);
+      dy = f.dy * (1 - a);
+    } else {
+      // Fade vectors in when a new location appears in the target sample.
+      dx = t.dx * a;
+      dy = t.dy * a;
+    }
+    if (Math.hypot(dx, dy) < 1.0e-6) continue;
+
+    out.push({
+      x: base.x,
+      y: base.y,
+      dx,
+      dy,
+    });
+  }
+  return out;
+}
+
+function renderSampleMorphFrame() {
+  if (!isSampleMorphMode() || !state.sampleMorph.fromCanvas) return;
+  const alpha = clamp(state.sampleMorph.alpha, 0, 1);
+  const morphMultispectral = Boolean(state.sampleMorph.multispectral && !isVolumeMode());
+  const selectedCoords = sampleMorphSelectedCoords(state.sampleMorph.fromSlice, state.sampleMorph.toSlice, alpha);
+  const intensityStats = morphMultispectral
+    ? null
+    : isValidRangeStats(state.fixedColorRange)
+      ? state.fixedColorRange
+      : state.sampleMorph.sharedStats ||
+        (state.sampleMorph.fromSlice ? state.sampleMorph.fromSlice.stats || null : state.sampleMorph.fromVolume?.stats || null);
+  const intensityUnit = morphMultispectral ? null : isDerivedPolModeActive() ? derivedPolUnit(state.derivedPolMode) : null;
+  const frameCanvas = blendSampleMorphCanvas(state.sampleMorph.fromCanvas, state.sampleMorph.toCanvas, alpha);
+
+  state.values.sample = clamp(state.sampleMorph.fromSample, 0, Math.max(0, sampleCount() - 1));
+  if (isVolumeMode()) {
+    state.currentVolume = state.sampleMorph.fromVolume || null;
+    state.currentVolumeTiles = null;
+    state.currentMonoSlice = null;
+    state.currentMonoSliceTiles = null;
+  } else {
+    state.currentMonoSlice = morphMultispectral ? null : state.sampleMorph.fromSlice || null;
+    state.currentMonoSliceTiles = null;
+    state.currentVolume = null;
+    state.currentVolumeTiles = null;
+  }
+  state.currentMultispectralBands = morphMultispectral
+    ? sampleMorphMultispectralBands(state.sampleMorph.fromSlice, state.sampleMorph.toSlice, alpha)
+    : null;
+  if (sampleMorphEvpaActive()) {
+    state.evpaTicksBySample = {};
+    state.evpaTicks = interpolateEvpaTicks(state.sampleMorph.fromEvpaTicks, state.sampleMorph.toEvpaTicks, alpha);
+  }
+  renderFrame(frameCanvas, selectedCoords, intensityStats, intensityUnit);
+  updatePlayUi();
+}
+
+async function fetchSampleMorphSlice(sampleIdx, maxPixels = null, multispectral = isMultiSpectralActive()) {
+  if (!isDerivedPolModeActive() && multispectral) {
+    return fetchJson(`/api/datasets/${state.dataId}/multispectral?${buildMultispectralParams(sampleIdx, maxPixels).toString()}`);
+  }
+  if (isDerivedPolModeActive()) {
+    return fetchDerivedSlice(sampleIdx, maxPixels);
+  }
+  return fetchJson(
+    `/api/datasets/${state.dataId}/slice?${buildSliceParams(
+      undefined,
+      sampleIdx,
+      state.values.pol,
+      sampleModeForApi(),
+      maxPixels
+    ).toString()}`
+  );
+}
+
+async function prepareSampleMorphPair(maxPixels = null, preserveAlpha = false) {
+  if (!isSampleMorphMode() || !state.dataId) return;
+  const n = sampleCount();
+  if (n <= 1) return;
+  const morphVolumeMode = isVolumeMode();
+  const morphMultispectral = !morphVolumeMode && isMultiSpectralActive();
+
+  const fromSample = clamp(state.values.sample, 0, n - 1);
+  const toSample = nextSampleIndex(fromSample);
+  const token = state.sampleMorph.token + 1;
+  state.sampleMorph.token = token;
+
+  let fromPayload;
+  let toPayload;
+  if (morphVolumeMode) {
+    [fromPayload, toPayload] = await Promise.all([
+      isDerivedPolModeActive() ? fetchDerivedVolume(fromSample) : fetchVolume(fromSample),
+      isDerivedPolModeActive() ? fetchDerivedVolume(toSample) : fetchVolume(toSample),
+    ]);
+  } else {
+    [fromPayload, toPayload] = await Promise.all([
+      fetchSampleMorphSlice(fromSample, maxPixels, morphMultispectral),
+      fetchSampleMorphSlice(toSample, maxPixels, morphMultispectral),
+    ]);
+  }
+  if (token !== state.sampleMorph.token || !isSampleMorphMode() || isVolumeMode() !== morphVolumeMode) return;
+
+  const sharedStats = morphMultispectral
+    ? null
+    : isValidRangeStats(state.fixedColorRange)
+      ? state.fixedColorRange
+      : morphVolumeMode && isValidRangeStats(state.sampleMorph.sharedStats)
+      ? state.sampleMorph.sharedStats
+      : sharedStatsFromPayloads([fromPayload, toPayload]);
+  state.sampleMorph.fromSample = fromSample;
+  state.sampleMorph.toSample = toSample;
+  state.sampleMorph.sharedStats = sharedStats;
+  state.sampleMorph.multispectral = morphMultispectral;
+  if (sampleMorphEvpaActive() && !morphVolumeMode) {
+    const [fromTicks, toTicks] = await Promise.all([fetchEvpaTicksForSample(fromSample), fetchEvpaTicksForSample(toSample)]);
+    if (token !== state.sampleMorph.token || !isSampleMorphMode() || isVolumeMode() !== morphVolumeMode) return;
+    state.sampleMorph.fromEvpaTicks = fromTicks;
+    state.sampleMorph.toEvpaTicks = toTicks;
+  } else {
+    state.sampleMorph.fromEvpaTicks = [];
+    state.sampleMorph.toEvpaTicks = [];
+  }
+  if (morphVolumeMode) {
+    const resolution = sampleMorphVolumeResolution();
+    state.sampleMorph.fromSlice = null;
+    state.sampleMorph.toSlice = null;
+    state.sampleMorph.fromVolume = fromPayload;
+    state.sampleMorph.toVolume = toPayload;
+    state.sampleMorph.fromCanvas = createVolumeCanvasAuto(fromPayload, resolution, sharedStats);
+    state.sampleMorph.toCanvas = createVolumeCanvasAuto(toPayload, resolution, sharedStats);
+  } else {
+    state.sampleMorph.fromVolume = null;
+    state.sampleMorph.toVolume = null;
+    state.sampleMorph.fromSlice = fromPayload;
+    state.sampleMorph.toSlice = toPayload;
+    if (morphMultispectral) {
+      state.sampleMorph.fromCanvas = createRgbCanvas(
+        fromPayload.shape[0],
+        fromPayload.shape[1],
+        fromPayload.values.r,
+        fromPayload.values.g,
+        fromPayload.values.b,
+        fromPayload
+      );
+      state.sampleMorph.toCanvas = createRgbCanvas(
+        toPayload.shape[0],
+        toPayload.shape[1],
+        toPayload.values.r,
+        toPayload.values.g,
+        toPayload.values.b,
+        toPayload
+      );
+    } else {
+      state.sampleMorph.fromCanvas = createSingleCanvas(fromPayload, sharedStats);
+      state.sampleMorph.toCanvas = createSingleCanvas(toPayload, sharedStats);
+    }
+  }
+  if (!preserveAlpha) state.sampleMorph.alpha = 0;
+  renderSampleMorphFrame();
+}
+
+async function advanceSampleMorphPlayback(deltaSec) {
+  if (!isSampleMorphMode() || sampleCount() <= 1) return;
+  if (isVolumeMode() && state.volumeDrag) return;
+  const lodMaxPixels = playbackMaxPixelsForFrame();
+  const dSec = Number.isFinite(deltaSec) && deltaSec > 0 ? deltaSec : 1 / Math.max(1, state.playbackFps);
+  const sampleDeltaT = sampleMorphDeltaTSec();
+  const morphVolumeMode = isVolumeMode();
+  const morphMultispectral = !morphVolumeMode && Boolean(state.sampleMorph.multispectral);
+
+  if (!state.sampleMorph.fromCanvas || !state.sampleMorph.toCanvas) {
+    await prepareSampleMorphPair(lodMaxPixels, false);
+    return;
+  }
+
+  let alpha = clamp(state.sampleMorph.alpha, 0, 1) + dSec / sampleDeltaT;
+  if (alpha < 1) {
+    state.sampleMorph.alpha = alpha;
+    renderSampleMorphFrame();
+    return;
+  }
+
+  alpha -= 1;
+  const fromSample = state.sampleMorph.toSample;
+  const toSample = nextSampleIndex(fromSample);
+  state.sampleMorph.fromSample = fromSample;
+  state.values.sample = fromSample;
+  state.sampleMorph.fromCanvas = state.sampleMorph.toCanvas;
+  state.sampleMorph.toSample = toSample;
+  state.sampleMorph.alpha = alpha;
+  if (morphVolumeMode) {
+    state.sampleMorph.fromVolume = state.sampleMorph.toVolume;
+  } else {
+    state.sampleMorph.fromSlice = state.sampleMorph.toSlice;
+    state.sampleMorph.fromEvpaTicks = state.sampleMorph.toEvpaTicks;
+  }
+
+  const token = state.sampleMorph.token + 1;
+  state.sampleMorph.token = token;
+  try {
+    let toPayload;
+    let toEvpaTicks = [];
+    if (morphVolumeMode) {
+      toPayload = await (isDerivedPolModeActive() ? fetchDerivedVolume(toSample) : fetchVolume(toSample));
+    } else {
+      [toPayload, toEvpaTicks] = await Promise.all([
+        fetchSampleMorphSlice(toSample, lodMaxPixels, morphMultispectral),
+        sampleMorphEvpaActive() ? fetchEvpaTicksForSample(toSample) : Promise.resolve([]),
+      ]);
+    }
+    if (token !== state.sampleMorph.token || !isSampleMorphMode() || isVolumeMode() !== morphVolumeMode) return;
+    const payloads = morphVolumeMode
+      ? [state.sampleMorph.fromVolume, toPayload]
+      : [state.sampleMorph.fromSlice, toPayload];
+    const sharedStats = morphMultispectral
+      ? null
+      : isValidRangeStats(state.fixedColorRange)
+        ? state.fixedColorRange
+        : morphVolumeMode && isValidRangeStats(state.sampleMorph.sharedStats)
+        ? state.sampleMorph.sharedStats
+        : sharedStatsFromPayloads(payloads);
+    state.sampleMorph.sharedStats = sharedStats;
+    state.sampleMorph.multispectral = morphMultispectral;
+    if (morphVolumeMode) {
+      const resolution = sampleMorphVolumeResolution();
+      state.sampleMorph.fromSlice = null;
+      state.sampleMorph.toSlice = null;
+      state.sampleMorph.fromCanvas = createVolumeCanvasAuto(state.sampleMorph.fromVolume, resolution, sharedStats);
+      state.sampleMorph.toVolume = toPayload;
+      state.sampleMorph.toCanvas = createVolumeCanvasAuto(toPayload, resolution, sharedStats);
+    } else {
+      state.sampleMorph.fromVolume = null;
+      state.sampleMorph.toVolume = null;
+      state.sampleMorph.toSlice = toPayload;
+      state.sampleMorph.toEvpaTicks = toEvpaTicks;
+      if (morphMultispectral) {
+        state.sampleMorph.fromCanvas = createRgbCanvas(
+          state.sampleMorph.fromSlice.shape[0],
+          state.sampleMorph.fromSlice.shape[1],
+          state.sampleMorph.fromSlice.values.r,
+          state.sampleMorph.fromSlice.values.g,
+          state.sampleMorph.fromSlice.values.b,
+          state.sampleMorph.fromSlice
+        );
+        state.sampleMorph.toCanvas = createRgbCanvas(
+          toPayload.shape[0],
+          toPayload.shape[1],
+          toPayload.values.r,
+          toPayload.values.g,
+          toPayload.values.b,
+          toPayload
+        );
+      } else {
+        state.sampleMorph.fromCanvas = createSingleCanvas(state.sampleMorph.fromSlice, sharedStats);
+        state.sampleMorph.toCanvas = createSingleCanvas(toPayload, sharedStats);
+      }
+    }
+  } catch (err) {
+    console.warn("sample morph frame fetch failed:", err);
+  }
+
+  renderSampleMorphFrame();
+}
+
 function activeIntensityRangeStats() {
-  if (isValidRangeStats(state.fixedColorRange)) return state.fixedColorRange;
-  return state.currentIntensityStats;
+  const base = activeIntensityBaseStats();
+  if (!base) return null;
+  return resolveColorNormStats(base);
+}
+
+function rerenderCurrentFrameForColorNormalization() {
+  if (!state.dataId) {
+    drawColorbar();
+    return;
+  }
+  if (state.multiSpectral) {
+    updateColorNormalizationControls();
+    drawColorbar();
+    return;
+  }
+  if (isVolumeMode() && isSampleMorphMode() && state.sampleMorph.fromCanvas && state.sampleMorph.toCanvas) {
+    const sharedStats = isValidRangeStats(state.fixedColorRange) ? state.fixedColorRange : sampleMorphPayloadStats();
+    state.sampleMorph.sharedStats = sharedStats;
+    if (state.sampleMorph.fromVolume && state.sampleMorph.toVolume) {
+      const resolution = sampleMorphVolumeResolution();
+      state.sampleMorph.fromCanvas = createVolumeCanvasAuto(state.sampleMorph.fromVolume, resolution, sharedStats);
+      state.sampleMorph.toCanvas = createVolumeCanvasAuto(state.sampleMorph.toVolume, resolution, sharedStats);
+    }
+    renderSampleMorphFrame();
+    return;
+  }
+  if (isVolumeMode()) {
+    rerenderVolumeFrame();
+    return;
+  }
+  if (isSampleMorphMode() && state.sampleMorph.fromSlice && state.sampleMorph.toSlice) {
+    const sharedStats = isValidRangeStats(state.fixedColorRange)
+      ? state.fixedColorRange
+      : sharedStatsFromPayloads([state.sampleMorph.fromSlice, state.sampleMorph.toSlice]);
+    state.sampleMorph.sharedStats = sharedStats;
+    state.sampleMorph.fromCanvas = createSingleCanvas(state.sampleMorph.fromSlice, sharedStats);
+    state.sampleMorph.toCanvas = createSingleCanvas(state.sampleMorph.toSlice, sharedStats);
+    renderSampleMorphFrame();
+    return;
+  }
+  if (state.currentMonoSliceTiles && state.currentMonoSliceTiles.length) {
+    const sharedStats = isValidRangeStats(state.fixedColorRange)
+      ? state.fixedColorRange
+      : sharedStatsFromPayloads(state.currentMonoSliceTiles);
+    const tiles = state.currentMonoSliceTiles.map((slice) => createSingleCanvas(slice, sharedStats));
+    const activeIdx = clamp(state.activeSampleTile, 0, Math.max(0, state.currentMonoSliceTiles.length - 1));
+    const primary = state.currentMonoSliceTiles[activeIdx] || state.currentMonoSliceTiles[0];
+    state.currentMonoSlice = primary || null;
+    const selectedCoords = primary ? primary.selected_coords || indicesToCoords(primary.selected_indices) : null;
+    const intensityUnit = isDerivedPolModeActive() ? derivedPolUnit(state.derivedPolMode) : null;
+    renderTileFrame(tiles, state.sampleGridSize, selectedCoords, sharedStats, intensityUnit);
+    return;
+  }
+  if (state.currentMonoSlice) {
+    const slice = state.currentMonoSlice;
+    const intensityUnit = isDerivedPolModeActive() ? derivedPolUnit(state.derivedPolMode) : null;
+    renderFrame(
+      createSingleCanvas(slice),
+      slice.selected_coords || indicesToCoords(slice.selected_indices),
+      slice.stats || null,
+      intensityUnit
+    );
+    return;
+  }
+  updateColorNormalizationControls();
+  drawColorbar();
+}
+
+function scheduleColorNormRerender(commit = false) {
+  if (state._colorNormRerenderTimer) {
+    clearTimeout(state._colorNormRerenderTimer);
+    state._colorNormRerenderTimer = null;
+  }
+  if (commit) {
+    rerenderCurrentFrameForColorNormalization();
+    return;
+  }
+  state._colorNormRerenderTimer = window.setTimeout(() => {
+    state._colorNormRerenderTimer = null;
+    rerenderCurrentFrameForColorNormalization();
+  }, 48);
+}
+
+function setColorNormActiveHandle(bound = null) {
+  if (!els.colorNormMinRange || !els.colorNormMaxRange) return;
+  els.colorNormMinRange.classList.toggle("isActive", bound === "min");
+  els.colorNormMaxRange.classList.toggle("isActive", bound === "max");
+}
+
+function onColorNormRangeInput(bound, commit = false) {
+  if (!els.colorNormMinRange || !els.colorNormMaxRange) return;
+  const base = activeIntensityBaseStats();
+  const resolved = resolveColorNormWindow(base);
+  if (!resolved) return;
+  const minStep = Number.parseInt(els.colorNormMinRange.value, 10);
+  const maxStep = Number.parseInt(els.colorNormMaxRange.value, 10);
+  if (!Number.isFinite(minStep) || !Number.isFinite(maxStep)) return;
+
+  const spanT = Math.max(1.0e-9, resolved.domainMaxT - resolved.domainMinT);
+  const minGapT = spanT * COLOR_NORM_SLIDER_MIN_GAP;
+  let lowT = resolved.domainMinT + (spanT * clamp(minStep, 0, COLOR_NORM_SLIDER_STEPS)) / COLOR_NORM_SLIDER_STEPS;
+  let highT = resolved.domainMinT + (spanT * clamp(maxStep, 0, COLOR_NORM_SLIDER_STEPS)) / COLOR_NORM_SLIDER_STEPS;
+
+  if (bound === "min") {
+    lowT = Math.min(lowT, highT - minGapT);
+  } else if (bound === "max") {
+    highT = Math.max(highT, lowT + minGapT);
+  }
+
+  lowT = clamp(lowT, resolved.domainMinT, resolved.domainMaxT - minGapT);
+  highT = clamp(highT, resolved.domainMinT + minGapT, resolved.domainMaxT);
+  if (highT <= lowT) {
+    highT = Math.min(resolved.domainMaxT, lowT + minGapT);
+    lowT = Math.max(resolved.domainMinT, highT - minGapT);
+  }
+
+  const lowV = clamp(colorNormFromScale(lowT), resolved.domain.min, resolved.domain.max);
+  const highV = clamp(colorNormFromScale(highT), resolved.domain.min, resolved.domain.max);
+  state.colorNormValueWindow = { min: lowV, max: highV };
+  updateColorNormalizationControls();
+  scheduleColorNormRerender(commit);
 }
 
 async function refreshFixedColorRange() {
@@ -2349,36 +3288,18 @@ async function refreshEvpaTicks() {
   }
 
   try {
-    const effectiveMode = state.sampleMode === "std" || state.sampleMode === "rel_uncert" ? "mean" : state.sampleMode;
-    const baseParams = {
-      t: String(state.values.t),
-      nu: String(state.values.nu),
-      z: String(state.values.z),
-      sample_mode: effectiveMode,
-      step: String(state.evpaStep),
-      min_fraction: "0.05",
-      i_min_fraction: String(state.evpaIMinFraction),
-    };
-
     if (isSamplesMode() && state.sampleGridIndices.length > 1) {
       const samples = state.sampleGridIndices.slice();
-      const results = await Promise.all(
-        samples.map((sampleIdx) => {
-          const qs = new URLSearchParams({ ...baseParams, sample: String(sampleIdx) });
-          return fetchJson(`/api/datasets/${state.dataId}/evpa?${qs.toString()}`);
-        })
-      );
+      const tickSets = await Promise.all(samples.map((sampleIdx) => fetchEvpaTicksForSample(sampleIdx)));
       const bySample = {};
       for (let i = 0; i < samples.length; i += 1) {
-        bySample[String(samples[i])] = results[i].ticks || [];
+        bySample[String(samples[i])] = tickSets[i];
       }
       state.evpaTicksBySample = bySample;
       const activeSample = state.sampleGridIndices[clamp(state.activeSampleTile, 0, state.sampleGridIndices.length - 1)];
       state.evpaTicks = bySample[String(activeSample)] || [];
     } else {
-      const qs = new URLSearchParams({ ...baseParams, sample: String(state.values.sample) });
-      const data = await fetchJson(`/api/datasets/${state.dataId}/evpa?${qs.toString()}`);
-      state.evpaTicks = data.ticks || [];
+      state.evpaTicks = await fetchEvpaTicksForSample(state.values.sample);
       state.evpaTicksBySample = {};
     }
   } catch (err) {
@@ -2386,6 +3307,23 @@ async function refreshEvpaTicks() {
     state.evpaTicks = [];
     state.evpaTicksBySample = {};
   }
+}
+
+async function fetchEvpaTicksForSample(sampleIdx) {
+  if (!state.dataId || state.plane !== "xy" || isVolumeMode()) return [];
+  const effectiveMode = state.sampleMode === "std" || state.sampleMode === "rel_uncert" ? "mean" : sampleModeForApi();
+  const qs = new URLSearchParams({
+    sample: String(sampleIdx),
+    t: String(state.values.t),
+    nu: String(state.values.nu),
+    z: String(state.values.z),
+    sample_mode: effectiveMode,
+    step: String(state.evpaStep),
+    min_fraction: "0.05",
+    i_min_fraction: String(state.evpaIMinFraction),
+  });
+  const data = await fetchJson(`/api/datasets/${state.dataId}/evpa?${qs.toString()}`);
+  return Array.isArray(data?.ticks) ? data.ticks : [];
 }
 
 function computeStats(values) {
@@ -2482,7 +3420,7 @@ async function fetchDerivedSlice(sampleOverride, maxPixels = null) {
       `/api/datasets/${state.dataId}/slice?${buildSliceParams(undefined, sampleOverride, state.values.pol, state.sampleMode, maxPixels).toString()}`
     );
   }
-  const effectiveSampleMode = state.sampleMode === "std" || state.sampleMode === "rel_uncert" ? "mean" : state.sampleMode;
+  const effectiveSampleMode = state.sampleMode === "std" || state.sampleMode === "rel_uncert" ? "mean" : sampleModeForApi();
   const channels = derivedPolChannels(mode);
   if (!channels.length) {
     throw new Error(`invalid derived polarization mode: ${mode}`);
@@ -2516,7 +3454,7 @@ async function fetchDerivedVolume(sampleOverride) {
   const mode = state.derivedPolMode;
   if (!isDerivedPolModeActive()) return fetchVolume(sampleOverride);
 
-  const effectiveSampleMode = state.sampleMode === "std" || state.sampleMode === "rel_uncert" ? "mean" : state.sampleMode;
+  const effectiveSampleMode = state.sampleMode === "std" || state.sampleMode === "rel_uncert" ? "mean" : sampleModeForApi();
   const channels = derivedPolChannels(mode);
   if (!channels.length) {
     throw new Error(`invalid derived polarization mode: ${mode}`);
@@ -2536,32 +3474,45 @@ async function fetchDerivedVolume(sampleOverride) {
   return mapDerivedPolarizationPayload(mode, byPol);
 }
 
+function sampleMorphVolumeResolution() {
+  return volumeFrameResolution(1);
+}
+
 function rerenderVolumeFrame() {
   if (!isVolumeMode()) return;
+  if (isSampleMorphMode() && state.sampleMorph.fromVolume && state.sampleMorph.toVolume) {
+    const resolution = sampleMorphVolumeResolution();
+    const sharedStats = isValidRangeStats(state.fixedColorRange)
+      ? state.fixedColorRange
+      : state.sampleMorph.sharedStats || sampleMorphPayloadStats();
+    state.sampleMorph.sharedStats = sharedStats;
+    state.sampleMorph.fromCanvas = createVolumeCanvasAuto(state.sampleMorph.fromVolume, resolution, sharedStats);
+    state.sampleMorph.toCanvas = createVolumeCanvasAuto(state.sampleMorph.toVolume, resolution, sharedStats);
+    renderSampleMorphFrame();
+    return;
+  }
   const unit = isDerivedPolModeActive() ? derivedPolUnit(state.derivedPolMode) : state.meta ? state.meta.intensity_unit || "" : "";
   const qCfg = volumeQualityConfig();
 
   if (state.currentVolumeTiles && state.currentVolumeTiles.length) {
-    const resolution = clamp(
-      Math.round(volumeBaseResolution(state.currentVolumeTiles.length) * qCfg.resMul),
-      140,
-      420
-    );
+    const resolution = volumeFrameResolution(state.currentVolumeTiles.length);
     const tiles = state.currentVolumeTiles.map((v) => createVolumeCanvasAuto(v, resolution));
     const sharedStats = sharedStatsFromPayloads(state.currentVolumeTiles);
     renderTileFrame(tiles, state.sampleGridSize, null, sharedStats, unit);
     return;
   }
   if (state.currentVolume) {
-    const resolution = clamp(Math.round(volumeBaseResolution(1) * qCfg.resMul), 180, 520);
+    const resolution = volumeFrameResolution(1);
     renderFrame(createVolumeCanvasAuto(state.currentVolume, resolution), null, state.currentVolume.stats || null, unit);
   }
 }
 
 async function setSpatialMode(mode) {
   if (mode !== "slice" && mode !== "volume") return;
+  if (mode === "volume" && !canUseVolumeMode()) return;
   if (state.spatialMode === mode) return;
 
+  stopSampleMorphPlayback();
   state.spatialMode = mode;
   state.fixedColorRange = null;
   state.multiSpectral = false;
@@ -2580,11 +3531,18 @@ async function refreshSlice(options = {}) {
   const playbackMode = options.playback === true;
   const lodMaxPixels = playbackMode ? playbackMaxPixelsForFrame() : null;
   if (state.sampleMode === "single") {
-    ensureGridIndices();
-    state.values.sample = state.sampleGridIndices[state.activeSampleTile];
+    if (isSampleMorphMode()) {
+      state.sampleGridSize = 1;
+      state.sampleGridIndices = [clamp(state.values.sample, 0, Math.max(0, sampleCount() - 1))];
+      state.activeSampleTile = 0;
+    } else {
+      ensureGridIndices();
+      state.values.sample = state.sampleGridIndices[state.activeSampleTile];
+    }
   } else {
     state.sampleGridSize = 1;
     state.frameGrid = 1;
+    if (!isSampleMorphMode()) resetSampleMorphState();
   }
 
   const evpaPromise = state.showEvpa && !isVolumeMode() ? refreshEvpaTicks() : Promise.resolve();
@@ -2594,11 +3552,15 @@ async function refreshSlice(options = {}) {
 
   if (isVolumeMode()) {
     state.currentMonoSlice = null;
+    state.currentMonoSliceTiles = null;
     state.currentMultispectralBands = null;
     state.evpaTicks = [];
     state.evpaTicksBySample = {};
-
-    if (state.sampleMode === "single") {
+    if (isSampleMorphMode()) {
+      await evpaPromise;
+      const preserveAlpha = playbackMode || Boolean(state.sampleMorph.fromCanvas && state.sampleMorph.toCanvas);
+      await prepareSampleMorphPair(lodMaxPixels, preserveAlpha);
+    } else if (state.sampleMode === "single") {
       const sampleIndices = state.sampleGridIndices.slice();
       const volumes = await Promise.all(
         sampleIndices.map((sampleIdx) => (isDerivedPolModeActive() ? fetchDerivedVolume(sampleIdx) : fetchVolume(sampleIdx)))
@@ -2613,17 +3575,27 @@ async function refreshSlice(options = {}) {
       state.currentVolumeTiles = null;
     }
 
-    rerenderVolumeFrame();
+    if (!isSampleMorphMode()) {
+      rerenderVolumeFrame();
+    }
     await refreshViewProfiles();
+    syncSampleMorphPlayback();
     return;
   }
 
   state.currentVolume = null;
   state.currentVolumeTiles = null;
+  state.currentMonoSliceTiles = null;
 
-  if (state.sampleMode === "single") {
+  if (isSampleMorphMode()) {
+    await evpaPromise;
+    state.currentMultispectralBands = null;
+    const preserveAlpha =
+      !state.sampleMorph.initializing && (playbackMode || Boolean(state.sampleMorph.fromSlice && state.sampleMorph.toSlice));
+    await prepareSampleMorphPair(lodMaxPixels, preserveAlpha);
+  } else if (state.sampleMode === "single") {
     const sampleIndices = state.sampleGridIndices.slice();
-    if (!isDerivedPolModeActive() && state.multiSpectral && axisSize("nu") > 2) {
+    if (isMultiSpectralActive()) {
       const mosaics = await Promise.all(
         sampleIndices.map((sampleIdx) =>
           fetchJson(`/api/datasets/${state.dataId}/multispectral?${buildMultispectralParams(sampleIdx, lodMaxPixels).toString()}`)
@@ -2633,6 +3605,7 @@ async function refreshSlice(options = {}) {
       const activeIdx = clamp(state.activeSampleTile, 0, Math.max(0, mosaics.length - 1));
       const primary = mosaics[activeIdx] || mosaics[0];
       state.currentMonoSlice = null;
+      state.currentMonoSliceTiles = null;
       state.currentMultispectralBands = primary ? primary.bands || null : null;
       const tiles = mosaics.map((ms) => createRgbCanvas(ms.shape[0], ms.shape[1], ms.values.r, ms.values.g, ms.values.b, ms));
       renderTileFrame(tiles, state.sampleGridSize, primary ? indicesToCoords(primary.selected_indices) : null, null);
@@ -2649,28 +3622,17 @@ async function refreshSlice(options = {}) {
       const activeIdx = clamp(state.activeSampleTile, 0, Math.max(0, slices.length - 1));
       const primary = slices[activeIdx] || slices[0] || null;
       state.currentMonoSlice = primary;
+      state.currentMonoSliceTiles = slices;
 
-      let sharedStats = isValidRangeStats(state.fixedColorRange) ? state.fixedColorRange : null;
-      if (!sharedStats && slices.length) {
-        let min = Number.POSITIVE_INFINITY;
-        let max = Number.NEGATIVE_INFINITY;
-        for (const s of slices) {
-          if (s.stats) {
-            if (s.stats.min < min) min = s.stats.min;
-            if (s.stats.max > max) max = s.stats.max;
-          }
-        }
-        if (Number.isFinite(min) && Number.isFinite(max) && max > min) {
-          sharedStats = { min, max };
-        }
-      }
+      const sharedStats = isValidRangeStats(state.fixedColorRange) ? state.fixedColorRange : sharedStatsFromPayloads(slices);
       const tiles = slices.map((s) => createSingleCanvas(s, sharedStats));
       const selectedCoords = primary ? primary.selected_coords || indicesToCoords(primary.selected_indices) : null;
       const intensityUnit = isDerivedPolModeActive() ? derivedPolUnit(state.derivedPolMode) : null;
       renderTileFrame(tiles, state.sampleGridSize, selectedCoords, sharedStats, intensityUnit);
     }
   } else {
-    if (!isDerivedPolModeActive() && state.multiSpectral && axisSize("nu") > 2) {
+    state.currentMonoSliceTiles = null;
+    if (isMultiSpectralActive()) {
       const ms = await fetchJson(`/api/datasets/${state.dataId}/multispectral?${buildMultispectralParams(undefined, lodMaxPixels).toString()}`);
       await evpaPromise;
       state.currentMonoSlice = null;
@@ -2705,6 +3667,7 @@ async function refreshSlice(options = {}) {
     drawNavigationGraphs();
     if (state.selection) drawSelectionGraphs();
   }
+  syncSampleMorphPlayback();
 }
 
 function profileForAxis(source, axis) {
@@ -3229,6 +4192,7 @@ function schedulePlaybackRefine() {
   setTimeout(async () => {
     if (token !== state.playbackRefineToken) return;
     if (isPlaying()) return;
+    if (isSampleMorphPlaybackActive()) return;
     try {
       await refreshSlice();
       if (state.selection) await refreshSelectionAnalytics();
@@ -3238,6 +4202,18 @@ function schedulePlaybackRefine() {
   }, 0);
 }
 
+async function advancePlaybackAxisOnce(axis) {
+  const max = axisSize(axis) - 1;
+  const [w0, w1] = getAxisWindow(axis, max + 1);
+  const cur = clamp(state.values[axis], w0, w1);
+  const next = cur >= w1 ? w0 : cur + 1;
+  await setAxisIndex(axis, next, { playback: true });
+}
+
+async function advanceAxisPlayback(axis) {
+  await advancePlaybackAxisOnce(axis);
+}
+
 function stopPlayback(refine = false) {
   const wasPlaying = state.playbackTimer !== null;
   if (state.playbackTimer) {
@@ -3245,7 +4221,6 @@ function stopPlayback(refine = false) {
     state.playbackTimer = null;
   }
   state.playbackAxis = null;
-  state.playbackBusy = false;
   state.playbackRefineToken = (state.playbackRefineToken || 0) + 1;
   updatePlayUi();
   if (refine && wasPlaying) {
@@ -3254,7 +4229,8 @@ function stopPlayback(refine = false) {
 }
 
 function startPlayback(axis) {
-  if (!axis || axisSize(axis) <= 1) return;
+  if (!axis || axis === SAMPLE_MORPH_AXIS || playbackAxisLength(axis) <= 1) return;
+  stopSampleMorphPlayback();
   stopPlayback(false);
   state.playbackAxis = axis;
 
@@ -3264,11 +4240,7 @@ function startPlayback(axis) {
     state.playbackBusy = true;
 
     try {
-      const max = axisSize(axis) - 1;
-      const [w0, w1] = getAxisWindow(axis, max + 1);
-      const cur = clamp(state.values[axis], w0, w1);
-      const next = cur >= w1 ? w0 : cur + 1;
-      await setAxisIndex(axis, next, { playback: true });
+      await advanceAxisPlayback(axis);
     } finally {
       state.playbackBusy = false;
     }
@@ -3293,6 +4265,17 @@ function restartPlaybackIfRunning() {
     return;
   }
   startPlayback(axis);
+}
+
+function restartSampleMorphPlaybackIfRunning() {
+  if (!isSampleMorphPlaybackActive()) return;
+  stopSampleMorphPlayback();
+  startSampleMorphPlayback();
+}
+
+function restartPlaybackTimersIfRunning() {
+  restartPlaybackIfRunning();
+  restartSampleMorphPlaybackIfRunning();
 }
 
 function applyZoomBox(zoomDrag) {
@@ -3441,22 +4424,66 @@ async function onSampleModeChange(mode) {
   state.sampleMode = mode;
   if (mode === "single") {
     const requestedGrid = parseGridCount(els.sampleGridCountSelect.value);
+    if (!isSampleMorphMode()) {
+      state.sampleGridSize = requestedGrid;
+      state.sampleGridIndices = randomSampleIndices(state.sampleGridSize);
+      state.activeSampleTile = 0;
+      ensureGridIndices();
+    } else {
+      state.values.sample = 0;
+      state.sampleGridSize = 1;
+      state.sampleGridIndices = [0];
+      state.activeSampleTile = 0;
+      resetSampleMorphState();
+      state.sampleMorph.initializing = true;
+    }
+  } else {
+    state.sampleGridSize = 1;
+    state.sampleGridIndices = [clamp(state.values.sample, 0, Math.max(0, sampleCount() - 1))];
+    state.activeSampleTile = 0;
+    resetSampleMorphState();
+  }
+  updateControlCaps();
+  try {
+    await refreshSlice();
+  } finally {
+    state.sampleMorph.initializing = false;
+  }
+  syncSampleMorphPlayback();
+  if (state.selection) await refreshSelectionAnalytics();
+}
+
+async function onSamplesViewChange(view) {
+  if (!isSamplesMode()) return;
+  if (!["mosaic", "morph"].includes(view)) return;
+  if (state.sampleSingleView === view) return;
+  state.sampleSingleView = view;
+  if (view === "morph") {
+    state.values.sample = 0;
+    state.sampleGridSize = 1;
+    state.sampleGridIndices = [0];
+    state.activeSampleTile = 0;
+    resetSampleMorphState();
+    state.sampleMorph.initializing = true;
+  } else {
+    const requestedGrid = parseGridCount(els.sampleGridCountSelect.value);
     state.sampleGridSize = requestedGrid;
     state.sampleGridIndices = randomSampleIndices(state.sampleGridSize);
     state.activeSampleTile = 0;
     ensureGridIndices();
-  } else {
-    state.sampleGridSize = 1;
-    state.sampleGridIndices = [0];
-    state.activeSampleTile = 0;
   }
   updateControlCaps();
-  await refreshSlice();
+  try {
+    await refreshSlice();
+  } finally {
+    state.sampleMorph.initializing = false;
+  }
+  syncSampleMorphPlayback();
   if (state.selection) await refreshSelectionAnalytics();
 }
 
 async function onSampleGridCountChange() {
-  if (!isSamplesMode()) return;
+  if (!isSamplesMode() || isSampleMorphMode()) return;
   const requestedGrid = parseGridCount(els.sampleGridCountSelect.value);
   state.sampleGridSize = requestedGrid;
   state.sampleGridIndices = randomSampleIndices(state.sampleGridSize);
@@ -3468,7 +4495,7 @@ async function onSampleGridCountChange() {
 }
 
 async function onResampleSamples() {
-  if (!isSamplesMode()) return;
+  if (!isSamplesMode() || isSampleMorphMode()) return;
   state.sampleGridIndices = randomSampleIndices(state.sampleGridSize);
   state.activeSampleTile = 0;
   ensureGridIndices();
@@ -3478,8 +4505,10 @@ async function onResampleSamples() {
 
 async function onPlaneChange() {
   stopPlayback();
+  stopSampleMorphPlayback();
   state.plane = els.planeSelect.value;
   resetForPlaneChange(state);
+  resetSampleMorphState();
   resetView();
   updateControlCaps();
   drawSelectionGraphs();
@@ -3792,11 +4821,13 @@ async function pickPathWithSystemDialog() {
 
 async function onDatasetChange() {
   stopPlayback();
+  stopSampleMorphPlayback();
   const selectedId = els.datasetSelect.value;
   if (!selectedId) {
     state.dataId = null;
     state.meta = null;
     resetForDatasetChange(state);
+    resetSampleMorphState();
     resetView();
     updateControlCaps();
     drawFrameAndOverlays();
@@ -3811,6 +4842,7 @@ async function onDatasetChange() {
   setSystemPickerStatus("");
   state.meta = await fetchJson(`/api/datasets/${state.dataId}/meta`);
   resetForDatasetChange(state);
+  resetSampleMorphState();
 
   resetView();
   updateControlCaps();
@@ -3827,8 +4859,10 @@ async function init() {
   els.colorbarCanvas.height = 26;
   initPanelResize();
 
-  if (state.sliceRender.backend !== "cpu") ensureSliceGpuRenderer();
-  if (state.volumeRender.backend !== "cpu") ensureVolumeGpuRenderer();
+  if (state.sliceRender.backend !== "cpu") {
+    ensureSliceGpuRenderer();
+    ensureVolumeGpuRenderer();
+  }
 
   installDatasetDropHandlers();
   els.datasetSelect.addEventListener("change", onDatasetChange);
@@ -3845,12 +4879,27 @@ async function init() {
     await refreshSlice();
     if (state.selection) await refreshSelectionAnalytics();
   });
+  if (els.colorNormMinRange && els.colorNormMaxRange) {
+    els.colorNormMinRange.addEventListener("pointerdown", () => setColorNormActiveHandle("min"));
+    els.colorNormMaxRange.addEventListener("pointerdown", () => setColorNormActiveHandle("max"));
+    els.colorNormMinRange.addEventListener("focus", () => setColorNormActiveHandle("min"));
+    els.colorNormMaxRange.addEventListener("focus", () => setColorNormActiveHandle("max"));
+    els.colorNormMinRange.addEventListener("input", () => onColorNormRangeInput("min", false));
+    els.colorNormMaxRange.addEventListener("input", () => onColorNormRangeInput("max", false));
+    els.colorNormMinRange.addEventListener("change", () => onColorNormRangeInput("min", true));
+    els.colorNormMaxRange.addEventListener("change", () => onColorNormRangeInput("max", true));
+    els.colorNormMinRange.addEventListener("blur", () => setColorNormActiveHandle(null));
+    els.colorNormMaxRange.addEventListener("blur", () => setColorNormActiveHandle(null));
+  }
 
   els.sliceBackendSelect.addEventListener("change", async () => {
     const backend = els.sliceBackendSelect.value;
     if (!["auto", "gpu", "cpu"].includes(backend)) return;
     state.sliceRender.backend = backend;
-    if (backend !== "cpu") ensureSliceGpuRenderer();
+    if (backend !== "cpu") {
+      ensureSliceGpuRenderer();
+      ensureVolumeGpuRenderer();
+    }
     updateControlCaps();
     await refreshSlice();
     if (state.selection) await refreshSelectionAnalytics();
@@ -3864,19 +4913,32 @@ async function init() {
   els.sampleModeStdBtn.addEventListener("click", () => onSampleModeChange("std"));
   els.sampleModeRelBtn.addEventListener("click", () => onSampleModeChange("rel_uncert"));
   els.sampleModeSamplesBtn.addEventListener("click", () => onSampleModeChange("single"));
+  if (els.sampleViewMosaicBtn) {
+    els.sampleViewMosaicBtn.addEventListener("click", () => onSamplesViewChange("mosaic"));
+  }
+  if (els.sampleViewMorphBtn) {
+    els.sampleViewMorphBtn.addEventListener("click", () => onSamplesViewChange("morph"));
+  }
   els.sampleGridCountSelect.addEventListener("change", onSampleGridCountChange);
   els.resampleSamplesBtn.addEventListener("click", onResampleSamples);
+  if (els.sampleMorphDeltaSelect) {
+    els.sampleMorphDeltaSelect.addEventListener("change", () => {
+      const dt = Number.parseFloat(els.sampleMorphDeltaSelect.value);
+      if (Number.isFinite(dt) && dt > 0) {
+        state.sampleMorphDeltaT = dt;
+        updatePlayUi();
+      }
+    });
+  }
 
   els.planeSelect.addEventListener("change", onPlaneChange);
   els.spatialSliceBtn.addEventListener("click", () => setSpatialMode("slice"));
   els.spatialVolumeBtn.addEventListener("click", () => setSpatialMode("volume"));
-  els.volumeBackendSelect.addEventListener("change", onVolumeRenderControlChange);
   els.volumeQualitySelect.addEventListener("change", onVolumeRenderControlChange);
   els.volumeRenderModeSelect.addEventListener("change", onVolumeRenderControlChange);
   els.volumeTfSelect.addEventListener("change", onVolumeRenderControlChange);
   els.volumeOpacityRange.addEventListener("input", onVolumeRenderControlChange);
   els.volumeGammaRange.addEventListener("input", onVolumeRenderControlChange);
-  els.volumeCutoffRange.addEventListener("input", onVolumeRenderControlChange);
   els.volumeClipNearRange.addEventListener("input", onVolumeRenderControlChange);
   els.volumeClipFarRange.addEventListener("input", onVolumeRenderControlChange);
   els.volumeIsoThresholdRange.addEventListener("input", onVolumeRenderControlChange);
@@ -3894,7 +4956,7 @@ async function init() {
 
   els.playSpeedSelect.addEventListener("change", () => {
     state.playbackFps = Number.parseInt(els.playSpeedSelect.value, 10);
-    restartPlaybackIfRunning();
+    restartPlaybackTimersIfRunning();
     updatePlayUi();
   });
 

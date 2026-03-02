@@ -14,7 +14,8 @@ export async function fetchJson(url, options) {
 }
 
 export function createRequestBuilders(deps) {
-  const { state, planeDims } = deps;
+  const { state, planeDims, normalizeSampleMode } = deps;
+  const normalizeMode = typeof normalizeSampleMode === "function" ? normalizeSampleMode : (mode) => mode;
 
   function buildVolumeParams(sampleOverride, polOverride = state.values.pol, sampleModeOverride = state.sampleMode) {
     return new URLSearchParams({
@@ -25,7 +26,7 @@ export function createRequestBuilders(deps) {
       x: String(state.values.x),
       y: String(state.values.y),
       z: String(state.values.z),
-      sample_mode: sampleModeOverride,
+      sample_mode: normalizeMode(sampleModeOverride),
     });
   }
 
@@ -45,7 +46,7 @@ export function createRequestBuilders(deps) {
       x: String(state.values.x),
       y: String(state.values.y),
       z: String(state.values.z),
-      sample_mode: sampleModeOverride,
+      sample_mode: normalizeMode(sampleModeOverride),
       plane_x: p.planeX,
       plane_y: p.planeY,
     });
@@ -64,7 +65,7 @@ export function createRequestBuilders(deps) {
       x: String(state.values.x),
       y: String(state.values.y),
       z: String(state.values.z),
-      sample_mode: state.sampleMode,
+      sample_mode: normalizeMode(state.sampleMode),
       plane_x: p.planeX,
       plane_y: p.planeY,
     });
@@ -88,7 +89,7 @@ export function createRequestBuilders(deps) {
       x: String(state.values.x),
       y: String(state.values.y),
       z: String(state.values.z),
-      sample_mode: state.sampleMode,
+      sample_mode: normalizeMode(state.sampleMode),
       range_mode: state.colorRangeMode,
       plane_x: p.planeX,
       plane_y: p.planeY,

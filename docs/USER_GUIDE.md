@@ -23,9 +23,11 @@ Controls:
 - **Sample Mode**:
   - `Mean`: average over sample axis
   - `STD`: standard deviation over sample axis
-  - `Samples`: random single-sample mosaic (`1`, `4`, `9`, `16`)
+  - `Samples`: single-sample view with `Mosaic` (`1`, `4`, `9`, `16`) or `Morph` (interpolated movie between consecutive samples, in slice or volume view)
+    - `Morph` auto-starts when selected and uses its own `Sample Δt` control (time to transition to next sample).
   - `rel. uncertainty`: `std / max(abs(mean), 1e-8)`
-- **Playback Speed**: shared playback FPS
+- **Render FPS**: global redraw cadence.
+- **Sample Δt** (Morph mode): time between two actual sample frames; with FPS this sets the number of intermediate blend frames.
 
 ## Spatial Panel
 

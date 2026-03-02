@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Michroma&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=20260302e" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260302u" />
   </head>
   <body>
     <main class="layout">
@@ -48,8 +48,8 @@
               <option value="circular">Circular</option>
             </select>
           </label>
-          <label>
-            Color Range
+          <label id="colorNormalizationModeLabel">
+            Normalization
             <select id="colorRangeModeSelect">
               <option value="none">None</option>
               <option value="time">Time</option>
@@ -59,8 +59,23 @@
               <option value="full">Full</option>
             </select>
           </label>
+          <div id="colorNormRangeBlock" class="dualRangeBlock">
+            <div class="dualRangeHeader">
+              <span class="dualRangeTitle">Range</span>
+            </div>
+            <div id="colorNormTrack" class="dualRangeTrack">
+              <span id="colorNormMinValue" class="dualRangeValue">--</span>
+              <span id="colorNormMaxValue" class="dualRangeValue">--</span>
+              <input id="colorNormMinRange" type="range" min="0" max="1000" step="1" value="0" />
+              <input id="colorNormMaxRange" type="range" min="0" max="1000" step="1" value="1000" />
+            </div>
+            <div class="dualRangeBounds">
+              <span id="colorNormBoundMin">--</span>
+              <span id="colorNormBoundMax">--</span>
+            </div>
+          </div>
           <label>
-            Slice Backend
+            Backend
             <select id="sliceBackendSelect">
               <option value="auto" selected>Auto (GPU if beneficial)</option>
               <option value="gpu">GPU (WebGL2)</option>
@@ -83,6 +98,13 @@
               <button id="sampleModeSamplesBtn" class="tinyBtn" type="button">Samples</button>
               <button id="sampleModeRelBtn" class="tinyBtn" type="button">rel. uncertainty</button>
             </div>
+            <div id="sampleViewControls" class="sampleViewControls">
+              <span>Samples View</span>
+              <div class="miniGroup">
+                <button id="sampleViewMosaicBtn" class="tinyBtn" type="button">Mosaic</button>
+                <button id="sampleViewMorphBtn" class="tinyBtn" type="button">Morph</button>
+              </div>
+            </div>
             <div id="sampleMosaicControls" class="sampleMosaicControls">
               <label>
                 # Samples
@@ -95,19 +117,35 @@
               </label>
               <button id="resampleSamplesBtn" class="tinyBtn" type="button">Resample</button>
             </div>
+            <div id="sampleMorphControls" class="sampleMorphControls">
+              <label>
+                Sample Δt (between samples)
+                <select id="sampleMorphDeltaSelect">
+                  <option value="0.05">0.05s</option>
+                  <option value="0.1">0.1s</option>
+                  <option value="0.25">0.25s</option>
+                  <option value="0.5" selected>0.5s</option>
+                  <option value="1">1s</option>
+                  <option value="2">2s</option>
+                </select>
+              </label>
+              <span id="sampleMorphStatus" class="sampleMorphStatus"></span>
+            </div>
           </div>
-          <label id="playSpeedLabel">
-            Playback Speed
-            <select id="playSpeedSelect">
-              <option value="1">1 fps</option>
-              <option value="2">2 fps</option>
-              <option value="4">4 fps</option>
-              <option value="7">7 fps</option>
-              <option value="10">10 fps</option>
-              <option value="15">15 fps</option>
-              <option value="20">20 fps</option>
-            </select>
-          </label>
+          <div id="playbackTimingControls" class="playbackTimingControls">
+            <label id="playSpeedLabel">
+              Render FPS
+              <select id="playSpeedSelect">
+                <option value="1">1 fps</option>
+                <option value="2">2 fps</option>
+                <option value="4">4 fps</option>
+                <option value="7">7 fps</option>
+                <option value="10">10 fps</option>
+                <option value="15">15 fps</option>
+                <option value="20">20 fps</option>
+              </select>
+            </label>
+          </div>
         </div>
 
         <div id="spatialControlGroup" class="controlGroup">
@@ -143,14 +181,6 @@
           </div>
           <div id="volumeRenderControls" class="volumeRenderControls">
             <h3>Volume Render</h3>
-            <label>
-              Backend
-              <select id="volumeBackendSelect">
-                <option value="auto" selected>Auto (WebGL2)</option>
-                <option value="gpu">GPU (WebGL2)</option>
-                <option value="cpu">CPU</option>
-              </select>
-            </label>
             <div id="volumeBackendStatus" class="volumeBackendStatus"></div>
             <label>
               Quality
@@ -180,34 +210,39 @@
                 <option value="sigmoid">Sigmoid</option>
               </select>
             </label>
-            <label>
-              <span>Opacity</span>
-              <span id="volumeOpacityValue"></span>
+            <label class="volumeSlider">
+              <div class="volumeSliderHeader">
+                <span>Opacity</span>
+                <span id="volumeOpacityValue"></span>
+              </div>
               <input id="volumeOpacityRange" type="range" min="0.1" max="12" step="0.1" value="1.2" />
             </label>
-            <label>
-              <span>Gamma</span>
-              <span id="volumeGammaValue"></span>
+            <label class="volumeSlider">
+              <div class="volumeSliderHeader">
+                <span>Gamma</span>
+                <span id="volumeGammaValue"></span>
+              </div>
               <input id="volumeGammaRange" type="range" min="0.5" max="1.8" step="0.05" value="0.9" />
             </label>
-            <label>
-              <span>Cutoff</span>
-              <span id="volumeCutoffValue"></span>
-              <input id="volumeCutoffRange" type="range" min="0" max="0.45" step="0.01" value="0.06" />
-            </label>
-            <label>
-              <span>Clip Near</span>
-              <span id="volumeClipNearValue"></span>
+            <label class="volumeSlider">
+              <div class="volumeSliderHeader">
+                <span>Clip Near</span>
+                <span id="volumeClipNearValue"></span>
+              </div>
               <input id="volumeClipNearRange" type="range" min="0" max="0.85" step="0.01" value="0.00" />
             </label>
-            <label>
-              <span>Clip Far</span>
-              <span id="volumeClipFarValue"></span>
+            <label class="volumeSlider">
+              <div class="volumeSliderHeader">
+                <span>Clip Far</span>
+                <span id="volumeClipFarValue"></span>
+              </div>
               <input id="volumeClipFarRange" type="range" min="0.15" max="1" step="0.01" value="1.00" />
             </label>
-            <label id="volumeIsoThresholdLabel">
-              <span>Iso Threshold</span>
-              <span id="volumeIsoThresholdValue"></span>
+            <label id="volumeIsoThresholdLabel" class="volumeSlider">
+              <div class="volumeSliderHeader">
+                <span>Iso Threshold</span>
+                <span id="volumeIsoThresholdValue"></span>
+              </div>
               <input id="volumeIsoThresholdRange" type="range" min="0.01" max="0.99" step="0.01" value="0.45" />
             </label>
           </div>
@@ -264,14 +299,14 @@
             </div>
             <div class="evpaRow">
               <button id="evpaToggleBtn" type="button">EVPA</button>
-              <label>
-                Density
-                <select id="evpaDensitySelect">
-                  <option value="8" selected>Sparse</option>
-                  <option value="4">Medium</option>
-                  <option value="2">Dense</option>
-                </select>
-              </label>
+            </div>
+            <div class="evpaDensityRow">
+              <label for="evpaDensitySelect">Density</label>
+              <select id="evpaDensitySelect">
+                <option value="8" selected>Sparse</option>
+                <option value="4">Medium</option>
+                <option value="2">Dense</option>
+              </select>
             </div>
             <div class="evpaThresholdRow">
               <label for="evpaIThresholdSelect">I threshold (% peak |I|)</label>
@@ -335,6 +370,6 @@
       </section>
       </div>
     </main>
-    <script type="module" src="/static/app.js?v=20260302f"></script>
+    <script type="module" src="/static/app.js?v=20260302u"></script>
   </body>
 </html>

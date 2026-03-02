@@ -4,6 +4,7 @@ export function createGpuRenderers(deps) {
     colorForNorm,
     isValidRangeStats,
     minMax,
+    resolveColorNormStats,
     volumeQualityConfig,
     clamp,
     isDerivedPolModeActive,
@@ -82,17 +83,27 @@ class GpuSliceRenderer {
       uniform float u_min_v;
       uniform float u_max_v;
       uniform float u_max_positive;
+      uniform float u_min_positive;
       uniform int u_flux_scale;
 
       void main() {
         float sampleV = texture(u_values, vec2(v_uv.x, 1.0 - v_uv.y)).r;
         float norm;
         if (u_flux_scale == 1) {
-          if (sampleV < 0.0 || u_max_positive <= 0.0) {
+          float lo = max(0.0, u_min_positive);
+          if (sampleV < 0.0 && lo <= 0.0) {
             outColor = vec4(1.0, 1.0, 1.0, 1.0);
             return;
           }
-          norm = log(1.0 + sampleV) / log(1.0 + u_max_positive);
+          float hi = max(lo, u_max_positive);
+          if (hi <= lo) {
+            norm = 0.0;
+          } else {
+            float clampedV = max(sampleV, lo);
+            float loL = log(1.0 + lo);
+            float hiL = log(1.0 + hi);
+            norm = (log(1.0 + clampedV) - loL) / max(1e-6, hiL - loL);
+          }
         } else {
           float span = max(u_max_v - u_min_v, 1e-6);
           norm = (sampleV - u_min_v) / span;
@@ -113,6 +124,7 @@ class GpuSliceRenderer {
       minV: gl.getUniformLocation(this.program, "u_min_v"),
       maxV: gl.getUniformLocation(this.program, "u_max_v"),
       maxPositive: gl.getUniformLocation(this.program, "u_max_positive"),
+      minPositive: gl.getUniformLocation(this.program, "u_min_positive"),
       fluxScale: gl.getUniformLocation(this.program, "u_flux_scale"),
     };
 
@@ -192,12 +204,14 @@ class GpuSliceRenderer {
         ? state.fixedColorRange
         : null;
     const sliceStats = isValidRangeStats(slice.stats) ? slice.stats : null;
-    const mm = fixedStats
+    const baseStats = fixedStats
       ? { min: fixedStats.min, max: fixedStats.max }
       : sliceStats
       ? { min: sliceStats.min, max: sliceStats.max }
       : minMax(values);
-    const maxPositive = fixedStats ? Math.max(0, fixedStats.max) : Math.max(0, sliceStats ? sliceStats.max : mm.max);
+    const mm = resolveColorNormStats(baseStats);
+    const minPositive = Math.max(0, mm.min);
+    const maxPositive = Math.max(minPositive, mm.max);
 
     const gl = this.gl;
     this.canvas.width = width;
@@ -222,6 +236,7 @@ class GpuSliceRenderer {
     gl.uniform1f(this.uniforms.minV, mm.min);
     gl.uniform1f(this.uniforms.maxV, mm.max);
     gl.uniform1f(this.uniforms.maxPositive, maxPositive);
+    gl.uniform1f(this.uniforms.minPositive, minPositive);
     gl.uniform1i(this.uniforms.fluxScale, state.fluxScale === "log" ? 1 : 0);
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -274,6 +289,7 @@ class GpuVolumeRenderer {
       uniform float u_min_v;
       uniform float u_max_v;
       uniform float u_max_positive;
+      uniform float u_min_positive;
       uniform float u_max_abs;
       uniform int u_steps;
       uniform int u_flux_scale;
@@ -317,8 +333,14 @@ class GpuVolumeRenderer {
         float minv = u_min_v;
         float maxv = max(u_max_v, minv + 1e-6);
         if (u_flux_scale == 1) {
-          if (sampleV < 0.0 || u_max_positive <= 0.0) return -1.0;
-          return log(1.0 + sampleV) / log(1.0 + u_max_positive);
+          float lo = max(0.0, u_min_positive);
+          if (sampleV < 0.0 && lo <= 0.0) return -1.0;
+          float hi = max(lo, u_max_positive);
+          if (hi <= lo) return 0.0;
+          float v = max(sampleV, lo);
+          float loL = log(1.0 + lo);
+          float hiL = log(1.0 + hi);
+          return (log(1.0 + v) - loL) / max(1e-6, hiL - loL);
         }
         return (sampleV - minv) / (maxv - minv);
       }
@@ -364,7 +386,7 @@ class GpuVolumeRenderer {
           vec3 color = texture(u_cmap, vec2(norm, 0.5)).rgb;
           float density;
           if (u_use_diverging_density == 1) {
-            density = abs(sampleV) / max(u_max_abs, 1e-9);
+            density = abs(norm * 2.0 - 1.0);
           } else if (u_use_bfield_circular_density == 1) {
             density = 0.58;
           } else {
@@ -455,6 +477,7 @@ class GpuVolumeRenderer {
       minV: gl.getUniformLocation(this.program, "u_min_v"),
       maxV: gl.getUniformLocation(this.program, "u_max_v"),
       maxPositive: gl.getUniformLocation(this.program, "u_max_positive"),
+      minPositive: gl.getUniformLocation(this.program, "u_min_positive"),
       maxAbs: gl.getUniformLocation(this.program, "u_max_abs"),
       steps: gl.getUniformLocation(this.program, "u_steps"),
       fluxScale: gl.getUniformLocation(this.program, "u_flux_scale"),
@@ -543,7 +566,7 @@ class GpuVolumeRenderer {
     return tex;
   }
 
-  render(volume, resolution) {
+  render(volume, resolution, rangeOverride = null) {
     const gl = this.gl;
     if (!volume || !Array.isArray(volume.shape) || volume.shape.length !== 3 || !Array.isArray(volume.values)) {
       return null;
@@ -558,12 +581,22 @@ class GpuVolumeRenderer {
     this.updateColorTexture();
     const volumeTex = this.volumeTextureFor(volume);
 
-    const stats = volume.stats && Number.isFinite(volume.stats.min) && Number.isFinite(volume.stats.max)
+    const fixedStats =
+      rangeOverride && isValidRangeStats(rangeOverride)
+        ? rangeOverride
+        : isValidRangeStats(state.fixedColorRange)
+        ? state.fixedColorRange
+        : null;
+    const stats = fixedStats
+      ? { min: fixedStats.min, max: fixedStats.max }
+      : volume.stats && Number.isFinite(volume.stats.min) && Number.isFinite(volume.stats.max)
       ? { min: volume.stats.min, max: volume.stats.max }
       : minMax(volume.values);
-    const mmMin = Number.isFinite(stats.min) ? stats.min : 0;
-    const mmMax = Number.isFinite(stats.max) ? stats.max : 1;
-    const maxPositive = Math.max(0, mmMax);
+    const normalizedStats = resolveColorNormStats(stats);
+    const mmMin = Number.isFinite(normalizedStats.min) ? normalizedStats.min : 0;
+    const mmMax = Number.isFinite(normalizedStats.max) ? normalizedStats.max : 1;
+    const minPositive = Math.max(0, mmMin);
+    const maxPositive = Math.max(minPositive, mmMax);
     const maxAbs = Math.max(Math.abs(mmMin), Math.abs(mmMax), 1.0e-9);
     const qCfg = volumeQualityConfig();
     const steps = clamp(Math.round(Math.max(nx, ny, nz) * qCfg.stepMul), 24, GPU_VOLUME_MAX_STEPS);
@@ -587,6 +620,7 @@ class GpuVolumeRenderer {
     gl.uniform1f(this.uniforms.minV, mmMin);
     gl.uniform1f(this.uniforms.maxV, mmMax);
     gl.uniform1f(this.uniforms.maxPositive, maxPositive);
+    gl.uniform1f(this.uniforms.minPositive, minPositive);
     gl.uniform1f(this.uniforms.maxAbs, maxAbs);
     gl.uniform1i(this.uniforms.steps, steps);
     gl.uniform1i(this.uniforms.fluxScale, state.fluxScale === "log" ? 1 : 0);
@@ -599,7 +633,7 @@ class GpuVolumeRenderer {
     gl.uniform1f(this.uniforms.clipFar, clamp(state.volumeRender.clipFar, 0.05, 1.0));
     gl.uniform1f(this.uniforms.opacity, clamp(state.volumeRender.opacity, 0.1, 12.0));
     gl.uniform1f(this.uniforms.gamma, clamp(state.volumeRender.gamma, 0.4, 2.4));
-    gl.uniform1f(this.uniforms.cutoff, clamp(state.volumeRender.cutoff, 0, 0.9));
+    gl.uniform1f(this.uniforms.cutoff, 0.0);
     gl.uniform1f(this.uniforms.yaw, state.volumeYaw);
     gl.uniform1f(this.uniforms.pitch, state.volumePitch);
     gl.uniform1f(this.uniforms.zoom, clamp(state.volumeZoom, 0.35, 10.0));

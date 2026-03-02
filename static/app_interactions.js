@@ -29,6 +29,14 @@ export function bindCanvasInteractions(ctx) {
     setAxisWindow,
     state,
   } = ctx;
+  let volumeDragRaf = 0;
+  const scheduleVolumeDragRender = () => {
+    if (volumeDragRaf) return;
+    volumeDragRaf = window.requestAnimationFrame(() => {
+      volumeDragRaf = 0;
+      if (state.volumeDrag) rerenderVolumeFrame();
+    });
+  };
 
   els.canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
   els.canvas.addEventListener("wheel", handleWheelZoom, { passive: false });
@@ -120,7 +128,7 @@ export function bindCanvasInteractions(ctx) {
       const dy = ev.clientY - state.volumeDrag.startClientY;
       state.volumeYaw = state.volumeDrag.startYaw + dx * 0.012;
       state.volumePitch = clamp(state.volumeDrag.startPitch + dy * 0.012, -1.2, 1.2);
-      rerenderVolumeFrame();
+      scheduleVolumeDragRender();
       return;
     }
 
@@ -224,6 +232,11 @@ export function bindCanvasInteractions(ctx) {
 
     if (state.volumeDrag) {
       state.volumeDrag = null;
+      if (volumeDragRaf) {
+        window.cancelAnimationFrame(volumeDragRaf);
+        volumeDragRaf = 0;
+      }
+      rerenderVolumeFrame();
       return;
     }
 
