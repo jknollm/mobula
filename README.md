@@ -55,7 +55,7 @@ mobula --host 127.0.0.1 --port 8000 --reload
 
 - Interactive 2D slice navigation across `XY`, `YZ`, `ZX`
 - Volume rendering over `x,y,z`
-- HEALPix sphere mode (`Mollweide`, `Inside-Out`, `Outside`) for spherical datasets
+- HEALPix sphere mode (`Mollweide`, `Inside`, `Outside`) for spherical datasets
 - Time/spectral/hidden-spatial playback and linked profile graphs
 - Sample-aware views (`single`, `mean`, `std`, `rel_uncert`) and sample mosaics
 - Polarization tools (I/Q/U/V, EVPA overlay, derived polarization modes)

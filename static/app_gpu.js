@@ -1190,7 +1190,8 @@ class GpuVolumeRenderer {
           } else {
             float depth = -1.15 + f * 2.3;
             float planeScale = 1.05 / max(0.15, u_zoom);
-            pos = rotatePos(vec3(u * planeScale, -v * planeScale, depth));
+            float aspect = float(max(1, u_out_width)) / float(max(1, u_out_height));
+            pos = rotatePos(vec3(u * planeScale * aspect, -v * planeScale, depth));
           }
           if (abs(pos.x) > 1.0 || abs(pos.y) > 1.0 || abs(pos.z) > 1.0) continue;
 
@@ -1388,7 +1389,7 @@ class GpuVolumeRenderer {
     return tex;
   }
 
-  render(volume, resolution, rangeOverride = null) {
+  render(volume, resolution, rangeOverride = null, outputAspect = 1.0) {
     const gl = this.gl;
     if (!volume || !Array.isArray(volume.shape) || volume.shape.length !== 3 || !Array.isArray(volume.values)) {
       return null;
@@ -1399,8 +1400,17 @@ class GpuVolumeRenderer {
     if (nx < 2 || ny < 2 || nz < 2 || volume.values.length !== nx * ny * nz) return null;
     const sphericalMode = state.volumeRender && state.volumeRender.mode === "spherical";
     const sphereProjection = state.volumeRender && state.volumeRender.sphereProjection === "inside" ? "inside" : "mollweide";
-    const outWidth = sphericalMode && sphereProjection === "mollweide" ? resolution * 2 : resolution;
-    const outHeight = resolution;
+    let outWidth = resolution;
+    let outHeight = resolution;
+    if (sphericalMode && sphereProjection === "mollweide") {
+      outWidth = resolution * 2;
+      outHeight = resolution;
+    } else if (!sphericalMode) {
+      const aspect = Number.isFinite(outputAspect) && outputAspect > 0 ? outputAspect : 1.0;
+      const area = Math.max(64, resolution * resolution);
+      outWidth = clamp(Math.round(Math.sqrt(area * aspect)), 64, 4096);
+      outHeight = clamp(Math.round(Math.sqrt(area / Math.max(1.0e-6, aspect))), 64, 4096);
+    }
     const sphereProjectionMode = sphereProjection === "inside" ? 1 : 0;
     const sphereInsideScale = Math.max(0.1, Math.min(3.6, 0.45 * Math.max(0.5, Math.min(8.0, state.volumeZoom || 1))));
     const sphereNside = Math.max(1, Math.min(512, Math.round(Number.parseInt(state.volumeRender?.sphereNsite, 10) || 32)));

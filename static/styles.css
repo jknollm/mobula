@@ -12,6 +12,7 @@
   --left-col: 320px;
   --right-col: 300px;
   --splitter-w: 10px;
+  --viewer-toolbar-btn-h: 30px;
 }
 
 * {
@@ -1051,7 +1052,7 @@ canvas {
 
 .viewerToolbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
   align-items: center;
   justify-content: flex-end;
@@ -1060,6 +1061,17 @@ canvas {
   background: linear-gradient(180deg, rgba(16, 23, 33, 0), rgba(16, 23, 33, 0.95) 45%);
   padding-top: 3px;
   z-index: 2;
+}
+
+.viewerToolbar button {
+  height: var(--viewer-toolbar-btn-h);
+  min-height: var(--viewer-toolbar-btn-h);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  white-space: nowrap;
+  padding: 0 10px;
 }
 
 .modeButtons {
@@ -1084,14 +1096,28 @@ canvas {
   width: auto;
   min-width: 90px;
   font-size: 0.76rem;
-  padding: 5px 8px;
 }
 
 .toolbarExport {
   width: auto;
   min-width: 108px;
   font-size: 0.76rem;
-  padding: 5px 8px;
+}
+
+.toolbarExport:disabled,
+.toolbarExport.unsupported {
+  border-color: #2a3546;
+  background: #0b1118;
+  color: #7e8998;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.toolbarExport:disabled:hover,
+.toolbarExport.unsupported:hover {
+  border-color: #2a3546;
+  background: #0b1118;
+  cursor: not-allowed;
 }
 
 .coordSystemControl {
@@ -1251,6 +1277,9 @@ canvas {
     width: 100%;
     height: auto;
     align-self: stretch;
+  }
+  .viewerToolbar {
+    flex-wrap: wrap;
   }
 }
 

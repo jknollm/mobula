@@ -12,7 +12,7 @@ export function bindCanvasInteractions(ctx) {
     effectiveDragMode,
     els,
     ensureGridIndices,
-    getDrawRect,
+    getRenderGeometry,
     getViewRect,
     handleWheelZoom,
     isSphereMode,
@@ -96,6 +96,30 @@ export function bindCanvasInteractions(ctx) {
     state.hoverPointer.clientY = ev.clientY;
     state.hoverPointer.inside = inside;
   };
+  const clearCurrentSelection = () => {
+    if (!state.selection && !state.selectionDrag) return false;
+    state._selectionToken += 1;
+    state.selection = null;
+    state.selectionDrag = null;
+    state.profiles = null;
+    drawFrameAndOverlays();
+    drawSelectionGraphs();
+    return true;
+  };
+  const isInsideRenderedImage = (ev, fallbackRect) => {
+    if (!ev) return false;
+    const rect = els.canvas.getBoundingClientRect();
+    const cx = (ev.clientX - rect.left) * (els.canvas.width / Math.max(1, rect.width));
+    const cy = (ev.clientY - rect.top) * (els.canvas.height / Math.max(1, rect.height));
+    const rects = state.drawTiles && state.drawTiles.length ? state.drawTiles : [fallbackRect];
+    for (const drawRect of rects) {
+      if (!drawRect) continue;
+      if (cx >= drawRect.x && cx <= drawRect.x + drawRect.w && cy >= drawRect.y && cy <= drawRect.y + drawRect.h) {
+        return true;
+      }
+    }
+    return false;
+  };
   const sphereDragSpeedForView = (viewRect) => {
     const rw =
       viewRect && Number.isFinite(viewRect.srcW) && Number.isFinite(viewRect.imgW) && viewRect.imgW > 0
@@ -122,13 +146,27 @@ export function bindCanvasInteractions(ctx) {
     state.hoverPointer.inside = false;
     clearHoverProbe();
   });
+  window.addEventListener("mousedown", (ev) => {
+    if (ev.button !== 0 || !ev.shiftKey) return;
+    if (!state.selection && !state.selectionDrag) return;
+    if (ev.target !== els.canvas) {
+      clearCurrentSelection();
+      return;
+    }
+    const { drawRect } = getRenderGeometry(getViewRect());
+    if (!isInsideRenderedImage(ev, drawRect)) {
+      clearCurrentSelection();
+    }
+  });
 
   els.canvas.addEventListener("mousedown", (ev) => {
     if (!state.frameCanvas && !(state.frameTiles && state.frameTiles.length)) return;
     updateHoverPointer(ev);
 
-    const viewRect = getViewRect();
-    const drawRect = state.drawRect || getDrawRect(viewRect);
+    const { viewRect, drawRect } = getRenderGeometry(getViewRect());
+    if (!isInsideRenderedImage(ev, drawRect)) {
+      return;
+    }
     const p = screenToData(ev, viewRect, drawRect);
     const startPanDrag = (tileIdx) => {
       const panRect =
@@ -296,8 +334,7 @@ export function bindCanvasInteractions(ctx) {
     }
 
     if (state.zoomDrag) {
-      const viewRect = getViewRect();
-      const drawRect = state.drawRect || getDrawRect(viewRect);
+      const { viewRect, drawRect } = getRenderGeometry(getViewRect());
       const p = screenToData(ev, viewRect, drawRect, state.zoomDrag.tile);
       state.zoomDrag.lastU = p.u;
       state.zoomDrag.lastV = p.v;
@@ -309,8 +346,7 @@ export function bindCanvasInteractions(ctx) {
     }
 
     if (state.selectionDrag) {
-      const viewRect = getViewRect();
-      const drawRect = state.drawRect || getDrawRect(viewRect);
+      const { viewRect, drawRect } = getRenderGeometry(getViewRect());
       const p = screenToData(ev, viewRect, drawRect, state.selectionDrag.tile);
       const iu = Math.floor(p.u);
       const iv = Math.floor(p.v);

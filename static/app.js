@@ -85,6 +85,7 @@ const PROFILE_THEME = {
 const SUPPORTED_DROP_UPLOAD_EXTS = new Set([".h5", ".hdf5", ".fits", ".fit", ".fts"]);
 const DEFAULT_MOSAIC_SAMPLE_COUNT = 4;
 const DEFAULT_MOSAIC_GRID_SIZE = Math.round(Math.sqrt(DEFAULT_MOSAIC_SAMPLE_COUNT));
+const DEFAULT_EXPORT_OUTPUT_DIR = "~/Downloads";
 
 const els = {
   layout: document.querySelector(".layout"),
@@ -338,7 +339,7 @@ function createViewerState() {
   hoverPointer: { clientX: 0, clientY: 0, inside: false },
   exportPrefs: {
     format: "fits",
-    outputDir: "",
+    outputDir: DEFAULT_EXPORT_OUTPUT_DIR,
     filename: "",
     overwrite: true,
   },
@@ -371,6 +372,7 @@ function createViewerState() {
   _selectionToken: 0,
   _viewProfileToken: 0,
   _resizePanelsRaf: 0,
+  _resizePanelsNeedsGraphs: false,
   _colorNormRerenderTimer: null,
   profileZoom: {},
   panelWidths: { left: null, right: null },
@@ -983,24 +985,7 @@ function updateVolumeControlReadouts() {
   updateVolumeSphereRangeUi();
   updateVolumeSliderTrackFill();
   if (els.volumeBackendStatus) {
-    const zoomMsg = `Scroll: zoom ${state.volumeZoom.toFixed(2)}x`;
-    const modeMsg = `Mode: ${state.volumeRender.mode}`;
-    const requested = state.sliceRender.backend;
-    const requestMsg = `follows Backend (${requested.toUpperCase()})`;
-    if (state.fluxScale === "sqrt") {
-      els.volumeBackendStatus.textContent = `GPU backend: ${requestMsg}, using CPU for sqrt scale. ${modeMsg}. ${zoomMsg}`;
-      return;
-    }
-    if (!gpuAvailableKnown()) {
-      els.volumeBackendStatus.textContent = `GPU backend: ${requestMsg}, probing WebGL2 support. ${modeMsg}. ${zoomMsg}`;
-    } else if (gpuAvailable()) {
-      const mode = volumeBackendMode() === "gpu" ? "using GPU" : "available, currently on CPU";
-      els.volumeBackendStatus.textContent = `GPU backend: WebGL2 available, ${requestMsg}, ${mode}. ${modeMsg}. ${zoomMsg}`;
-    } else if (state.volumeGpu.lastError) {
-      els.volumeBackendStatus.textContent = `GPU backend unavailable (${state.volumeGpu.lastError}); ${requestMsg}, using CPU. ${modeMsg}. ${zoomMsg}`;
-    } else {
-      els.volumeBackendStatus.textContent = `GPU backend unavailable; ${requestMsg}, using CPU. ${modeMsg}. ${zoomMsg}`;
-    }
+    els.volumeBackendStatus.textContent = "";
   }
 }
 
@@ -1155,6 +1140,31 @@ function readCurrentPanelWidths() {
   };
 }
 
+function viewerMinCenterWidth() {
+  const baseMin = 460;
+  if (!els.viewerPanel) return baseMin;
+  const panelStyles = window.getComputedStyle(els.viewerPanel);
+  const panelPadLeft = Number.parseFloat(panelStyles.paddingLeft || "0") || 0;
+  const panelPadRight = Number.parseFloat(panelStyles.paddingRight || "0") || 0;
+  let toolbarMin = 0;
+  if (els.viewerToolbar) {
+    const toolbarStyles = window.getComputedStyle(els.viewerToolbar);
+    const gap = Number.parseFloat(toolbarStyles.columnGap || toolbarStyles.gap || "0") || 0;
+    const children = Array.from(els.viewerToolbar.children).filter((el) => el instanceof HTMLElement && el.offsetParent !== null);
+    if (children.length) {
+      const contentW = children.reduce((acc, child) => {
+        const childStyles = window.getComputedStyle(child);
+        const marginLeft = Number.parseFloat(childStyles.marginLeft || "0") || 0;
+        const marginRight = Number.parseFloat(childStyles.marginRight || "0") || 0;
+        const childW = Math.max(child.scrollWidth || 0, child.getBoundingClientRect().width || 0);
+        return acc + childW + marginLeft + marginRight;
+      }, 0);
+      toolbarMin = Math.ceil(contentW + gap * Math.max(0, children.length - 1));
+    }
+  }
+  return Math.max(baseMin, Math.ceil(toolbarMin + panelPadLeft + panelPadRight));
+}
+
 function loadPanelWidths() {
   try {
     const raw = window.localStorage.getItem(PANEL_WIDTH_STORAGE_KEY);
@@ -1181,7 +1191,7 @@ function clampPanelWidths(left, right) {
     (els.rightSplitter ? els.rightSplitter.getBoundingClientRect().width : 0);
   const minLeft = 270;
   const minRight = 250;
-  const minCenter = 460;
+  const minCenter = viewerMinCenterWidth();
 
   const safeLeftMax = Math.max(minLeft, rowW - splitW - minCenter - minRight);
   let nextLeft = clamp(left, minLeft, safeLeftMax);
@@ -1195,14 +1205,19 @@ function clampPanelWidths(left, right) {
   return { left: nextLeft, right: nextRight };
 }
 
-function requestResizeRedraw() {
+function requestResizeRedraw(interactive = false) {
+  if (!interactive) state._resizePanelsNeedsGraphs = true;
   if (state._resizePanelsRaf) return;
   state._resizePanelsRaf = window.requestAnimationFrame(() => {
     state._resizePanelsRaf = 0;
+    const drawGraphs = Boolean(state._resizePanelsNeedsGraphs);
+    state._resizePanelsNeedsGraphs = false;
     layoutViewerCanvas();
     drawFrameAndOverlays();
-    drawNavigationGraphs();
-    drawSelectionGraphs();
+    if (drawGraphs) {
+      drawNavigationGraphs();
+      drawSelectionGraphs();
+    }
     drawColorbar();
   });
 }
@@ -1266,15 +1281,17 @@ function layoutViewerCanvas() {
     120,
     window.innerHeight - panelRect.top - panelPadBottom - reservedH - 8
   );
-  const size = Math.max(120, Math.min(panelW, availablePanelH, availableViewportH));
-  const sizePx = `${Math.floor(size)}px`;
+  const canvasW = Math.max(120, panelW);
+  const canvasH = Math.max(120, Math.min(availablePanelH, availableViewportH));
+  const canvasWPx = `${Math.floor(canvasW)}px`;
+  const canvasHPx = `${Math.floor(canvasH)}px`;
 
-  els.canvas.style.width = sizePx;
-  els.canvas.style.height = sizePx;
-  if (els.colorbarPanel) els.colorbarPanel.style.width = sizePx;
+  els.canvas.style.width = canvasWPx;
+  els.canvas.style.height = canvasHPx;
+  if (els.colorbarPanel) els.colorbarPanel.style.width = canvasWPx;
 }
 
-function applyPanelWidths(left, right, persist = true) {
+function applyPanelWidths(left, right, persist = true, interactive = false) {
   if (isNarrowLayout()) return;
   const next = clampPanelWidths(left, right);
   state.panelWidths.left = next.left;
@@ -1282,7 +1299,7 @@ function applyPanelWidths(left, right, persist = true) {
   document.documentElement.style.setProperty("--left-col", `${Math.round(next.left)}px`);
   document.documentElement.style.setProperty("--right-col", `${Math.round(next.right)}px`);
   if (persist) persistPanelWidths(next.left, next.right);
-  requestResizeRedraw();
+  requestResizeRedraw(interactive);
 }
 
 function initPanelResize() {
@@ -1311,10 +1328,10 @@ function initPanelResize() {
       const dx = mev.clientX - startX;
       if (side === "left") {
         const nextLeft = start.left + dx;
-        applyPanelWidths(nextLeft, start.right, false);
+        applyPanelWidths(nextLeft, start.right, false, true);
       } else {
         const nextRight = start.right - dx;
-        applyPanelWidths(start.left, nextRight, false);
+        applyPanelWidths(start.left, nextRight, false, true);
       }
     };
 
@@ -2101,47 +2118,121 @@ function getDrawRect(viewRect) {
   };
 }
 
-function getGridDrawRects(viewRect) {
+function shouldUseCoverView(viewRect) {
+  if (isSphereMode() && state.sphereProjection === "inside") return true;
+  const eps = 1.0e-6;
+  return viewRect.srcW < viewRect.imgW - eps || viewRect.srcH < viewRect.imgH - eps;
+}
+
+function cropViewRectToAspect(viewRect, targetAspect) {
+  if (!Number.isFinite(targetAspect) || targetAspect <= 0) return viewRect;
+  const eps = 1.0e-6;
+  const srcAspect = viewRect.srcW / Math.max(1e-6, viewRect.srcH);
+  if (Math.abs(srcAspect - targetAspect) <= eps) return viewRect;
+
+  let srcX = viewRect.srcX;
+  let srcY = viewRect.srcY;
+  let srcW = viewRect.srcW;
+  let srcH = viewRect.srcH;
+
+  if (srcAspect > targetAspect + eps) {
+    srcW = srcH * targetAspect;
+    srcX += 0.5 * (viewRect.srcW - srcW);
+  } else if (srcAspect < targetAspect - eps) {
+    srcH = srcW / targetAspect;
+    srcY += 0.5 * (viewRect.srcH - srcH);
+  }
+
+  return {
+    srcX,
+    srcY,
+    srcW,
+    srcH,
+    imgW: viewRect.imgW,
+    imgH: viewRect.imgH,
+  };
+}
+
+function sampleGridLayoutMetrics() {
   const grid = Math.max(1, state.frameGrid || 1);
-  const cw = els.canvas.width;
-  const ch = els.canvas.height;
+  const cw = Math.max(1, els.canvas.width);
+  const ch = Math.max(1, els.canvas.height);
   const s = canvasPixelRatio(els.canvas);
   const gap = grid > 1 ? 6 * s : 0;
-  const maxCellW = (cw - gap * (grid - 1)) / grid;
-  const maxCellH = (ch - gap * (grid - 1)) / grid;
-  const cell = Math.max(8 * s, Math.floor(Math.min(maxCellW, maxCellH)));
-  const gridW = cell * grid + gap * (grid - 1);
-  const gridH = cell * grid + gap * (grid - 1);
-  const startX = (cw - gridW) / 2;
-  const startY = (ch - gridH) / 2;
+  const cellW = Math.max(8 * s, (cw - gap * (grid - 1)) / grid);
+  const cellH = Math.max(8 * s, (ch - gap * (grid - 1)) / grid);
+  const gridW = cellW * grid + gap * (grid - 1);
+  const gridH = cellH * grid + gap * (grid - 1);
+  return {
+    grid,
+    gap,
+    cellW,
+    cellH,
+    gridW,
+    gridH,
+    startX: (cw - gridW) / 2,
+    startY: (ch - gridH) / 2,
+  };
+}
+
+function getRenderGeometry(baseViewRect = null) {
+  const viewRect = baseViewRect || getViewRect();
+  const baseDrawRect = getDrawRect(viewRect);
+  if (!els.canvas) return { viewRect, drawRect: baseDrawRect };
+  const useCover = shouldUseCoverView(viewRect);
+  if (state.frameTiles && state.frameTiles.length) {
+    if (!useCover) return { viewRect, drawRect: baseDrawRect };
+    const layout = sampleGridLayoutMetrics();
+    const adjusted = cropViewRectToAspect(viewRect, layout.cellW / Math.max(1e-6, layout.cellH));
+    return { viewRect: adjusted, drawRect: baseDrawRect };
+  }
+  if (!useCover) return { viewRect, drawRect: baseDrawRect };
+
+  const cw = Math.max(1, els.canvas.width);
+  const ch = Math.max(1, els.canvas.height);
+  const adjusted = cropViewRectToAspect(viewRect, cw / Math.max(1e-6, ch));
+
+  return {
+    viewRect: adjusted,
+    drawRect: { x: 0, y: 0, w: cw, h: ch },
+  };
+}
+
+function getGridDrawRects(viewRect) {
+  const layout = sampleGridLayoutMetrics();
+  const { grid, gap, cellW, cellH, gridW, gridH, startX, startY } = layout;
   const srcAspect = viewRect.srcW / Math.max(1e-6, viewRect.srcH);
+  const cellAspect = cellW / Math.max(1e-6, cellH);
+  const useCover = shouldUseCoverView(viewRect);
   const tiles = [];
   const nTiles = state.frameTiles ? state.frameTiles.length : 0;
 
   for (let i = 0; i < nTiles; i += 1) {
     const row = Math.floor(i / grid);
     const col = i % grid;
-    const cellX = startX + col * (cell + gap);
-    const cellY = startY + row * (cell + gap);
+    const cellX = startX + col * (cellW + gap);
+    const cellY = startY + row * (cellH + gap);
 
-    let w;
-    let h;
-    if (srcAspect >= 1) {
-      w = cell;
-      h = w / srcAspect;
-    } else {
-      h = cell;
-      w = h * srcAspect;
+    let w = cellW;
+    let h = cellH;
+    if (!useCover) {
+      if (srcAspect >= cellAspect) {
+        w = cellW;
+        h = w / srcAspect;
+      } else {
+        h = cellH;
+        w = h * srcAspect;
+      }
     }
     tiles.push({
-      x: cellX + (cell - w) / 2,
-      y: cellY + (cell - h) / 2,
+      x: cellX + (cellW - w) / 2,
+      y: cellY + (cellH - h) / 2,
       w,
       h,
       cellX,
       cellY,
-      cellW: cell,
-      cellH: cell,
+      cellW,
+      cellH,
     });
   }
 
@@ -2152,6 +2243,44 @@ function getGridDrawRects(viewRect) {
     h: gridH,
     tiles,
   };
+}
+
+function fullImageViewRect(baseViewRect) {
+  const imgW = baseViewRect.imgW;
+  const imgH = baseViewRect.imgH;
+  if (isSphereMode() && state.sphereProjection === "mollweide") {
+    const base = mollweideFullViewWindow(imgW, imgH);
+    return {
+      srcX: 0.5 * (imgW - base.w),
+      srcY: 0.5 * (imgH - base.h),
+      srcW: base.w,
+      srcH: base.h,
+      imgW,
+      imgH,
+    };
+  }
+  if (!isSphereMode()) {
+    const base = sliceFullViewWindow(imgW, imgH);
+    return {
+      srcX: 0.5 * (imgW - base.w),
+      srcY: 0.5 * (imgH - base.h),
+      srcW: base.w,
+      srcH: base.h,
+      imgW,
+      imgH,
+    };
+  }
+  return { srcX: 0, srcY: 0, srcW: imgW, srcH: imgH, imgW, imgH };
+}
+
+function colorbarReferenceCssWidth(baseViewRect, scale) {
+  if (state.frameTiles && state.frameTiles.length) {
+    const layout = sampleGridLayoutMetrics();
+    return Math.max(1, Math.round(layout.gridW / Math.max(1, scale)));
+  }
+  const fullView = fullImageViewRect(baseViewRect);
+  const fullDrawRect = getDrawRect(fullView);
+  return Math.max(1, Math.round(fullDrawRect.w / Math.max(1, scale)));
 }
 
 function dataToScreen(u, v, viewRect, drawRect) {
@@ -2225,7 +2354,7 @@ function selectionBounds() {
 
 function currentViewBounds() {
   const p = planeDims();
-  const viewRect = getViewRect();
+  const { viewRect } = getRenderGeometry(getViewRect());
   const uSize = isSphereMode() ? viewRect.imgW : axisSize(p.planeX);
   const vSize = isSphereMode() ? viewRect.imgH : axisSize(p.planeY);
   const u0 = clamp(Math.floor(viewRect.srcX), 0, uSize - 1);
@@ -2251,15 +2380,22 @@ function hasDomainZoom() {
   return Boolean(state.axisWindow.t || state.axisWindow.nu);
 }
 
+function exportZoomModeSupported() {
+  return !isVolumeMode() && !isSampleMorphMode() && !isSphereMode();
+}
+
 function canExportZoomCutout() {
-  if (!state.dataId || isVolumeMode() || isSampleMorphMode()) return false;
+  if (!state.dataId || !exportZoomModeSupported()) return false;
   return hasSpatialZoom() || hasDomainZoom();
 }
 
 function updateExportButtonState() {
-  if (!els.exportZoomBtn) return;
   const enabled = canExportZoomCutout();
-  els.exportZoomBtn.disabled = !enabled;
+  if (els.exportZoomBtn) {
+    const unsupported = Boolean(state.dataId) && !exportZoomModeSupported();
+    els.exportZoomBtn.disabled = !enabled;
+    els.exportZoomBtn.classList.toggle("unsupported", unsupported);
+  }
 }
 
 function hoverPayloadForTile(tile = 0) {
@@ -2414,8 +2550,7 @@ function updateHoverProbeFromEvent(ev) {
     clearHoverProbe();
     return;
   }
-  const viewRect = getViewRect();
-  const drawRect = state.drawRect || getDrawRect(viewRect);
+  const { viewRect, drawRect } = getRenderGeometry(getViewRect());
   const p = screenToData(ev, viewRect, drawRect);
   const tile = p.tile || 0;
   const payload = hoverPayloadForTile(tile);
@@ -2701,6 +2836,9 @@ function updateExportDialogFields() {
   let format = isValidExportFormat(state.exportPrefs.format) ? state.exportPrefs.format : "fits";
   if (!isExportFormatAllowed(format)) format = "hdf5";
   state.exportPrefs.format = format;
+  if (!state.exportPrefs.outputDir) {
+    state.exportPrefs.outputDir = DEFAULT_EXPORT_OUTPUT_DIR;
+  }
   if (!state.exportPrefs.filename) {
     state.exportPrefs.filename = exportDefaultFilename(format);
   }
@@ -3092,8 +3230,7 @@ function updateDomainVisibility() {
   if (els.metricsHint) {
     const anyProfile = tVarying || nuVarying || hiddenSpatialVarying;
     if (sphereMode) {
-      els.metricsHint.textContent =
-        "Drag to rotate sphere. Shift+drag to select HEALPix region. Wheel/Zoom mode adjusts magnification.";
+      els.metricsHint.textContent = "Click for point or drag for area.";
     } else {
       els.metricsHint.textContent = anyProfile
         ? "Click for point or drag for area."
@@ -3182,27 +3319,7 @@ function updateControlCaps() {
     els.sphereProjOutsideBtn.setAttribute("aria-pressed", active ? "true" : "false");
   }
   if (els.sphereMetaLabel) {
-    if (isSphereDataset()) {
-      const ordering = state.sphereMeta.ordering || "ring";
-      const [sw, sh] = sphereCanvasSize();
-      let backendMsg = "";
-      const requested = state.sliceRender.backend || "auto";
-      if (requested === "cpu") {
-        backendMsg = "backend=CPU (requested)";
-      } else if (!sphereGpuAvailableKnown()) {
-        backendMsg = `backend=GPU probe (${requested.toUpperCase()})`;
-      } else if (sphereGpuAvailable()) {
-        backendMsg = `backend=${sphereBackendMode(sw, sh).toUpperCase()} (${requested.toUpperCase()})`;
-      } else {
-        backendMsg = state.sphereGpu.lastError
-          ? `backend=CPU (GPU unavailable: ${state.sphereGpu.lastError})`
-          : "backend=CPU (GPU unavailable)";
-      }
-      els.sphereMetaLabel.textContent =
-        `HEALPix nside=${state.sphereMeta.nside}, npix=${state.sphereMeta.npix}, ordering=${ordering}; ${backendMsg}`;
-    } else {
-      els.sphereMetaLabel.textContent = "";
-    }
+    els.sphereMetaLabel.textContent = "";
   }
   els.planeSelect.value = state.plane;
   els.planeSelect.disabled = isVolumeMode() || isSphereMode();
@@ -3508,7 +3625,9 @@ function drawFrameAndOverlays() {
 
   if (!state.frameCanvas && !(state.frameTiles && state.frameTiles.length)) return;
 
-  const viewRect = getViewRect();
+  const baseViewRect = getViewRect();
+  const renderGeometry = getRenderGeometry(baseViewRect);
+  const viewRect = renderGeometry.viewRect;
   let drawRect;
   state.drawTiles = [];
   ctx.imageSmoothingEnabled = false;
@@ -3546,7 +3665,7 @@ function drawFrameAndOverlays() {
       }
     }
   } else {
-    drawRect = getDrawRect(viewRect);
+    drawRect = renderGeometry.drawRect;
     state.drawTiles = [drawRect];
     ctx.drawImage(
       state.frameCanvas,
@@ -3562,7 +3681,7 @@ function drawFrameAndOverlays() {
   }
   state.drawRect = drawRect;
   if (els.colorbarPanel) {
-    const cssBarW = Math.max(1, Math.round(drawRect.w / Math.max(1, s)));
+    const cssBarW = colorbarReferenceCssWidth(baseViewRect, s);
     els.colorbarPanel.style.width = `${cssBarW}px`;
   }
 
@@ -4092,8 +4211,18 @@ function projectSphereVector(x, y, z, width, height, projection, allowOutside = 
 function sphereCanvasSize() {
   const nside = state.sphereMeta && Number.isFinite(state.sphereMeta.nside) ? state.sphereMeta.nside : 16;
   if (state.sphereProjection === "inside") {
-    const side = clamp(Math.round(nside * 64), 1024, 1792);
-    return [side, side];
+    const areaSide = clamp(Math.round(nside * 64), 1024, 1792);
+    const area = areaSide * areaSide;
+    const rect = els.canvas ? els.canvas.getBoundingClientRect() : null;
+    const aspect = clamp(
+      (rect && rect.width > 0 ? rect.width : els.canvas?.clientWidth || els.canvas?.width || areaSide) /
+        Math.max(1, rect && rect.height > 0 ? rect.height : els.canvas?.clientHeight || els.canvas?.height || areaSide),
+      0.5,
+      3.0
+    );
+    const width = clamp(Math.round(Math.sqrt(area * aspect)), 768, 2304);
+    const height = clamp(Math.round(Math.sqrt(area / aspect)), 768, 2304);
+    return [width, height];
   }
   if (state.sphereProjection === "outside") {
     const side = clamp(Math.round(nside * 56), 896, 1536);
@@ -4969,13 +5098,23 @@ function ensureVolumeGpuRenderer() {
   }
 }
 
+function volumeRenderOutputAspectRatio() {
+  const rect = els.canvas ? els.canvas.getBoundingClientRect() : null;
+  const w =
+    rect && rect.width > 0 ? rect.width : els.canvas?.clientWidth || els.canvas?.width || 1;
+  const h =
+    rect && rect.height > 0 ? rect.height : els.canvas?.clientHeight || els.canvas?.height || 1;
+  return clamp(w / Math.max(1.0e-6, h), 0.35, 3.0);
+}
+
 function createVolumeCanvasAuto(volume, resolution = 240, rangeOverride = null) {
+  const outputAspect = volumeRenderOutputAspectRatio();
   const backend = volumeBackendMode();
   if (backend === "gpu") {
     const renderer = ensureVolumeGpuRenderer();
     if (renderer) {
       try {
-        const gpu = renderer.render(volume, resolution, rangeOverride);
+        const gpu = renderer.render(volume, resolution, rangeOverride, outputAspect);
         if (gpu) return gpu;
       } catch (err) {
         state.volumeGpu.lastError = err && err.message ? err.message : "render failed";
@@ -4985,15 +5124,24 @@ function createVolumeCanvasAuto(volume, resolution = 240, rangeOverride = null) 
       }
     }
   }
-  return createVolumeCanvasCpu(volume, resolution, rangeOverride);
+  return createVolumeCanvasCpu(volume, resolution, rangeOverride, outputAspect);
 }
 
-function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null) {
+function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null, outputAspect = 1.0) {
   const off = document.createElement("canvas");
   const sphericalMode = state.volumeRender.mode === "spherical";
   const sphericalProjection = sphericalMode ? volumeSphereProjectionMode() : "mollweide";
-  const width = sphericalMode && sphericalProjection === "mollweide" ? resolution * 2 : resolution;
-  const height = resolution;
+  let width = resolution;
+  let height = resolution;
+  if (sphericalMode && sphericalProjection === "mollweide") {
+    width = resolution * 2;
+    height = resolution;
+  } else if (!sphericalMode) {
+    const aspect = Number.isFinite(outputAspect) && outputAspect > 0 ? outputAspect : 1.0;
+    const area = Math.max(64, resolution * resolution);
+    width = clamp(Math.round(Math.sqrt(area * aspect)), 64, 4096);
+    height = clamp(Math.round(Math.sqrt(area / Math.max(1.0e-6, aspect))), 64, 4096);
+  }
   off.width = width;
   off.height = height;
 
@@ -5030,6 +5178,7 @@ function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null) {
   const yaw = state.volumeYaw;
   const pitch = state.volumePitch;
   const planeScale = 1.05 / clamp(state.volumeZoom, 0.35, 10.0);
+  const planeScaleX = planeScale * (width / Math.max(1, height));
   const cy = Math.cos(yaw);
   const sy = Math.sin(yaw);
   const cp = Math.cos(pitch);
@@ -5165,7 +5314,7 @@ function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null) {
         const frac = si / Math.max(1, steps - 1);
         if (frac < clipNear || frac > clipFar) continue;
         const depth = -1.15 + (si / Math.max(1, steps - 1)) * 2.3;
-        const cx = u * planeScale;
+        const cx = u * planeScaleX;
         const cyv = -v * planeScale;
         const cz = depth;
 
@@ -7265,16 +7414,16 @@ function handleWheelZoom(ev) {
     return;
   }
 
-  const viewRect = getViewRect();
-  const drawRect = state.drawRect || getDrawRect(viewRect);
-  const before = screenToData(ev, viewRect, drawRect);
+  const baseViewRect = getViewRect();
+  const { viewRect: renderViewRect, drawRect } = getRenderGeometry(baseViewRect);
+  const before = screenToData(ev, renderViewRect, drawRect);
 
   const scale = ev.deltaY < 0 ? 1 / 1.12 : 1.12;
   let newW;
   let newH;
   if (isSphereMode() && state.sphereProjection === "mollweide") {
-    const bounds = mollweideZoomBounds(viewRect.imgW, viewRect.imgH);
-    newW = clamp(viewRect.srcW * scale, bounds.minW, bounds.maxW);
+    const bounds = mollweideZoomBounds(baseViewRect.imgW, baseViewRect.imgH);
+    newW = clamp(baseViewRect.srcW * scale, bounds.minW, bounds.maxW);
     newH = newW / bounds.aspect;
     if (newH < bounds.minH) {
       newH = bounds.minH;
@@ -7285,13 +7434,17 @@ function handleWheelZoom(ev) {
       newW = newH * bounds.aspect;
     }
   } else {
-    const minW = isSphereMode() && state.sphereProjection === "inside" ? viewRect.imgW : Math.min(2, viewRect.imgW);
-    const minH = isSphereMode() && state.sphereProjection === "inside" ? viewRect.imgH : Math.min(2, viewRect.imgH);
+    const minW = isSphereMode() && state.sphereProjection === "inside"
+      ? baseViewRect.imgW
+      : Math.min(2, baseViewRect.imgW);
+    const minH = isSphereMode() && state.sphereProjection === "inside"
+      ? baseViewRect.imgH
+      : Math.min(2, baseViewRect.imgH);
     const maxZoomOut = sphereZoomOutLimit();
-    const maxW = isSphereMode() ? viewRect.imgW * maxZoomOut : viewRect.imgW;
-    const maxH = isSphereMode() ? viewRect.imgH * maxZoomOut : viewRect.imgH;
-    newW = clamp(viewRect.srcW * scale, minW, maxW);
-    newH = clamp(viewRect.srcH * scale, minH, maxH);
+    const maxW = isSphereMode() ? baseViewRect.imgW * maxZoomOut : baseViewRect.imgW;
+    const maxH = isSphereMode() ? baseViewRect.imgH * maxZoomOut : baseViewRect.imgH;
+    newW = clamp(baseViewRect.srcW * scale, minW, maxW);
+    newH = clamp(baseViewRect.srcH * scale, minH, maxH);
   }
 
   state.view.w = newW;
@@ -8570,7 +8723,7 @@ async function init() {
     effectiveDragMode,
     els,
     ensureGridIndices,
-    getDrawRect,
+    getRenderGeometry,
     getViewRect,
     handleWheelZoom,
     isSphereMode,

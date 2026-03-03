@@ -52,8 +52,8 @@ Controls:
   - `y` size is `1`
 - Projection controls in Spatial panel:
   - `Mollweide`
-  - `Inside-Out Sky`
-  - `Outside Sphere`
+  - `Inside`
+  - `Outside`
 - Ordering comes from dataset metadata when available; defaults to `ring`.
 
 ## Temporal and Spectral Panels

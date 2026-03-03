@@ -167,10 +167,9 @@
             </div>
             <div class="sphereProjectionButtons" role="group" aria-label="Sphere projection mode">
               <button id="sphereProjMollweideBtn" class="tinyBtn" type="button">Mollweide</button>
-              <button id="sphereProjInsideBtn" class="tinyBtn" type="button">Inside-Out</button>
+              <button id="sphereProjInsideBtn" class="tinyBtn" type="button">Inside</button>
               <button id="sphereProjOutsideBtn" class="tinyBtn" type="button">Outside</button>
             </div>
-            <div id="sphereMetaLabel" class="volumeBackendStatus"></div>
           </div>
           <label id="planeLabel">
             Plane
@@ -197,7 +196,6 @@
           </div>
           <div id="volumeRenderControls" class="volumeRenderControls">
             <h3>Volume Render</h3>
-            <div id="volumeBackendStatus" class="volumeBackendStatus"></div>
             <label>
               Quality
               <select id="volumeQualitySelect">
@@ -254,7 +252,7 @@
             </label>
             <div id="volumeClipRangeBlock" class="dualRangeBlock volumeDualRangeBlock">
               <div class="dualRangeHeader">
-                <span class="dualRangeTitle">Clip Range</span>
+                <span class="dualRangeTitle">Depth Range</span>
               </div>
               <div id="volumeClipRangeTrack" class="dualRangeTrack">
                 <span id="volumeClipRangeMinValue" class="dualRangeValue">0.00</span>
@@ -350,8 +348,8 @@
               <label for="evpaDensitySelect">Density</label>
               <select id="evpaDensitySelect">
                 <option value="8" selected>Sparse</option>
-                <option value="4">Medium</option>
-                <option value="6">Dense</option>
+                <option value="6">Medium</option>
+                <option value="4">Dense</option>
               </select>
             </div>
             <div class="evpaThresholdRow">
