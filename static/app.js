@@ -7493,10 +7493,27 @@ function normalizeTabLabel(label) {
   return `${txt.slice(0, DATASET_TAB_LABEL_MAX - 1)}…`;
 }
 
+function positionalTabLabel(index) {
+  const n = Math.max(1, Number.isInteger(index) ? index + 1 : 1);
+  return `Tab ${n}`;
+}
+
+function relabelFallbackTabsByPosition() {
+  for (let i = 0; i < datasetTabs.length; i += 1) {
+    const tab = datasetTabs[i];
+    const fallback = positionalTabLabel(i);
+    tab.fallbackLabel = fallback;
+    const hasDataset = Boolean(tab?.snapshot?.dataId);
+    if (!hasDataset) {
+      tab.label = fallback;
+    }
+  }
+}
+
 function createDatasetTab(baseLabel = null) {
   const id = `tab-${nextDatasetTabId}`;
   nextDatasetTabId += 1;
-  const fallbackLabel = baseLabel || `Tab ${nextDatasetTabId - 1}`;
+  const fallbackLabel = baseLabel || positionalTabLabel(datasetTabs.length);
   return {
     id,
     fallbackLabel,
@@ -7531,6 +7548,7 @@ function refreshActiveTabLabel() {
 
 function renderDatasetTabs() {
   if (!els.datasetTabs) return;
+  relabelFallbackTabsByPosition();
   els.datasetTabs.innerHTML = "";
 
   const createAddButton = () => {
@@ -7574,7 +7592,6 @@ function renderDatasetTabs() {
     closeBtn.textContent = "x";
     closeBtn.title = `Close ${fullLabel}`;
     closeBtn.setAttribute("aria-label", `Close ${fullLabel}`);
-    closeBtn.disabled = datasetTabs.length <= 1;
     closeBtn.addEventListener("click", async (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -7663,13 +7680,17 @@ async function activateDatasetTab(tabId) {
   }
 }
 
-async function addDatasetTabAndActivate() {
+async function addDatasetTabAndActivate(options = {}) {
+  const readyStatus = options.readyStatus !== false;
   syncActiveTabSnapshot();
   const tab = createDatasetTab();
   datasetTabs.push(tab);
   renderDatasetTabs();
   await activateDatasetTab(tab.id);
-  setSystemPickerStatus("New tab ready. Load a dataset to begin.");
+  if (readyStatus) {
+    setSystemPickerStatus("New tab ready. Load a dataset to begin.");
+  }
+  return tab;
 }
 
 async function closeDatasetTab(tabId) {
@@ -7681,8 +7702,10 @@ async function closeDatasetTab(tabId) {
 
   if (datasetTabs.length <= 1) {
     const onlyTab = datasetTabs[0];
+    const emptyLabel = "Tab 1";
+    onlyTab.fallbackLabel = emptyLabel;
     onlyTab.snapshot = createViewerState();
-    onlyTab.label = tabLabelForState(onlyTab.snapshot, onlyTab.fallbackLabel);
+    onlyTab.label = emptyLabel;
     activeDatasetTabId = onlyTab.id;
     bumpStateEpoch();
     restoreState(onlyTab.snapshot);
@@ -7825,21 +7848,18 @@ function isFileDragEvent(ev) {
   return Array.from(types).includes("Files");
 }
 
-function isValidDroppedDatasetFile(file) {
+function validateDroppedDatasetFile(file) {
   const ext = dropUploadExt(file?.name);
   if (!ext) {
-    setSystemPickerStatus("Dropped file has no extension.", true);
-    return false;
+    return { ok: false, message: "has no extension" };
   }
   if (ext === ".zarr") {
-    setSystemPickerStatus("Drag-and-drop does not support .zarr folders yet. Use Load Data.", true);
-    return false;
+    return { ok: false, message: "drag-and-drop does not support .zarr folders (use Load Data)" };
   }
   if (!SUPPORTED_DROP_UPLOAD_EXTS.has(ext)) {
-    setSystemPickerStatus(`Unsupported file type: ${ext}`, true);
-    return false;
+    return { ok: false, message: `unsupported file type: ${ext}` };
   }
-  return true;
+  return { ok: true, message: "" };
 }
 
 function installDatasetDropHandlers() {
@@ -7889,14 +7909,69 @@ function installDatasetDropHandlers() {
       setSystemPickerStatus("No dataset file detected in drop.", true);
       return;
     }
-    if (droppedFiles.length > 1) {
-      setSystemPickerStatus("Please drop a single dataset file.", true);
+
+    const files = Array.from(droppedFiles);
+    const validFiles = [];
+    const invalid = [];
+    for (const file of files) {
+      const check = validateDroppedDatasetFile(file);
+      if (check.ok) validFiles.push(file);
+      else invalid.push(`${file.name || "unnamed"}: ${check.message}`);
+    }
+
+    if (!validFiles.length) {
+      const reason = invalid.length ? ` (${invalid[0]})` : "";
+      setSystemPickerStatus(`No supported dataset files found in drop${reason}.`, true);
       return;
     }
 
-    const file = droppedFiles[0];
-    if (!isValidDroppedDatasetFile(file)) return;
-    await loadDatasetFromUpload(file);
+    const startsEmpty = !state.dataId;
+    const keepFirstInCurrentTab = startsEmpty && validFiles.length > 0;
+    let createdTabs = 0;
+    let loadedCount = 0;
+    for (let i = 0; i < validFiles.length; i += 1) {
+      const file = validFiles[i];
+      const shouldCreateNewTab = !keepFirstInCurrentTab || i > 0;
+      if (shouldCreateNewTab) {
+        await addDatasetTabAndActivate({
+          readyStatus: false,
+        });
+        createdTabs += 1;
+      }
+      const loaded = await loadDatasetFromUpload(file);
+      if (loaded) loadedCount += 1;
+    }
+
+    if (invalid.length) {
+      setSystemPickerStatus(
+        `Loaded ${loadedCount}/${validFiles.length} dropped file(s) into new tabs. Skipped ${invalid.length} file(s): ${invalid[0]}`,
+        loadedCount < 1
+      );
+      return;
+    }
+    if (createdTabs > 0) {
+      if (loadedCount === validFiles.length) {
+        if (keepFirstInCurrentTab) {
+          setSystemPickerStatus(
+            `Loaded ${loadedCount} dropped file(s): first in current tab, ${createdTabs} in new tab(s).`
+          );
+        } else {
+          setSystemPickerStatus(`Loaded ${loadedCount} dropped file(s) into ${createdTabs} new tab(s).`);
+        }
+      } else {
+        if (keepFirstInCurrentTab) {
+          setSystemPickerStatus(
+            `Loaded ${loadedCount}/${validFiles.length} dropped file(s): first in current tab, ${createdTabs} in new tab(s).`,
+            loadedCount < 1
+          );
+        } else {
+          setSystemPickerStatus(
+            `Loaded ${loadedCount}/${validFiles.length} dropped file(s) into new tabs.`,
+            loadedCount < 1
+          );
+        }
+      }
+    }
   });
 }
 
@@ -7979,21 +8054,22 @@ async function loadDatasetFromUpload(file, options = {}) {
       setSystemPickerStatus(
         `Loaded ${payload.loaded} (${payload.shape.join("x")}); padded axes: ${padded.join(", ")}`
       );
-      return;
+      return true;
     }
     setSystemPickerStatus(`Loaded ${payload.loaded} (${payload.shape.join("x")})`);
+    return true;
   } catch (err) {
-    if (isAbortError(err)) return;
+    if (isAbortError(err)) return false;
     if (!dims && shouldOfferAxisMapping(err.message)) {
       const mapping = promptForAxisMapping();
       if (mapping) {
-        await loadDatasetFromUpload(file, { dims: mapping, padMissingDims: true });
-        return;
+        return loadDatasetFromUpload(file, { dims: mapping, padMissingDims: true });
       }
       setSystemPickerStatus("Load canceled (manual axis mapping not provided).", true);
-      return;
+      return false;
     }
     setSystemPickerStatus(`Load failed: ${err.message}`, true);
+    return false;
   }
 }
 
