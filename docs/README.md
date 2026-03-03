@@ -6,6 +6,7 @@ This project ships a FastAPI backend and a browser-based viewer for local high-d
 
 - [Installation Guide](./INSTALL.md)
 - [Quickstart](./QUICKSTART.md)
+- [Feature Overview](./FEATURES.md)
 - [User Guide](./USER_GUIDE.md)
 - [Troubleshooting](./TROUBLESHOOTING.md)
 

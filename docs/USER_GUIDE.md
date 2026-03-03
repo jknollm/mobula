@@ -128,3 +128,10 @@ The loader can pad missing canonical axes as singleton dimensions when requested
 - During playback, the app uses lower-resolution rendering for responsiveness, then refines when paused.
 - Slice rendering can route through CPU or WebGL2 depending on control selection and availability.
 - Volume rendering quality levels trade detail for interaction speed.
+
+## Export and Snapshot Workflow
+
+- Use API endpoint `GET /api/datasets/{data_id}/export-cutout` for FITS cutout download.
+- Use API endpoint `POST /api/datasets/{data_id}/export-cutout/save` for direct server-side FITS/HDF5 file writes.
+- Use API endpoint `POST /api/datasets/{data_id}/save-images` to persist PNG snapshots supplied as data URLs.
+- For HEALPix explicit pixel-index cutouts, use `format="hdf5"` in `export-cutout/save`.

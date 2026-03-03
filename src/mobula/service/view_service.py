@@ -10,7 +10,17 @@ from fastapi import HTTPException
 from mobula.data.schema import CubeDataset
 from mobula.service.api_compute import _extract_2d_slice, _extract_3d_volume
 from mobula.service.api_models import RangeMode, SampleMode
-from mobula.service.api_utils import _clamp_dim_bounds, _dim_size, _downsample_2d, _index_or_mid, _relative_uncertainty
+from mobula.service.api_utils import (
+    _apply_sample_mode_reduction,
+    _clamp_dim_bounds,
+    _dim_size,
+    _downsample_2d,
+    _healpix_nside_from_npix,
+    _index_or_mid,
+    _parse_healpix_ordering,
+    _project_dims_by_mean,
+    _uses_sample_reduction,
+)
 
 
 def build_slice_response(
@@ -29,6 +39,7 @@ def build_slice_response(
     plane_y: str,
     project_dims: tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    """Build a response payload for the 2D slice viewer."""
     arr, selected_indices, selected_coords = _extract_2d_slice(
         ds=ds,
         plane_x=plane_x,
@@ -88,6 +99,7 @@ def build_volume_response(
     sample_mode: SampleMode,
     project_dims: tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    """Build a response payload for the 3D volume viewer."""
     arr, selected_indices, selected_coords = _extract_3d_volume(
         ds=ds,
         sample_mode=sample_mode,
@@ -150,6 +162,7 @@ def build_intensity_range_response(
     plane_y: str,
     project_dims: tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    """Compute min/max/mean/std over configurable axis-variation scopes."""
     spatial_dims = [d for d in ("x", "y", "z") if d in ds.dims]
     if plane_x == plane_y:
         raise HTTPException(status_code=400, detail="plane_x and plane_y must be different")
@@ -188,7 +201,7 @@ def build_intensity_range_response(
     windows_applied: dict[str, list[int]] = {}
 
     for dim in ds.dims:
-        if dim == "sample" and sample_mode in {"mean", "std", "rel_uncert"}:
+        if dim == "sample" and _uses_sample_reduction(sample_mode):
             slicer.append(slice(None))
             arr_dims.append(dim)
             continue
@@ -219,25 +232,8 @@ def build_intensity_range_response(
         slicer.append(idx)
 
     arr = np.asarray(ds.values[tuple(slicer)], dtype=np.float32)
-    if sample_mode in {"mean", "std", "rel_uncert"} and "sample" in arr_dims:
-        s_axis = arr_dims.index("sample")
-        if sample_mode == "mean":
-            arr = arr.mean(axis=s_axis, dtype=np.float64)
-        elif sample_mode == "std":
-            arr = arr.std(axis=s_axis, dtype=np.float64)
-        else:
-            mean_arr = arr.mean(axis=s_axis, dtype=np.float64)
-            std_arr = arr.std(axis=s_axis, dtype=np.float64)
-            arr = _relative_uncertainty(mean_arr, std_arr)
-        arr_dims = [d for d in arr_dims if d != "sample"]
-
-    for dim in projected:
-        if dim not in arr_dims:
-            continue
-        axis = arr_dims.index(dim)
-        arr = arr.mean(axis=axis, dtype=np.float64)
-        arr_dims.pop(axis)
-        selected_indices.pop(dim, None)
+    arr, arr_dims = _apply_sample_mode_reduction(arr, arr_dims, sample_mode, cast_float32=False)
+    arr, arr_dims = _project_dims_by_mean(arr, arr_dims, projected, selected_indices, cast_float32=False)
 
     return {
         "data_id": ds.data_id,
@@ -266,6 +262,7 @@ def build_evpa_response(
     i_min_fraction: float,
     project_dims: tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    """Build EVPA tick vectors from I/Q/U slice components."""
     if "pol" not in ds.dims:
         raise HTTPException(status_code=400, detail="dataset has no polarization axis")
     if _dim_size(ds, "pol") < 3:
@@ -380,6 +377,7 @@ def build_multispectral_response(
     plane_y: str,
     project_dims: tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    """Build an RGB multispectral projection from a spectral cube."""
     if "nu" not in ds.dims:
         raise HTTPException(status_code=400, detail="dataset has no 'nu' axis")
     if plane_x == plane_y:
@@ -410,7 +408,7 @@ def build_multispectral_response(
             slicer.append(slice(None))
             arr_dims.append(dim)
             continue
-        if dim == "sample" and sample_mode in {"mean", "std", "rel_uncert"}:
+        if dim == "sample" and _uses_sample_reduction(sample_mode):
             slicer.append(slice(None))
             arr_dims.append(dim)
             continue
@@ -419,25 +417,8 @@ def build_multispectral_response(
         slicer.append(idx)
 
     arr = np.asarray(ds.values[tuple(slicer)], dtype=np.float32)
-    if sample_mode in {"mean", "std", "rel_uncert"} and "sample" in arr_dims:
-        s_axis = arr_dims.index("sample")
-        if sample_mode == "mean":
-            arr = arr.mean(axis=s_axis, dtype=np.float64).astype(np.float32)
-        elif sample_mode == "std":
-            arr = arr.std(axis=s_axis, dtype=np.float64).astype(np.float32)
-        else:
-            mean_arr = arr.mean(axis=s_axis, dtype=np.float64)
-            std_arr = arr.std(axis=s_axis, dtype=np.float64)
-            arr = _relative_uncertainty(mean_arr, std_arr).astype(np.float32)
-        arr_dims = [d for d in arr_dims if d != "sample"]
-
-    for dim in projected:
-        if dim not in arr_dims:
-            continue
-        axis = arr_dims.index(dim)
-        arr = arr.mean(axis=axis, dtype=np.float64).astype(np.float32)
-        arr_dims.pop(axis)
-        selected_indices.pop(dim, None)
+    arr, arr_dims = _apply_sample_mode_reduction(arr, arr_dims, sample_mode, cast_float32=True)
+    arr, arr_dims = _project_dims_by_mean(arr, arr_dims, projected, selected_indices, cast_float32=True)
 
     expected = ["nu", plane_x, plane_y]
     if sorted(arr_dims) != sorted(expected):
@@ -503,30 +484,6 @@ def _coord_step(coords: np.ndarray) -> float:
         if step is not None and abs(step) > 0:
             return step
     return 1.0
-
-
-def _healpix_nside_from_npix(npix: int) -> int | None:
-    if npix <= 0 or npix % 12 != 0:
-        return None
-    nside_sq = npix // 12
-    nside = int(round(nside_sq**0.5))
-    if nside * nside != nside_sq:
-        return None
-    return nside
-
-
-def _parse_healpix_ordering(ds: CubeDataset) -> str:
-    candidates: list[Any] = []
-    if isinstance(ds.wcs, dict):
-        candidates.extend([ds.wcs.get("healpix_ordering"), ds.wcs.get("healpix_order")])
-    if isinstance(ds.provenance, dict):
-        candidates.extend([ds.provenance.get("healpix_ordering"), ds.provenance.get("healpix_order")])
-    for value in candidates:
-        if isinstance(value, str):
-            lowered = value.strip().lower()
-            if lowered in {"ring", "nested"}:
-                return lowered
-    return "ring"
 
 
 def _build_export_header(
@@ -685,7 +642,7 @@ def _build_export_cutout_core(
 
     for dim in ds.dims:
         size = _dim_size(ds, dim)
-        if dim == "sample" and sample_mode in {"mean", "std", "rel_uncert"}:
+        if dim == "sample" and _uses_sample_reduction(sample_mode):
             slicer.append(slice(0, size))
             out_dims.append(dim)
             bounds_by_dim[dim] = (0, size)
@@ -738,17 +695,8 @@ def _build_export_cutout_core(
         selected_indices[dim] = idx
 
     arr = np.asarray(ds.values[tuple(slicer)], dtype=np.float32)
-    if sample_mode in {"mean", "std", "rel_uncert"} and "sample" in out_dims:
-        s_axis = out_dims.index("sample")
-        if sample_mode == "mean":
-            arr = arr.mean(axis=s_axis, dtype=np.float64).astype(np.float32)
-        elif sample_mode == "std":
-            arr = arr.std(axis=s_axis, dtype=np.float64).astype(np.float32)
-        else:
-            mean_arr = arr.mean(axis=s_axis, dtype=np.float64)
-            std_arr = arr.std(axis=s_axis, dtype=np.float64)
-            arr = _relative_uncertainty(mean_arr, std_arr).astype(np.float32)
-        out_dims = [d for d in out_dims if d != "sample"]
+    arr, out_dims = _apply_sample_mode_reduction(arr, out_dims, sample_mode, cast_float32=True)
+    if "sample" not in out_dims:
         bounds_by_dim.pop("sample", None)
 
     if arr.ndim != len(out_dims):

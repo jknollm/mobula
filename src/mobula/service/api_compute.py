@@ -7,7 +7,12 @@ from fastapi import HTTPException
 
 from mobula.data.schema import CubeDataset
 from mobula.service.api_models import SampleMode
-from mobula.service.api_utils import _index_or_mid, _relative_uncertainty
+from mobula.service.api_utils import (
+    _apply_sample_mode_reduction,
+    _index_or_mid,
+    _project_dims_by_mean,
+    _uses_sample_reduction,
+)
 
 
 def _profile_series_for_region(
@@ -108,6 +113,7 @@ def _extract_2d_slice(
     pol_override: int | None = None,
     project_dims: tuple[str, ...] | list[str] | None = None,
 ) -> tuple[np.ndarray, dict[str, int], dict[str, float]]:
+    """Extract a canonical 2D slice with optional sample reduction and projected dims."""
     if plane_x == plane_y:
         raise HTTPException(status_code=400, detail="plane_x and plane_y must be different")
     for plane_dim in (plane_x, plane_y):
@@ -150,7 +156,7 @@ def _extract_2d_slice(
             arr_dims.append(dim)
             continue
 
-        if dim == "sample" and sample_mode in {"mean", "std", "rel_uncert"}:
+        if dim == "sample" and _uses_sample_reduction(sample_mode):
             slicer.append(slice(None))
             arr_dims.append(dim)
             continue
@@ -161,25 +167,8 @@ def _extract_2d_slice(
 
     arr = np.asarray(ds.values[tuple(slicer)], dtype=np.float32)
 
-    if sample_mode in {"mean", "std", "rel_uncert"} and "sample" in arr_dims:
-        sample_axis = arr_dims.index("sample")
-        if sample_mode == "mean":
-            arr = arr.mean(axis=sample_axis, dtype=np.float64).astype(np.float32)
-        elif sample_mode == "std":
-            arr = arr.std(axis=sample_axis, dtype=np.float64).astype(np.float32)
-        else:
-            mean_arr = arr.mean(axis=sample_axis, dtype=np.float64)
-            std_arr = arr.std(axis=sample_axis, dtype=np.float64)
-            arr = _relative_uncertainty(mean_arr, std_arr).astype(np.float32)
-        arr_dims = [d for d in arr_dims if d != "sample"]
-
-    for dim in projected:
-        if dim not in arr_dims:
-            continue
-        axis = arr_dims.index(dim)
-        arr = arr.mean(axis=axis, dtype=np.float64).astype(np.float32)
-        arr_dims.pop(axis)
-        selected_indices.pop(dim, None)
+    arr, arr_dims = _apply_sample_mode_reduction(arr, arr_dims, sample_mode, cast_float32=True)
+    arr, arr_dims = _project_dims_by_mean(arr, arr_dims, projected, selected_indices, cast_float32=True)
 
     if arr.ndim != 2:
         raise HTTPException(
@@ -214,6 +203,7 @@ def _extract_3d_volume(
     pol_override: int | None = None,
     project_dims: tuple[str, ...] | list[str] | None = None,
 ) -> tuple[np.ndarray, dict[str, int], dict[str, float]]:
+    """Extract a canonical XYZ volume with optional sample reduction and projected dims."""
     for dim in ("x", "y", "z"):
         if dim not in ds.dims:
             raise HTTPException(status_code=400, detail=f"dataset missing '{dim}' dimension")
@@ -249,7 +239,7 @@ def _extract_3d_volume(
             arr_dims.append(dim)
             continue
 
-        if dim == "sample" and sample_mode in {"mean", "std", "rel_uncert"}:
+        if dim == "sample" and _uses_sample_reduction(sample_mode):
             slicer.append(slice(None))
             arr_dims.append(dim)
             continue
@@ -259,25 +249,8 @@ def _extract_3d_volume(
         slicer.append(idx)
 
     arr = np.asarray(ds.values[tuple(slicer)], dtype=np.float32)
-    if sample_mode in {"mean", "std", "rel_uncert"} and "sample" in arr_dims:
-        sample_axis = arr_dims.index("sample")
-        if sample_mode == "mean":
-            arr = arr.mean(axis=sample_axis, dtype=np.float64).astype(np.float32)
-        elif sample_mode == "std":
-            arr = arr.std(axis=sample_axis, dtype=np.float64).astype(np.float32)
-        else:
-            mean_arr = arr.mean(axis=sample_axis, dtype=np.float64)
-            std_arr = arr.std(axis=sample_axis, dtype=np.float64)
-            arr = _relative_uncertainty(mean_arr, std_arr).astype(np.float32)
-        arr_dims = [d for d in arr_dims if d != "sample"]
-
-    for dim in projected:
-        if dim not in arr_dims:
-            continue
-        axis = arr_dims.index(dim)
-        arr = arr.mean(axis=axis, dtype=np.float64).astype(np.float32)
-        arr_dims.pop(axis)
-        selected_indices.pop(dim, None)
+    arr, arr_dims = _apply_sample_mode_reduction(arr, arr_dims, sample_mode, cast_float32=True)
+    arr, arr_dims = _project_dims_by_mean(arr, arr_dims, projected, selected_indices, cast_float32=True)
 
     if arr.ndim != 3:
         raise HTTPException(status_code=500, detail=f"volume rank mismatch, expected 3D got {arr.ndim}")

@@ -6,7 +6,7 @@ mobula is a single-process FastAPI app serving both API endpoints and static bro
 
 - FastAPI app in `src/mobula/main.py`
 - API router under `/api` composed in `src/mobula/service/api_router.py`
-- Static frontend served from `static/`
+- Static frontend served from `src/mobula/static/` (with repo-level `static/` fallback)
 - In-memory dataset registry with lazy dataset materialization
 
 ## Core Backend Modules
@@ -27,8 +27,9 @@ mobula is a single-process FastAPI app serving both API endpoints and static bro
   - health, dataset listing, local file picker, local loader, dataset metadata
 - `src/mobula/service/api_routes_views.py`
   - slice, volume, intensity-range, multispectral, EVPA
+  - cutout export/save and PNG snapshot save endpoints
 - `src/mobula/service/api_routes_profiles.py`
-  - ROI stats and profile endpoints
+  - ROI stats, plane profiles, and HEALPix pixel-index profile endpoints
 - `src/mobula/service/view_service.py`
   - view payload construction and statistical summaries
 - `src/mobula/service/profile_service.py`
@@ -36,11 +37,11 @@ mobula is a single-process FastAPI app serving both API endpoints and static bro
 
 ## Frontend Structure
 
-- `static/index.html`: UI layout and control groups
-- `static/app.js`: main state machine, rendering orchestration, event wiring
-- `static/app_gpu.js`: GPU renderer paths
-- `static/app_interactions.js`: pointer/drag/zoom interaction handlers
-- `static/app_requests.js`: API query parameter builders
+- `src/mobula/static/index.html`: UI layout and control groups
+- `src/mobula/static/app.js`: main state machine, rendering orchestration, event wiring
+- `src/mobula/static/app_gpu.js`: GPU renderer paths
+- `src/mobula/static/app_interactions.js`: pointer/drag/zoom interaction handlers
+- `src/mobula/static/app_requests.js`: API query parameter builders
 
 ## Data Flow
 

@@ -9,6 +9,8 @@ from mobula.data.schema import CubeDataset
 from mobula.service.api_models import RangeMode, SampleMode
 from mobula.service.registry import DatasetRegistry
 
+_SAMPLE_REDUCTION_MODES = frozenset({"mean", "std", "rel_uncert"})
+
 
 def _safe_dataset(registry: DatasetRegistry, data_id: str) -> CubeDataset:
     try:
@@ -118,9 +120,58 @@ def _parse_range_mode(mode: str) -> RangeMode:
     return lowered  # type: ignore[return-value]
 
 
+def _uses_sample_reduction(sample_mode: SampleMode) -> bool:
+    return sample_mode in _SAMPLE_REDUCTION_MODES
+
+
 def _relative_uncertainty(mean_arr: np.ndarray, std_arr: np.ndarray) -> np.ndarray:
     # Relative uncertainty is sigma / |mu| with a small floor to avoid divide-by-zero blowups.
     return std_arr / np.maximum(np.abs(mean_arr), 1.0e-8)
+
+
+def _apply_sample_mode_reduction(
+    arr: np.ndarray,
+    arr_dims: list[str],
+    sample_mode: SampleMode,
+    *,
+    cast_float32: bool = True,
+) -> tuple[np.ndarray, list[str]]:
+    """Apply sample-axis reduction for mean/std/rel_uncert modes."""
+    if not _uses_sample_reduction(sample_mode) or "sample" not in arr_dims:
+        return arr, arr_dims
+
+    sample_axis = arr_dims.index("sample")
+    if sample_mode == "mean":
+        arr = arr.mean(axis=sample_axis, dtype=np.float64)
+    elif sample_mode == "std":
+        arr = arr.std(axis=sample_axis, dtype=np.float64)
+    else:
+        mean_arr = arr.mean(axis=sample_axis, dtype=np.float64)
+        std_arr = arr.std(axis=sample_axis, dtype=np.float64)
+        arr = _relative_uncertainty(mean_arr, std_arr)
+
+    if cast_float32:
+        arr = arr.astype(np.float32)
+    return arr, [dim for dim in arr_dims if dim != "sample"]
+
+
+def _project_dims_by_mean(
+    arr: np.ndarray,
+    arr_dims: list[str],
+    projected: set[str],
+    selected_indices: dict[str, int],
+    *,
+    cast_float32: bool = True,
+) -> tuple[np.ndarray, list[str]]:
+    """Project requested dimensions by mean-reduction, preserving output dim order."""
+    for dim in [existing_dim for existing_dim in arr_dims if existing_dim in projected]:
+        axis = arr_dims.index(dim)
+        arr = arr.mean(axis=axis, dtype=np.float64)
+        if cast_float32:
+            arr = arr.astype(np.float32)
+        arr_dims.pop(axis)
+        selected_indices.pop(dim, None)
+    return arr, arr_dims
 
 
 def _downsample_2d(arr: np.ndarray, max_pixels: int | None) -> tuple[np.ndarray, tuple[int, int]]:

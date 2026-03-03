@@ -66,7 +66,8 @@ Requires app to be running.
 ## Project Layout
 
 - `src/mobula/`: backend application and data/model logic
-- `static/`: browser UI assets
+- `src/mobula/static/`: browser UI assets packaged with the Python distribution
+- `static/`: repo-level static fallback used in local development
 - `tests/`: pytest coverage for API, loaders, and registry
 - `scripts/`: utility scripts for benchmark and dataset generation
 - `data/`: generated dataset artifacts

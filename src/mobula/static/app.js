@@ -559,6 +559,24 @@ function hiddenDim() {
   return planeDims().hidden;
 }
 
+function hasThirdSpatialDimension() {
+  let varying = 0;
+  for (const dim of ["x", "y", "z"]) {
+    if (axisSize(dim) > 1) varying += 1;
+  }
+  return varying >= 3;
+}
+
+function preferredSpatialPlaneForDataset() {
+  const xVar = axisSize("x") > 1;
+  const yVar = axisSize("y") > 1;
+  const zVar = axisSize("z") > 1;
+  if (xVar && yVar) return "xy";
+  if (yVar && zVar) return "yz";
+  if (zVar && xVar) return "zx";
+  return "xy";
+}
+
 function axisSize(dim) {
   if (!state.meta || !state.meta.coords[dim]) return 1;
   return state.meta.coords[dim].size;
@@ -1949,10 +1967,13 @@ function resetView() {
     return;
   }
   const p = planeDims();
-  state.view.u = 0;
-  state.view.v = 0;
-  state.view.w = axisSize(p.planeX);
-  state.view.h = axisSize(p.planeY);
+  const imgW = axisSize(p.planeX);
+  const imgH = axisSize(p.planeY);
+  const base = sliceFullViewWindow(imgW, imgH);
+  state.view.w = base.w;
+  state.view.h = base.h;
+  state.view.u = 0.5 * (imgW - base.w);
+  state.view.v = 0.5 * (imgH - base.h);
 }
 
 function sphereZoomOutLimit() {
@@ -1971,6 +1992,23 @@ function mollweideViewAspect() {
   const w = Number.isFinite(els?.canvas?.width) ? els.canvas.width : 1;
   const h = Number.isFinite(els?.canvas?.height) ? els.canvas.height : 1;
   return Math.max(1.0e-6, w / Math.max(1.0e-6, h));
+}
+
+function sliceViewAspect() {
+  const w = Number.isFinite(els?.canvas?.width) ? els.canvas.width : 1;
+  const h = Number.isFinite(els?.canvas?.height) ? els.canvas.height : 1;
+  return Math.max(1.0e-6, w / Math.max(1.0e-6, h));
+}
+
+function sliceFullViewWindow(imgW, imgH) {
+  const a = sliceViewAspect();
+  const imgAspect = imgW / Math.max(1.0e-6, imgH);
+  if (imgAspect >= a) {
+    const w = imgW;
+    return { w, h: w / a };
+  }
+  const h = imgH;
+  return { w: h * a, h };
 }
 
 function mollweideFullViewWindow(imgW, imgH) {
@@ -2049,6 +2087,57 @@ function getViewRect() {
     if (!Number.isFinite(w) || w <= 0 || !Number.isFinite(h) || h <= 0) {
       w = bounds.base.w;
       h = bounds.base.h;
+    }
+    const cx = (Number.isFinite(state.view.u) ? state.view.u : 0) + 0.5 * w;
+    const cy = (Number.isFinite(state.view.v) ? state.view.v : 0) + 0.5 * h;
+
+    if (w / Math.max(1.0e-6, h) > targetAspect) h = w / targetAspect;
+    else w = h * targetAspect;
+
+    w = clamp(w, minW, maxW);
+    h = w / targetAspect;
+    if (h < minH) {
+      h = minH;
+      w = h * targetAspect;
+    }
+    if (h > maxH) {
+      h = maxH;
+      w = h * targetAspect;
+    }
+
+    state.view.w = w;
+    state.view.h = h;
+    state.view.u = cx - 0.5 * w;
+    state.view.v = cy - 0.5 * h;
+
+    if (state.view.w > imgW) state.view.u = 0.5 * (imgW - state.view.w);
+    else state.view.u = clamp(state.view.u, 0, imgW - state.view.w);
+    if (state.view.h > imgH) state.view.v = 0.5 * (imgH - state.view.h);
+    else state.view.v = clamp(state.view.v, 0, imgH - state.view.h);
+
+    return {
+      srcX: state.view.u,
+      srcY: state.view.v,
+      srcW: state.view.w,
+      srcH: state.view.h,
+      imgW,
+      imgH,
+    };
+  }
+
+  if (!isSphereMode()) {
+    const base = sliceFullViewWindow(imgW, imgH);
+    const targetAspect = base.w / Math.max(1.0e-6, base.h);
+    const minW = Math.min(2, base.w);
+    const minH = Math.min(2, base.h);
+    const maxW = base.w;
+    const maxH = base.h;
+
+    let w = state.view.w;
+    let h = state.view.h;
+    if (!Number.isFinite(w) || w <= 0 || !Number.isFinite(h) || h <= 0) {
+      w = base.w;
+      h = base.h;
     }
     const cx = (Number.isFinite(state.view.u) ? state.view.u : 0) + 0.5 * w;
     const cy = (Number.isFinite(state.view.v) ? state.view.v : 0) + 0.5 * h;
@@ -2908,96 +2997,42 @@ function buildViewerSnapshotCanvas() {
 function collectInspectSnapshotCharts() {
   const charts = [];
   const timeCanvas = visibleCanvasForSnapshot(els.timeProfileCanvas, els.timeProfileBlock);
-  if (timeCanvas) charts.push({ title: "Time Flux Profile", canvas: timeCanvas });
+  if (timeCanvas) charts.push({ key: "time_profile", title: "Time Flux Profile", canvas: timeCanvas });
   const specCanvas = visibleCanvasForSnapshot(els.spectrumProfileCanvas, els.spectrumProfileBlock);
-  if (specCanvas) charts.push({ title: "Spectral Flux Profile", canvas: specCanvas });
+  if (specCanvas) charts.push({ key: "spectral_profile", title: "Spectral Flux Profile", canvas: specCanvas });
   const spatialCanvas = visibleCanvasForSnapshot(els.spatialProfileCanvas, els.spatialProfileBlock);
-  if (spatialCanvas) charts.push({ title: els.spatialProfileTitle?.textContent || "Spatial Flux Profile", canvas: spatialCanvas });
+  if (spatialCanvas) {
+    charts.push({
+      key: "spatial_profile",
+      title: els.spatialProfileTitle?.textContent || "Spatial Flux Profile",
+      canvas: spatialCanvas,
+    });
+  }
   return charts;
 }
 
-function drawReadoutBlock(ctx, x, y, width, lines) {
-  const blockPad = 8;
-  const lineH = 14;
-  const lineCount = Math.max(1, lines.length);
-  const blockH = blockPad * 2 + lineCount * lineH;
-  ctx.fillStyle = "rgba(10, 16, 27, 0.95)";
-  ctx.strokeStyle = "rgba(126, 165, 207, 0.55)";
-  ctx.lineWidth = 1;
-  ctx.fillRect(x, y, width, blockH);
-  ctx.strokeRect(x + 0.5, y + 0.5, width - 1, blockH - 1);
-  ctx.fillStyle = "#dbe9f7";
-  ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
-  for (let i = 0; i < lineCount; i += 1) {
-    const line = lines[i] || "";
-    ctx.fillText(line, x + blockPad, y + blockPad + (i + 0.8) * lineH);
-  }
-  return blockH;
-}
-
-function buildInspectSnapshotCanvas() {
-  const charts = collectInspectSnapshotCharts();
-  if (!charts.length) throw new Error("Inspect charts are not available.");
-
+function buildGraphSnapshotCanvas(entry) {
+  if (!entry || !entry.canvas) throw new Error("Inspect graph is not available.");
+  const source = entry.canvas;
   const pad = 20;
   const titleH = 26;
-  const readoutGap = 12;
-  const chartGap = 14;
-  const chartTitleH = 18;
-
-  const targetW = clamp(
-    Math.max(...charts.map((entry) => entry.canvas.width)),
-    360,
-    960
-  );
-  const readoutLines = (els.hoverReadout?.textContent || "")
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .filter((line) => line.length > 0)
-    .slice(0, 8);
-
-  const chartLayouts = charts.map((entry) => {
-    const scale = targetW / Math.max(1, entry.canvas.width);
-    return {
-      title: entry.title,
-      canvas: entry.canvas,
-      width: targetW,
-      height: Math.max(140, Math.round(entry.canvas.height * scale)),
-    };
-  });
-
-  let outH = pad * 2 + titleH;
-  const readoutH = 8 * 2 + Math.max(1, readoutLines.length) * 14;
-  outH += readoutH + readoutGap;
-  for (const entry of chartLayouts) {
-    outH += chartTitleH + entry.height + chartGap;
-  }
-  outH -= chartGap;
-  const outW = pad * 2 + targetW;
+  const targetW = clamp(source.width, 360, 960);
+  const scale = targetW / Math.max(1, source.width);
+  const targetH = Math.max(150, Math.round(source.height * scale));
+  const outW = targetW + pad * 2;
+  const outH = targetH + pad * 2 + titleH;
 
   const out = document.createElement("canvas");
   out.width = outW;
   out.height = outH;
   const ctx = out.getContext("2d");
-  if (!ctx) throw new Error("Could not initialize inspect snapshot.");
+  if (!ctx) throw new Error("Could not initialize graph snapshot.");
 
   drawSnapshotCardBackground(ctx, outW, outH);
   ctx.fillStyle = "#e8f2ff";
   ctx.font = "600 16px 'Source Sans 3', sans-serif";
-  ctx.fillText("Inspect", pad, pad + 17);
-
-  let y = pad + titleH;
-  y += drawReadoutBlock(ctx, pad, y, targetW, readoutLines);
-  y += readoutGap;
-
-  for (const entry of chartLayouts) {
-    ctx.fillStyle = "#c7d9ec";
-    ctx.font = "600 13px 'Source Sans 3', sans-serif";
-    ctx.fillText(entry.title, pad, y + 13);
-    y += chartTitleH;
-    ctx.drawImage(entry.canvas, pad, y, entry.width, entry.height);
-    y += entry.height + chartGap;
-  }
+  ctx.fillText(entry.title || "Profile Graph", pad, pad + 17);
+  ctx.drawImage(source, pad, pad + titleH, targetW, targetH);
   return out;
 }
 
@@ -3058,14 +3093,18 @@ function buildSaveImagesRequestBody() {
   state.saveImagesPrefs.prefix = prefix;
 
   const viewerCanvas = buildViewerSnapshotCanvas();
-  const inspectCanvas = buildInspectSnapshotCanvas();
+  const images = [{ filename: `${prefix}_viewer.png`, data_url: viewerCanvas.toDataURL("image/png") }];
+  for (const chart of collectInspectSnapshotCharts()) {
+    const graphCanvas = buildGraphSnapshotCanvas(chart);
+    images.push({
+      filename: `${prefix}_${chart.key}.png`,
+      data_url: graphCanvas.toDataURL("image/png"),
+    });
+  }
   return {
     output_dir: state.saveImagesPrefs.outputDir,
     overwrite: state.saveImagesPrefs.overwrite !== false,
-    images: [
-      { filename: `${prefix}_viewer.png`, data_url: viewerCanvas.toDataURL("image/png") },
-      { filename: `${prefix}_inspect.png`, data_url: inspectCanvas.toDataURL("image/png") },
-    ],
+    images,
   };
 }
 
@@ -3307,6 +3346,13 @@ function updateDomainVisibility() {
   const nuVarying = axisVarying("nu");
   const sampleVarying = axisVarying("sample");
   const polVarying = axisVarying("pol");
+  const thirdSpatialDim = hasThirdSpatialDimension();
+  if (!thirdSpatialDim) {
+    const preferredPlane = preferredSpatialPlaneForDataset();
+    if (state.plane !== preferredPlane) {
+      state.plane = preferredPlane;
+    }
+  }
   const hiddenAxis = hiddenDim();
   const hiddenSpatialVarying = axisVarying(hiddenAxis);
   if (sphereMode && !sphereDataset) {
@@ -3374,7 +3420,7 @@ function updateDomainVisibility() {
   setVisible(els.spatialSphereBtn, sphereDataset);
   setVisible(els.temporalControlGroup, tVarying);
   setVisible(els.spectralControlGroup, nuVarying);
-  setVisible(els.planeLabel, !volumeMode && !sphereMode);
+  setVisible(els.planeLabel, !volumeMode && !sphereMode && thirdSpatialDim);
   setVisible(els.hiddenNavPanel, !volumeMode && !sphereMode && hiddenSpatialVarying);
   setVisible(els.volumeRenderControls, volumeMode);
   setVisible(els.sphereControls, sphereMode);
@@ -3505,7 +3551,7 @@ function updateControlCaps() {
     }
   }
   els.planeSelect.value = state.plane;
-  els.planeSelect.disabled = isVolumeMode() || isSphereMode();
+  els.planeSelect.disabled = isVolumeMode() || isSphereMode() || !hasThirdSpatialDimension();
   const msAvailable = canUseMultiSpectral();
   if (!msAvailable) state.multiSpectral = false;
   els.multiSpectralBtn.disabled = !msAvailable;

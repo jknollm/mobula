@@ -42,6 +42,7 @@ mobula --host 127.0.0.1 --port 8000 --reload
 - [Docs Index](./docs/README.md)
 - [Installation Guide](./docs/INSTALL.md)
 - [Quickstart](./docs/QUICKSTART.md)
+- [Feature Overview](./docs/FEATURES.md)
 - [User Guide](./docs/USER_GUIDE.md)
 - [API Reference](./docs/API.md)
 - [Data Loading and Axis Mapping](./docs/DATA_LOADING.md)
