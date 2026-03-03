@@ -473,6 +473,9 @@ input[type="range"] {
   font-size: 0.74rem;
   color: #d3e7f7;
   white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   pointer-events: none;
   z-index: 5;
 }

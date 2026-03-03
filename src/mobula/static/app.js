@@ -691,6 +691,25 @@ function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
 
+function setDualRangeLabelPosition(trackEl, labelEl, pct) {
+  if (!trackEl || !labelEl) return;
+  const safePct = Number.isFinite(pct) ? clamp(pct, 0, 100) : 50;
+  const trackWidth = trackEl.clientWidth;
+  if (!(trackWidth > 0)) {
+    labelEl.style.left = `${safePct.toFixed(3)}%`;
+    return;
+  }
+
+  const targetPx = (safePct / 100) * trackWidth;
+  const labelWidth = Math.max(labelEl.offsetWidth, labelEl.getBoundingClientRect().width || 0);
+  let leftPx = targetPx;
+  if (labelWidth > 0) {
+    const halfWidth = labelWidth / 2;
+    leftPx = labelWidth >= trackWidth ? trackWidth / 2 : clamp(targetPx, halfWidth, trackWidth - halfWidth);
+  }
+  labelEl.style.left = `${leftPx.toFixed(2)}px`;
+}
+
 function setVisible(el, visible) {
   if (!el) return;
   el.style.display = visible ? "" : "none";
@@ -911,8 +930,8 @@ function updateVolumeClipRangeUi() {
 
   els.volumeClipRangeMinValue.textContent = low.toFixed(2);
   els.volumeClipRangeMaxValue.textContent = high.toFixed(2);
-  els.volumeClipRangeMinValue.style.left = `${clamp(leftPct, 2, 98).toFixed(3)}%`;
-  els.volumeClipRangeMaxValue.style.left = `${clamp(rightPct, 2, 98).toFixed(3)}%`;
+  setDualRangeLabelPosition(els.volumeClipRangeTrack, els.volumeClipRangeMinValue, leftPct);
+  setDualRangeLabelPosition(els.volumeClipRangeTrack, els.volumeClipRangeMaxValue, rightPct);
 }
 
 function setVolumeSphereRangeActiveHandle(bound = null) {
@@ -966,8 +985,8 @@ function updateVolumeSphereRangeUi() {
 
   els.volumeSphereRangeMinValue.textContent = low.toFixed(2);
   els.volumeSphereRangeMaxValue.textContent = high.toFixed(2);
-  els.volumeSphereRangeMinValue.style.left = `${clamp(leftPct, 2, 98).toFixed(3)}%`;
-  els.volumeSphereRangeMaxValue.style.left = `${clamp(rightPct, 2, 98).toFixed(3)}%`;
+  setDualRangeLabelPosition(els.volumeSphereRangeTrack, els.volumeSphereRangeMinValue, leftPct);
+  setDualRangeLabelPosition(els.volumeSphereRangeTrack, els.volumeSphereRangeMaxValue, rightPct);
 }
 
 function updateVolumeControlReadouts() {
@@ -1873,7 +1892,7 @@ function updateColorNormalizationControls() {
       el.style.visibility = "hidden";
       return;
     }
-    el.style.left = `${clamp(pct, 2, 98).toFixed(3)}%`;
+    setDualRangeLabelPosition(els.colorNormTrack, el, pct);
     el.style.visibility = "visible";
   };
 
@@ -3144,6 +3163,23 @@ function modifierDragMode(metaDown, shiftDown) {
   if (metaDown) return "zoom";
   if (shiftDown) return "investigate";
   return null;
+}
+
+function isMacPlatform() {
+  if (typeof navigator === "undefined") return false;
+  const uaPlatform =
+    navigator.userAgentData && typeof navigator.userAgentData.platform === "string"
+      ? navigator.userAgentData.platform
+      : "";
+  const platformInfo = `${navigator.platform || ""} ${uaPlatform}`.toLowerCase();
+  return platformInfo.includes("mac");
+}
+
+function updateModeButtonTooltips() {
+  if (!els.modeInspectBtn || !els.modeZoomBtn) return;
+  const zoomModifier = isMacPlatform() ? "Command (\u2318)" : "Ctrl";
+  els.modeInspectBtn.title = "Inspect (Shift)";
+  els.modeZoomBtn.title = `Zoom (${zoomModifier})`;
 }
 
 function setDragModeModifier(next) {
@@ -7920,6 +7956,9 @@ function syncActiveTabSnapshot() {
 function refreshActiveTabLabel() {
   const tab = activeDatasetTab();
   if (!tab) return;
+  if (tab.snapshot && typeof tab.snapshot === "object") {
+    tab.snapshot.dataId = state.dataId;
+  }
   tab.label = tabLabelForState(state, tab.fallbackLabel);
   renderDatasetTabs();
 }
@@ -8553,6 +8592,7 @@ async function init() {
 
   await refreshDatasetOptions();
   syncUiToState();
+  updateModeButtonTooltips();
 
   els.canvas.width = 640;
   els.canvas.height = 640;
