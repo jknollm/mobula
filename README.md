@@ -92,7 +92,7 @@ Run benchmark (app must already be running):
 
 ```bash
 source .venv/bin/activate
-python scripts/benchmark.py --dataset demo-quicklook-7d-pol-samples --n 40 --warmup 10
+python scripts/benchmark.py --dataset movie-2d-pol-hd --n 40 --warmup 10
 ```
 
 Regenerate brand banners:

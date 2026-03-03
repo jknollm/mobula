@@ -30,36 +30,23 @@ class DemoDatasetSpec:
 
 DEMO_DATASETS: tuple[DemoDatasetSpec, ...] = (
     DemoDatasetSpec(
-        data_id="demo-quicklook-7d-pol-samples",
-        cfg=MockCubeConfig(sample=4, pol=4, t=12, nu=16, x=80, y=80, z=2, seed=42, model="dynamic"),
-        preload=True,
+        data_id="movie-2d-pol-hd",
+        cfg=MockCubeConfig(sample=4, pol=4, t=120, nu=1, x=144, y=144, z=1, seed=305, model="filamentary_time"),
     ),
     DemoDatasetSpec(
-        data_id="demo-full-ms-time-3d-samples-no-pol",
-        cfg=MockCubeConfig(sample=4, pol=1, t=10, nu=12, x=80, y=80, z=12, seed=91, model="center_structured_time"),
+        data_id="time-5d-volume-samples-hd",
+        cfg=MockCubeConfig(sample=4, pol=1, t=20, nu=1, x=80, y=80, z=56, seed=451, model="center_structured_time"),
     ),
     DemoDatasetSpec(
-        data_id="demo-hires-xy-nu-pol-samples",
+        data_id="xy-nu-pol-radio-galaxy",
         cfg=MockCubeConfig(sample=4, pol=4, t=1, nu=10, x=2048, y=1024, z=1, seed=133, model="radio_galaxy"),
     ),
     DemoDatasetSpec(
-        data_id="demo-hires-3d-no-samples",
+        data_id="volume-3d-spiral-galaxy",
         cfg=MockCubeConfig(sample=1, pol=1, t=1, nu=1, x=256, y=256, z=256, seed=207, model="spiral_galaxy"),
     ),
     DemoDatasetSpec(
-        data_id="demo-long-2d-movie-pol",
-        cfg=MockCubeConfig(sample=4, pol=4, t=96, nu=1, x=128, y=128, z=1, seed=305, model="filamentary_time"),
-    ),
-    DemoDatasetSpec(
-        data_id="demo-5d-time-3d-samples",
-        cfg=MockCubeConfig(sample=4, pol=1, t=16, nu=1, x=64, y=64, z=48, seed=451, model="center_structured_time"),
-    ),
-    DemoDatasetSpec(
-        data_id="demo-healpix-sky-samples-time-nu",
-        cfg=MockCubeConfig(sample=4, pol=1, t=20, nu=12, x=3072, y=1, z=1, seed=517, model="healpix_sky"),
-    ),
-    DemoDatasetSpec(
-        data_id="demo-healpix-sky-hires-samples-time-nu",
+        data_id="healpix-sky-time-nu-hd",
         cfg=MockCubeConfig(sample=4, pol=1, t=20, nu=12, x=196608, y=1, z=1, seed=613, model="healpix_sky"),
     ),
 )

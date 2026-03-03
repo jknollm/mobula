@@ -58,7 +58,7 @@ PYTHONPATH=src python scripts/export_mock_files.py
 
 ```bash
 source .venv/bin/activate
-python scripts/benchmark.py --dataset demo-quicklook-7d-pol-samples --n 40 --warmup 10
+python scripts/benchmark.py --dataset movie-2d-pol-hd --n 40 --warmup 10
 ```
 
 Requires app to be running.

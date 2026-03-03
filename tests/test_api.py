@@ -21,9 +21,9 @@ def test_mock_dataset_slice_and_roi() -> None:
     body = datasets.json()
     assert body["datasets"]
     data_ids = {d["data_id"] for d in body["datasets"]}
-    assert "demo-quicklook-7d-pol-samples" in data_ids
-    ds0 = body["datasets"][0]
-    data_id = ds0["data_id"]
+    data_id = "movie-2d-pol-hd"
+    assert data_id in data_ids
+    ds0 = next(d for d in body["datasets"] if d["data_id"] == data_id)
     shape = ds0["shape"]
 
     slice_res = client.get(
@@ -221,7 +221,8 @@ def test_mock_dataset_slice_and_roi() -> None:
     assert plane_profiles_res.status_code == 200
     plane_profiles = plane_profiles_res.json()
     assert plane_profiles["plane"] == ["y", "z"]
-    assert plane_profiles["pixel_count"] == 12
+    expected_plane_pixels = (10 - 4) * min(2, shape[6])
+    assert plane_profiles["pixel_count"] == expected_plane_pixels
     assert len(plane_profiles["time_profile"]["coords"]) == shape[2]
     assert len(plane_profiles["spectrum_profile"]["coords"]) == shape[3]
     assert plane_profiles["spatial_axis"] == "x"
@@ -251,85 +252,92 @@ def test_mock_dataset_slice_and_roi() -> None:
         f"/api/datasets/{data_id}/multispectral",
         params={"sample": 0, "pol": 0, "t": 0, "z": 0, "sample_mode": "single", "plane_x": "x", "plane_y": "y"},
     )
-    assert multispectral_res.status_code == 200
-    multispectral = multispectral_res.json()
-    assert multispectral["plane_dims"] == ["x", "y"]
-    assert multispectral["shape"] == [shape[4], shape[5]]
-    assert multispectral["full_shape"] == [shape[4], shape[5]]
-    assert multispectral["sampling_step"] == [1, 1]
-    assert len(multispectral["values"]["r"]) == shape[4] * shape[5]
-    assert len(multispectral["values"]["g"]) == shape[4] * shape[5]
-    assert len(multispectral["values"]["b"]) == shape[4] * shape[5]
+    if shape[3] < 3:
+        assert multispectral_res.status_code == 400
+        assert "at least 3 spectral channels" in multispectral_res.json()["detail"]
+    else:
+        assert multispectral_res.status_code == 200
+        multispectral = multispectral_res.json()
+        assert multispectral["plane_dims"] == ["x", "y"]
+        assert multispectral["shape"] == [shape[4], shape[5]]
+        assert multispectral["full_shape"] == [shape[4], shape[5]]
+        assert multispectral["sampling_step"] == [1, 1]
+        assert len(multispectral["values"]["r"]) == shape[4] * shape[5]
+        assert len(multispectral["values"]["g"]) == shape[4] * shape[5]
+        assert len(multispectral["values"]["b"]) == shape[4] * shape[5]
 
-    multispectral_lod_res = client.get(
-        f"/api/datasets/{data_id}/multispectral",
-        params={
-            "sample": 0,
-            "pol": 0,
-            "t": 0,
-            "z": 0,
-            "sample_mode": "single",
-            "plane_x": "x",
-            "plane_y": "y",
-            "max_pixels": 256,
-        },
-    )
-    assert multispectral_lod_res.status_code == 200
-    multispectral_lod = multispectral_lod_res.json()
-    assert multispectral_lod["full_shape"] == [shape[4], shape[5]]
-    assert multispectral_lod["shape"][0] * multispectral_lod["shape"][1] <= 256
+        multispectral_lod_res = client.get(
+            f"/api/datasets/{data_id}/multispectral",
+            params={
+                "sample": 0,
+                "pol": 0,
+                "t": 0,
+                "z": 0,
+                "sample_mode": "single",
+                "plane_x": "x",
+                "plane_y": "y",
+                "max_pixels": 256,
+            },
+        )
+        assert multispectral_lod_res.status_code == 200
+        multispectral_lod = multispectral_lod_res.json()
+        assert multispectral_lod["full_shape"] == [shape[4], shape[5]]
+        assert multispectral_lod["shape"][0] * multispectral_lod["shape"][1] <= 256
 
-    multispectral_windowed_res = client.get(
-        f"/api/datasets/{data_id}/multispectral",
-        params={
-            "sample": 0,
-            "pol": 0,
-            "t": 0,
-            "z": 0,
-            "sample_mode": "single",
-            "plane_x": "x",
-            "plane_y": "y",
-            "nu0": 2,
-            "nu1": 12,
-        },
-    )
-    assert multispectral_windowed_res.status_code == 200
-    multispectral_windowed = multispectral_windowed_res.json()
-    assert multispectral_windowed["shape"] == [shape[4], shape[5]]
-    assert len(multispectral_windowed["values"]["r"]) == shape[4] * shape[5]
-    assert len(multispectral_windowed["values"]["g"]) == shape[4] * shape[5]
-    assert len(multispectral_windowed["values"]["b"]) == shape[4] * shape[5]
+        window_nu1 = min(shape[3], 12)
+        window_nu0 = max(0, window_nu1 - 3)
+        multispectral_windowed_res = client.get(
+            f"/api/datasets/{data_id}/multispectral",
+            params={
+                "sample": 0,
+                "pol": 0,
+                "t": 0,
+                "z": 0,
+                "sample_mode": "single",
+                "plane_x": "x",
+                "plane_y": "y",
+                "nu0": window_nu0,
+                "nu1": window_nu1,
+            },
+        )
+        assert multispectral_windowed_res.status_code == 200
+        multispectral_windowed = multispectral_windowed_res.json()
+        assert multispectral_windowed["shape"] == [shape[4], shape[5]]
+        assert len(multispectral_windowed["values"]["r"]) == shape[4] * shape[5]
+        assert len(multispectral_windowed["values"]["g"]) == shape[4] * shape[5]
+        assert len(multispectral_windowed["values"]["b"]) == shape[4] * shape[5]
 
-    nu_meta = client.get(f"/api/datasets/{data_id}/meta")
-    assert nu_meta.status_code == 200
-    nu_min = nu_meta.json()["coords"]["nu"]["min"]
-    nu_max = nu_meta.json()["coords"]["nu"]["max"]
-    full_band = multispectral["bands"]
-    win_band = multispectral_windowed["bands"]
+        nu_meta = client.get(f"/api/datasets/{data_id}/meta")
+        assert nu_meta.status_code == 200
+        nu_min = nu_meta.json()["coords"]["nu"]["min"]
+        nu_max = nu_meta.json()["coords"]["nu"]["max"]
+        full_band = multispectral["bands"]
+        win_band = multispectral_windowed["bands"]
 
-    assert full_band["unit"] == "Hz"
-    assert win_band["unit"] == "Hz"
-    assert nu_min <= win_band["blue"][0] <= win_band["blue"][1] <= nu_max
-    assert nu_min <= win_band["green"][0] <= win_band["green"][1] <= nu_max
-    assert nu_min <= win_band["red"][0] <= win_band["red"][1] <= nu_max
+        assert full_band["unit"] == "Hz"
+        assert win_band["unit"] == "Hz"
+        assert nu_min <= win_band["blue"][0] <= win_band["blue"][1] <= nu_max
+        assert nu_min <= win_band["green"][0] <= win_band["green"][1] <= nu_max
+        assert nu_min <= win_band["red"][0] <= win_band["red"][1] <= nu_max
 
-    # Windowed RGB bands should shift compared to the full-range RGB mapping.
-    assert win_band["blue"][0] > full_band["blue"][0]
-    assert win_band["red"][1] < full_band["red"][1]
+        if window_nu0 > 0 or window_nu1 < shape[3]:
+            # Windowed RGB bands should shift compared to the full-range RGB mapping.
+            assert win_band["blue"][0] > full_band["blue"][0]
+            assert win_band["red"][1] < full_band["red"][1]
 
-    multispectral_too_narrow = client.get(
-        f"/api/datasets/{data_id}/multispectral",
-        params={
-            "sample": 0,
-            "pol": 0,
-            "t": 0,
-            "z": 0,
-            "sample_mode": "single",
-            "plane_x": "x",
-            "plane_y": "y",
-            "nu0": 0,
-            "nu1": 2,
-        },
-    )
-    assert multispectral_too_narrow.status_code == 400
-    assert "at least 3 spectral channels" in multispectral_too_narrow.json()["detail"]
+        multispectral_too_narrow = client.get(
+            f"/api/datasets/{data_id}/multispectral",
+            params={
+                "sample": 0,
+                "pol": 0,
+                "t": 0,
+                "z": 0,
+                "sample_mode": "single",
+                "plane_x": "x",
+                "plane_y": "y",
+                "nu0": 0,
+                "nu1": 2,
+            },
+        )
+        assert multispectral_too_narrow.status_code == 400
+        assert "at least 3 spectral channels" in multispectral_too_narrow.json()["detail"]

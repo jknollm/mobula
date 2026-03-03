@@ -1268,7 +1268,7 @@ function clampPanelWidths(left, right) {
   const rowW = els.workspaceRow ? els.workspaceRow.getBoundingClientRect().width : window.innerWidth;
   const splitW = (els.leftSplitter ? els.leftSplitter.getBoundingClientRect().width : 0) +
     (els.rightSplitter ? els.rightSplitter.getBoundingClientRect().width : 0);
-  const minLeft = 270;
+  const minLeft = 300;
   const minRight = 250;
   const minCenter = viewerMinCenterWidth();
 
@@ -2424,6 +2424,10 @@ function fullImageViewRect(baseViewRect) {
 }
 
 function colorbarReferenceCssWidth(baseViewRect, scale) {
+  if (isSphereMode() && state.sphereProjection === "outside") {
+    const cssCanvasW = Math.max(1, Math.round(els.canvas.width / Math.max(1, scale)));
+    return cssCanvasW;
+  }
   if (state.frameTiles && state.frameTiles.length) {
     const layout = sampleGridLayoutMetrics();
     return Math.max(1, Math.round(layout.gridW / Math.max(1, scale)));
@@ -3471,9 +3475,9 @@ function updateSliderReadouts(selectedCoords) {
   const hCoord =
     selectedCoords && selectedCoords[hDim] !== undefined ? selectedCoords[hDim] : dimCoord(hDim, state.values[hDim]);
 
-  els.tValue.textContent = `${state.values.t} | ${fmtPhysical("t", tCoord, dimUnit("t"))}`;
-  els.nuValue.textContent = `${state.values.nu} | ${fmtPhysical("nu", nuCoord, dimUnit("nu"))}`;
-  els.hiddenNavValue.textContent = `${state.values[hDim]} | ${fmtPhysical(hDim, hCoord, dimUnit(hDim))}`;
+  els.tValue.textContent = fmtPhysical("t", tCoord, dimUnit("t"));
+  els.nuValue.textContent = fmtPhysical("nu", nuCoord, dimUnit("nu"));
+  els.hiddenNavValue.textContent = fmtPhysical(hDim, hCoord, dimUnit(hDim));
 }
 
 function updateSpatialProfileTitle(profile) {
@@ -3631,7 +3635,7 @@ function updateControlCaps() {
 
   const hDim = hiddenDim();
   const spectralSelectorLocked = isAxisSelectorLocked("nu");
-  els.hiddenAxisTitle.textContent = `Unused Spatial Axis (${hDim.toUpperCase()})`;
+  els.hiddenAxisTitle.textContent = `${hDim.toUpperCase()}-Axis`;
   els.spatialSliceBtn.classList.toggle("activeSpatial", state.spatialMode === "slice");
   els.spatialVolumeBtn.classList.toggle("activeSpatial", state.spatialMode === "volume");
   if (els.spatialSphereBtn) {
@@ -6845,8 +6849,7 @@ async function refreshSlice(options = {}) {
     if (!isSampleMorphMode()) resetSampleMorphState();
   }
 
-  const evpaPromise =
-    !playbackMode && state.showEvpa && !isVolumeMode() && !isSphereMode() ? refreshEvpaTicks() : Promise.resolve();
+  const evpaPromise = state.showEvpa && !isVolumeMode() && !isSphereMode() ? refreshEvpaTicks() : Promise.resolve();
   if (!playbackMode) {
     await refreshFixedColorRange();
     ensureActive();

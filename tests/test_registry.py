@@ -41,7 +41,7 @@ def test_list_contains_loaded_and_lazy_summaries() -> None:
     summaries = registry.list()
     ids = {s.data_id for s in summaries}
     assert "listed" in ids
-    assert "demo-hires-3d-no-samples" in ids
+    assert "volume-3d-spiral-galaxy" in ids
     listed_summary = next(s for s in summaries if s.data_id == "listed")
     assert listed_summary.shape == ds.shape
 
@@ -81,31 +81,20 @@ def test_ensure_default_datasets_is_idempotent() -> None:
     registry.ensure_default_datasets()
     second = sorted(s.data_id for s in registry.list())
     assert first == second
-    assert "demo-quicklook-7d-pol-samples" in second
-    assert "demo-full-ms-time-3d-samples-no-pol" in second
-    assert "demo-hires-xy-nu-pol-samples" in second
-    assert "demo-hires-3d-no-samples" in second
-    assert "demo-long-2d-movie-pol" in second
-    assert "demo-5d-time-3d-samples" in second
-    assert "demo-healpix-sky-samples-time-nu" in second
-    assert "demo-healpix-sky-hires-samples-time-nu" in second
+    assert "movie-2d-pol-hd" in second
+    assert "time-5d-volume-samples-hd" in second
+    assert "xy-nu-pol-radio-galaxy" in second
+    assert "volume-3d-spiral-galaxy" in second
+    assert "healpix-sky-time-nu-hd" in second
 
 
 def test_healpix_demo_metadata_shape() -> None:
     registry = DatasetRegistry()
     summaries = registry.list()
-    summary = next(s for s in summaries if s.data_id == "demo-healpix-sky-samples-time-nu")
+    summary = next(s for s in summaries if s.data_id == "healpix-sky-time-nu-hd")
     assert summary.shape[0] > 1  # sample
     assert summary.shape[2] > 1  # time
     assert summary.shape[3] > 1  # frequency
-    assert summary.shape[4] == 3072  # healpix npix
-    assert summary.shape[5] == 1
-
-
-def test_healpix_hires_demo_metadata_shape() -> None:
-    registry = DatasetRegistry()
-    summaries = registry.list()
-    summary = next(s for s in summaries if s.data_id == "demo-healpix-sky-hires-samples-time-nu")
     assert summary.shape[4] == 196608  # healpix npix (nside=128)
     assert summary.shape[5] == 1
 
