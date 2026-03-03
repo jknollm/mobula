@@ -518,6 +518,45 @@ def test_export_cutout_save_rejects_missing_output_dir(client, base_dataset, tmp
     assert "output_dir is not a directory" in res.json()["detail"]
 
 
+def test_save_images_writes_png_snapshots(client, base_dataset, tmp_path: Path) -> None:
+    tiny_png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9W7QkW8AAAAASUVORK5CYII="
+    res = client.post(
+        f"/api/datasets/{_data_id(base_dataset)}/save-images",
+        json={
+            "output_dir": str(tmp_path),
+            "overwrite": True,
+            "images": [
+                {"filename": "viewer.png", "data_url": f"data:image/png;base64,{tiny_png}"},
+                {"filename": "viewer.png", "data_url": f"data:image/png;base64,{tiny_png}"},
+            ],
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["saved"] is True
+    assert body["count"] == 2
+    paths = [Path(entry["path"]) for entry in body["files"]]
+    assert paths[0].exists()
+    assert paths[1].exists()
+    assert paths[0].name == "viewer.png"
+    assert paths[1].name == "viewer_2.png"
+    for path in paths:
+        payload = path.read_bytes()
+        assert payload.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_save_images_rejects_invalid_payload(client, base_dataset, tmp_path: Path) -> None:
+    res = client.post(
+        f"/api/datasets/{_data_id(base_dataset)}/save-images",
+        json={
+            "output_dir": str(tmp_path),
+            "images": [{"filename": "broken.png", "data_url": "data:image/png;base64,not-base64"}],
+        },
+    )
+    assert res.status_code == 400
+    assert "invalid image payload" in res.json()["detail"]
+
+
 def test_export_cutout_save_healpix_pixel_indices_to_fits_is_temporarily_disabled(client_factory, tmp_path: Path) -> None:
     ds = generate_mock_dataset(
         "healpix-export-fits",

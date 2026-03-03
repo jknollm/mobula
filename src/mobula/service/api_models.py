@@ -90,5 +90,16 @@ class ExportCutoutSaveRequest(BaseModel):
     pixel_indices: list[int] | None = None
 
 
+class SaveImageItem(BaseModel):
+    filename: str
+    data_url: str
+
+
+class SaveImagesRequest(BaseModel):
+    output_dir: str
+    overwrite: bool = True
+    images: list[SaveImageItem] = Field(default_factory=list)
+
+
 SampleMode = Literal["single", "mean", "std", "rel_uncert"]
 RangeMode = Literal["none", "time", "spectral", "time_spectral", "space", "full"]

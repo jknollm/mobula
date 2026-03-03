@@ -224,6 +224,7 @@ const els = {
   modeZoomBtn: document.getElementById("modeZoomBtn"),
   coordSystemSelect: document.getElementById("coordSystemSelect"),
   exportZoomBtn: document.getElementById("exportZoomBtn"),
+  saveImagesBtn: document.getElementById("saveImagesBtn"),
   resetZoomBtn: document.getElementById("resetZoomBtn"),
   hoverReadout: document.getElementById("hoverReadout"),
   exportDialog: document.getElementById("exportDialog"),
@@ -236,6 +237,14 @@ const els = {
   exportStatus: document.getElementById("exportStatus"),
   exportCancelBtn: document.getElementById("exportCancelBtn"),
   exportConfirmBtn: document.getElementById("exportConfirmBtn"),
+  saveImagesDialog: document.getElementById("saveImagesDialog"),
+  saveImagesLocationInput: document.getElementById("saveImagesLocationInput"),
+  saveImagesBrowseBtn: document.getElementById("saveImagesBrowseBtn"),
+  saveImagesPrefixInput: document.getElementById("saveImagesPrefixInput"),
+  saveImagesOverwriteChk: document.getElementById("saveImagesOverwriteChk"),
+  saveImagesStatus: document.getElementById("saveImagesStatus"),
+  saveImagesCancelBtn: document.getElementById("saveImagesCancelBtn"),
+  saveImagesConfirmBtn: document.getElementById("saveImagesConfirmBtn"),
 
   metricsPanel: document.getElementById("metricsPanel"),
   metricsTitle: document.getElementById("metricsTitle"),
@@ -342,6 +351,11 @@ function createViewerState() {
     filename: "",
     overwrite: true,
   },
+  saveImagesPrefs: {
+    outputDir: "",
+    prefix: "",
+    overwrite: true,
+  },
 
   selection: null,
   selectionDrag: null,
@@ -366,7 +380,7 @@ function createViewerState() {
   sampleMorphTimer: null,
   playbackBusy: false,
   playbackRefineToken: 0,
-  playbackPreviewMaxPixels: 360000,
+  playbackPreviewMaxPixels: 220000,
 
   _selectionToken: 0,
   _viewProfileToken: 0,
@@ -436,6 +450,9 @@ const VOLUME_SPHERE_RANGE_STEPS = 1000;
 const VOLUME_SPHERE_MIN_GAP = 1 / VOLUME_SPHERE_RANGE_STEPS;
 const VOLUME_SPHERE_NSITE_MIN = 1;
 const VOLUME_SPHERE_NSITE_MAX = 512;
+const PLAYBACK_PREVIEW_BASE_MAX_PIXELS = 220000;
+const PLAYBACK_PREVIEW_MIN_PIXELS = 90000;
+const PLAYBACK_PREVIEW_MAX_PIXELS = 520000;
 const SAMPLE_MORPH_AXIS = "__sample_morph__";
 const DERIVED_POL_MODES = {
   none: { label: "None" },
@@ -785,7 +802,7 @@ function sliceBackendMode(width = 0, height = 0) {
   if (!sliceGpuAvailable()) return "cpu";
   if (requested === "gpu") return "gpu";
   const pixels = Math.max(1, width) * Math.max(1, height);
-  return pixels >= 512 * 512 ? "gpu" : "cpu";
+  return pixels >= 320 * 320 ? "gpu" : "cpu";
 }
 
 function sphereGpuAvailableKnown() {
@@ -1029,6 +1046,50 @@ function syncSampleMorphPlayback() {
   } else {
     stopSampleMorphPlayback();
   }
+}
+
+function playbackIntervalMs() {
+  return Math.max(30, Math.floor(1000 / Math.max(1, state.playbackFps)));
+}
+
+function tunePlaybackPreviewBudget(frameMs) {
+  const targetMs = playbackIntervalMs();
+  const current = Math.max(PLAYBACK_PREVIEW_MIN_PIXELS, Math.floor(state.playbackPreviewMaxPixels || PLAYBACK_PREVIEW_BASE_MAX_PIXELS));
+  if (frameMs > targetMs * 1.2) {
+    state.playbackPreviewMaxPixels = Math.max(PLAYBACK_PREVIEW_MIN_PIXELS, Math.floor(current * 0.85));
+    return;
+  }
+  if (frameMs < targetMs * 0.7) {
+    state.playbackPreviewMaxPixels = Math.min(PLAYBACK_PREVIEW_MAX_PIXELS, Math.floor(current * 1.05));
+  }
+}
+
+async function runPlaybackTick(axis) {
+  if (!axis || !isPlaying() || state.playbackAxis !== axis) return;
+  if (state.playbackBusy) {
+    scheduleNextPlaybackTick(axis);
+    return;
+  }
+  state.playbackBusy = true;
+  const startedAt = performance.now();
+  try {
+    await advanceAxisPlayback(axis);
+  } finally {
+    state.playbackBusy = false;
+    tunePlaybackPreviewBudget(performance.now() - startedAt);
+  }
+  scheduleNextPlaybackTick(axis);
+}
+
+function scheduleNextPlaybackTick(axis, delayMs = null) {
+  if (!axis || state.playbackAxis !== axis) return;
+  if (state.playbackTimer) {
+    clearTimeout(state.playbackTimer);
+  }
+  const waitMs = Number.isFinite(delayMs) && delayMs !== null ? Math.max(0, Math.floor(delayMs)) : playbackIntervalMs();
+  state.playbackTimer = setTimeout(() => {
+    void runPlaybackTick(axis);
+  }, waitMs);
 }
 
 function playbackMaxPixelsForFrame() {
@@ -2238,9 +2299,13 @@ function canExportZoomCutout() {
 }
 
 function updateExportButtonState() {
-  if (!els.exportZoomBtn) return;
   const enabled = canExportZoomCutout();
-  els.exportZoomBtn.disabled = !enabled;
+  if (els.exportZoomBtn) {
+    els.exportZoomBtn.disabled = !enabled;
+  }
+  if (els.saveImagesBtn) {
+    els.saveImagesBtn.disabled = !state.dataId;
+  }
 }
 
 function hoverPayloadForTile(tile = 0) {
@@ -2763,6 +2828,277 @@ async function saveExportCutoutFromDialog() {
   }
   setSystemPickerStatus(`Saved export: ${response.path}`);
   closeExportDialog();
+}
+
+function snapshotTimestamp() {
+  return new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "_");
+}
+
+function defaultSaveImagesPrefix() {
+  const base = state.dataId ? state.dataId : "mobula";
+  return `${base}_${snapshotTimestamp()}`;
+}
+
+function normalizeSaveImagesPrefix(prefix) {
+  let out = String(prefix || "").trim();
+  if (!out) out = defaultSaveImagesPrefix();
+  out = out.replace(/[\\/]/g, "_");
+  out = out.replace(/\s+/g, "_");
+  out = out.replace(/[^A-Za-z0-9._-]/g, "");
+  out = out.replace(/_+/g, "_");
+  return out || defaultSaveImagesPrefix();
+}
+
+function visibleCanvasForSnapshot(canvas, container = null) {
+  if (!canvas || canvas.width < 1 || canvas.height < 1) return null;
+  if (container && container.offsetParent === null) return null;
+  return canvas;
+}
+
+function drawSnapshotCardBackground(ctx, width, height) {
+  ctx.fillStyle = "#0b1119";
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = "rgba(143, 176, 211, 0.38)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, width - 1, height - 1);
+}
+
+function buildViewerSnapshotCanvas() {
+  const source = visibleCanvasForSnapshot(els.canvas);
+  if (!source) throw new Error("Viewer canvas is not available.");
+  const colorbar = visibleCanvasForSnapshot(els.colorbarCanvas);
+
+  const maxMainDim = 1200;
+  const sourceMax = Math.max(source.width, source.height, 1);
+  const scale = Math.min(1, maxMainDim / sourceMax);
+  const mainW = Math.max(320, Math.round(source.width * scale));
+  const mainH = Math.max(240, Math.round(source.height * scale));
+
+  const pad = 20;
+  const titleH = 26;
+  const blockGap = 12;
+  const colorbarH = colorbar
+    ? clamp(Math.round((colorbar.height / Math.max(1, colorbar.width)) * mainW), 18, 40)
+    : 0;
+  const outW = mainW + pad * 2;
+  const outH = pad * 2 + titleH + mainH + (colorbar ? blockGap + colorbarH : 0);
+
+  const out = document.createElement("canvas");
+  out.width = outW;
+  out.height = outH;
+  const ctx = out.getContext("2d");
+  if (!ctx) throw new Error("Could not initialize viewer snapshot.");
+
+  drawSnapshotCardBackground(ctx, outW, outH);
+  ctx.fillStyle = "#e8f2ff";
+  ctx.font = "600 16px 'Source Sans 3', sans-serif";
+  ctx.fillText("Viewer", pad, pad + 17);
+
+  let y = pad + titleH;
+  ctx.drawImage(source, pad, y, mainW, mainH);
+  y += mainH;
+
+  if (colorbar) {
+    y += blockGap;
+    ctx.drawImage(colorbar, pad, y, mainW, colorbarH);
+  }
+  return out;
+}
+
+function collectInspectSnapshotCharts() {
+  const charts = [];
+  const timeCanvas = visibleCanvasForSnapshot(els.timeProfileCanvas, els.timeProfileBlock);
+  if (timeCanvas) charts.push({ title: "Time Flux Profile", canvas: timeCanvas });
+  const specCanvas = visibleCanvasForSnapshot(els.spectrumProfileCanvas, els.spectrumProfileBlock);
+  if (specCanvas) charts.push({ title: "Spectral Flux Profile", canvas: specCanvas });
+  const spatialCanvas = visibleCanvasForSnapshot(els.spatialProfileCanvas, els.spatialProfileBlock);
+  if (spatialCanvas) charts.push({ title: els.spatialProfileTitle?.textContent || "Spatial Flux Profile", canvas: spatialCanvas });
+  return charts;
+}
+
+function drawReadoutBlock(ctx, x, y, width, lines) {
+  const blockPad = 8;
+  const lineH = 14;
+  const lineCount = Math.max(1, lines.length);
+  const blockH = blockPad * 2 + lineCount * lineH;
+  ctx.fillStyle = "rgba(10, 16, 27, 0.95)";
+  ctx.strokeStyle = "rgba(126, 165, 207, 0.55)";
+  ctx.lineWidth = 1;
+  ctx.fillRect(x, y, width, blockH);
+  ctx.strokeRect(x + 0.5, y + 0.5, width - 1, blockH - 1);
+  ctx.fillStyle = "#dbe9f7";
+  ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+  for (let i = 0; i < lineCount; i += 1) {
+    const line = lines[i] || "";
+    ctx.fillText(line, x + blockPad, y + blockPad + (i + 0.8) * lineH);
+  }
+  return blockH;
+}
+
+function buildInspectSnapshotCanvas() {
+  const charts = collectInspectSnapshotCharts();
+  if (!charts.length) throw new Error("Inspect charts are not available.");
+
+  const pad = 20;
+  const titleH = 26;
+  const readoutGap = 12;
+  const chartGap = 14;
+  const chartTitleH = 18;
+
+  const targetW = clamp(
+    Math.max(...charts.map((entry) => entry.canvas.width)),
+    360,
+    960
+  );
+  const readoutLines = (els.hoverReadout?.textContent || "")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0)
+    .slice(0, 8);
+
+  const chartLayouts = charts.map((entry) => {
+    const scale = targetW / Math.max(1, entry.canvas.width);
+    return {
+      title: entry.title,
+      canvas: entry.canvas,
+      width: targetW,
+      height: Math.max(140, Math.round(entry.canvas.height * scale)),
+    };
+  });
+
+  let outH = pad * 2 + titleH;
+  const readoutH = 8 * 2 + Math.max(1, readoutLines.length) * 14;
+  outH += readoutH + readoutGap;
+  for (const entry of chartLayouts) {
+    outH += chartTitleH + entry.height + chartGap;
+  }
+  outH -= chartGap;
+  const outW = pad * 2 + targetW;
+
+  const out = document.createElement("canvas");
+  out.width = outW;
+  out.height = outH;
+  const ctx = out.getContext("2d");
+  if (!ctx) throw new Error("Could not initialize inspect snapshot.");
+
+  drawSnapshotCardBackground(ctx, outW, outH);
+  ctx.fillStyle = "#e8f2ff";
+  ctx.font = "600 16px 'Source Sans 3', sans-serif";
+  ctx.fillText("Inspect", pad, pad + 17);
+
+  let y = pad + titleH;
+  y += drawReadoutBlock(ctx, pad, y, targetW, readoutLines);
+  y += readoutGap;
+
+  for (const entry of chartLayouts) {
+    ctx.fillStyle = "#c7d9ec";
+    ctx.font = "600 13px 'Source Sans 3', sans-serif";
+    ctx.fillText(entry.title, pad, y + 13);
+    y += chartTitleH;
+    ctx.drawImage(entry.canvas, pad, y, entry.width, entry.height);
+    y += entry.height + chartGap;
+  }
+  return out;
+}
+
+function setSaveImagesStatus(message, error = false) {
+  if (!els.saveImagesStatus) return;
+  els.saveImagesStatus.textContent = message || "";
+  els.saveImagesStatus.classList.toggle("error", Boolean(error));
+}
+
+function updateSaveImagesDialogFields() {
+  if (!els.saveImagesPrefixInput || !els.saveImagesLocationInput || !els.saveImagesOverwriteChk) return;
+  if (!state.saveImagesPrefs.prefix) {
+    state.saveImagesPrefs.prefix = defaultSaveImagesPrefix();
+  }
+  state.saveImagesPrefs.prefix = normalizeSaveImagesPrefix(state.saveImagesPrefs.prefix);
+  els.saveImagesPrefixInput.value = state.saveImagesPrefs.prefix;
+  els.saveImagesLocationInput.value = state.saveImagesPrefs.outputDir || "";
+  els.saveImagesOverwriteChk.checked = state.saveImagesPrefs.overwrite !== false;
+}
+
+async function chooseSaveImagesFolder() {
+  const payload = await fetchJson("/api/fs/pick", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target: "folder" }),
+  });
+  if (payload.canceled) return false;
+  if (!payload.exists || !payload.is_dir) {
+    throw new Error(`invalid folder: ${payload.path || "unknown"}`);
+  }
+  state.saveImagesPrefs.outputDir = payload.path;
+  updateSaveImagesDialogFields();
+  return true;
+}
+
+function openSaveImagesDialog() {
+  if (!els.saveImagesDialog) return;
+  if (!state.saveImagesPrefs.prefix) {
+    state.saveImagesPrefs.prefix = defaultSaveImagesPrefix();
+  }
+  updateSaveImagesDialogFields();
+  setSaveImagesStatus("");
+  if (typeof els.saveImagesDialog.showModal === "function") {
+    els.saveImagesDialog.showModal();
+  }
+}
+
+function closeSaveImagesDialog() {
+  if (!els.saveImagesDialog) return;
+  if (els.saveImagesDialog.open) {
+    els.saveImagesDialog.close();
+  }
+  setSaveImagesStatus("");
+}
+
+function buildSaveImagesRequestBody() {
+  const prefix = normalizeSaveImagesPrefix(state.saveImagesPrefs.prefix);
+  state.saveImagesPrefs.prefix = prefix;
+
+  const viewerCanvas = buildViewerSnapshotCanvas();
+  const inspectCanvas = buildInspectSnapshotCanvas();
+  return {
+    output_dir: state.saveImagesPrefs.outputDir,
+    overwrite: state.saveImagesPrefs.overwrite !== false,
+    images: [
+      { filename: `${prefix}_viewer.png`, data_url: viewerCanvas.toDataURL("image/png") },
+      { filename: `${prefix}_inspect.png`, data_url: inspectCanvas.toDataURL("image/png") },
+    ],
+  };
+}
+
+async function saveCurrentImagesFromDialog() {
+  if (!state.dataId || !els.saveImagesPrefixInput || !els.saveImagesOverwriteChk) return;
+  state.saveImagesPrefs.prefix = normalizeSaveImagesPrefix(els.saveImagesPrefixInput.value);
+  state.saveImagesPrefs.overwrite = Boolean(els.saveImagesOverwriteChk.checked);
+
+  if (!state.saveImagesPrefs.outputDir) {
+    setSaveImagesStatus("Choose a destination folder.", true);
+    const selected = await chooseSaveImagesFolder();
+    if (!selected) return;
+  }
+
+  setSaveImagesStatus("Preparing snapshots...");
+  const reqBody = buildSaveImagesRequestBody();
+  setSaveImagesStatus("Saving images...");
+  const response = await fetchJson(`/api/datasets/${state.dataId}/save-images`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(reqBody),
+  });
+  if (!response.saved) {
+    throw new Error(response.detail || "save failed");
+  }
+  const files = Array.isArray(response.files) ? response.files : [];
+  const savedPaths = files.map((entry) => entry.path).filter((v) => typeof v === "string");
+  if (savedPaths.length) {
+    setSystemPickerStatus(`Saved images: ${savedPaths.join(" | ")}`);
+  } else {
+    setSystemPickerStatus(`Saved ${response.count || 0} image(s).`);
+  }
+  closeSaveImagesDialog();
 }
 
 function modifierDragMode(metaDown, shiftDown) {
@@ -6281,7 +6617,8 @@ async function refreshSlice(options = {}) {
     if (!isSampleMorphMode()) resetSampleMorphState();
   }
 
-  const evpaPromise = state.showEvpa && !isVolumeMode() && !isSphereMode() ? refreshEvpaTicks() : Promise.resolve();
+  const evpaPromise =
+    !playbackMode && state.showEvpa && !isVolumeMode() && !isSphereMode() ? refreshEvpaTicks() : Promise.resolve();
   if (!playbackMode) {
     await refreshFixedColorRange();
     ensureActive();
@@ -6333,9 +6670,14 @@ async function refreshSlice(options = {}) {
 
   state.currentVolume = null;
   state.currentVolumeTiles = null;
-  state.currentMonoSliceTiles = null;
-  state.currentMultispectralSlice = null;
-  state.currentMultispectralTiles = null;
+  const preserveSphereSampleTiles = isSphereMode() && isSamplesMode() && !isSampleMorphMode();
+  if (!preserveSphereSampleTiles) {
+    state.currentMonoSlice = null;
+    state.currentMonoSliceTiles = null;
+    state.currentMultispectralBands = null;
+    state.currentMultispectralSlice = null;
+    state.currentMultispectralTiles = null;
+  }
 
   if (isSampleMorphMode()) {
     await evpaPromise;
@@ -7098,7 +7440,7 @@ async function advanceAxisPlayback(axis) {
 function stopPlayback(refine = false) {
   const wasPlaying = state.playbackTimer !== null;
   if (state.playbackTimer) {
-    clearInterval(state.playbackTimer);
+    clearTimeout(state.playbackTimer);
     state.playbackTimer = null;
   }
   state.playbackAxis = null;
@@ -7114,18 +7456,8 @@ function startPlayback(axis) {
   stopSampleMorphPlayback();
   stopPlayback(false);
   state.playbackAxis = axis;
-
-  const intervalMs = Math.max(30, Math.floor(1000 / Math.max(1, state.playbackFps)));
-  state.playbackTimer = setInterval(async () => {
-    if (state.playbackBusy) return;
-    state.playbackBusy = true;
-
-    try {
-      await advanceAxisPlayback(axis);
-    } finally {
-      state.playbackBusy = false;
-    }
-  }, intervalMs);
+  state.playbackPreviewMaxPixels = PLAYBACK_PREVIEW_BASE_MAX_PIXELS;
+  scheduleNextPlaybackTick(axis, 0);
 
   updatePlayUi();
 }
@@ -8126,6 +8458,7 @@ async function onDatasetChange() {
     }
 
     state.dataId = selectedId;
+    refreshActiveTabLabel();
     setSystemPickerStatus("");
     state.meta = await fetchJson(`/api/datasets/${state.dataId}/meta`);
     assertEpoch(expectedEpoch);
@@ -8428,6 +8761,13 @@ async function init() {
     });
   }
 
+  if (els.saveImagesBtn) {
+    els.saveImagesBtn.addEventListener("click", async () => {
+      if (els.saveImagesBtn.disabled) return;
+      openSaveImagesDialog();
+    });
+  }
+
   if (els.exportFormatSelect) {
     els.exportFormatSelect.addEventListener("change", () => {
       const raw = isValidExportFormat(els.exportFormatSelect.value) ? els.exportFormatSelect.value : "fits";
@@ -8488,6 +8828,57 @@ async function init() {
     });
     els.exportDialog.addEventListener("close", () => {
       setExportStatus("");
+    });
+  }
+
+  if (els.saveImagesPrefixInput) {
+    els.saveImagesPrefixInput.addEventListener("input", () => {
+      state.saveImagesPrefs.prefix = els.saveImagesPrefixInput.value;
+      setSaveImagesStatus("");
+    });
+  }
+
+  if (els.saveImagesOverwriteChk) {
+    els.saveImagesOverwriteChk.addEventListener("change", () => {
+      state.saveImagesPrefs.overwrite = Boolean(els.saveImagesOverwriteChk.checked);
+    });
+  }
+
+  if (els.saveImagesBrowseBtn) {
+    els.saveImagesBrowseBtn.addEventListener("click", async () => {
+      try {
+        await chooseSaveImagesFolder();
+        setSaveImagesStatus("");
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        setSaveImagesStatus(message, true);
+      }
+    });
+  }
+
+  if (els.saveImagesCancelBtn) {
+    els.saveImagesCancelBtn.addEventListener("click", () => {
+      closeSaveImagesDialog();
+    });
+  }
+
+  if (els.saveImagesConfirmBtn) {
+    els.saveImagesConfirmBtn.addEventListener("click", async () => {
+      try {
+        await saveCurrentImagesFromDialog();
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        setSaveImagesStatus(`Save failed: ${message}`, true);
+      }
+    });
+  }
+
+  if (els.saveImagesDialog) {
+    els.saveImagesDialog.addEventListener("cancel", () => {
+      setSaveImagesStatus("");
+    });
+    els.saveImagesDialog.addEventListener("close", () => {
+      setSaveImagesStatus("");
     });
   }
 

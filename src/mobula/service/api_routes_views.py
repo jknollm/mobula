@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
-from mobula.service.api_models import ExportCutoutSaveRequest
+from mobula.service.api_models import ExportCutoutSaveRequest, SaveImagesRequest
 from mobula.service.api_utils import _parse_range_mode, _parse_sample_mode, _safe_dataset
 from mobula.service.registry import DatasetRegistry
 from mobula.service.view_service import (
@@ -345,3 +347,54 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
             "size_bytes": len(payload),
             "format": req.format,
         }
+
+    @router.post("/datasets/{data_id}/save-images")
+    def save_images(data_id: str, req: SaveImagesRequest) -> dict[str, Any]:
+        _safe_dataset(registry, data_id)
+        out_dir = Path(req.output_dir).expanduser().resolve()
+        if not out_dir.exists() or not out_dir.is_dir():
+            raise HTTPException(status_code=400, detail=f"output_dir is not a directory: {out_dir}")
+        if not req.images:
+            raise HTTPException(status_code=400, detail="images payload is empty")
+
+        saved_files: list[dict[str, Any]] = []
+        used_names: set[str] = set()
+
+        for idx, item in enumerate(req.images):
+            raw_name = Path(item.filename or "").name.strip()
+            if not raw_name:
+                raw_name = f"snapshot_{idx + 1}.png"
+            stem = Path(raw_name).stem.strip() or f"snapshot_{idx + 1}"
+            file_name = f"{stem}.png"
+            suffix = 2
+            while file_name in used_names:
+                file_name = f"{stem}_{suffix}.png"
+                suffix += 1
+            used_names.add(file_name)
+
+            prefix = "data:image/png;base64,"
+            if not item.data_url.startswith(prefix):
+                raise HTTPException(status_code=400, detail=f"unsupported image data for '{file_name}'")
+            b64_data = item.data_url[len(prefix):]
+            try:
+                payload = base64.b64decode(b64_data, validate=True)
+            except (ValueError, binascii.Error) as exc:
+                raise HTTPException(status_code=400, detail=f"invalid image payload for '{file_name}'") from exc
+
+            out_path = (out_dir / file_name).resolve()
+            if out_path.exists() and not req.overwrite:
+                raise HTTPException(status_code=409, detail=f"file already exists: {out_path}")
+            try:
+                out_path.write_bytes(payload)
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=f"failed to write image '{file_name}': {exc}") from exc
+
+            saved_files.append(
+                {
+                    "filename": file_name,
+                    "path": str(out_path),
+                    "size_bytes": len(payload),
+                }
+            )
+
+        return {"saved": True, "count": len(saved_files), "files": saved_files}
