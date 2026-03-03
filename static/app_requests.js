@@ -14,11 +14,19 @@ export async function fetchJson(url, options) {
 }
 
 export function createRequestBuilders(deps) {
-  const { state, planeDims, normalizeSampleMode } = deps;
+  const { state, planeDims, normalizeSampleMode, getProjectedDims } = deps;
   const normalizeMode = typeof normalizeSampleMode === "function" ? normalizeSampleMode : (mode) => mode;
+  const activeProjectedDims = typeof getProjectedDims === "function" ? getProjectedDims : () => [];
+
+  function applyProjectedDims(params) {
+    const dims = activeProjectedDims();
+    if (Array.isArray(dims) && dims.length) {
+      params.set("project_dims", dims.join(","));
+    }
+  }
 
   function buildVolumeParams(sampleOverride, polOverride = state.values.pol, sampleModeOverride = state.sampleMode) {
-    return new URLSearchParams({
+    const params = new URLSearchParams({
       sample: String(sampleOverride !== undefined ? sampleOverride : state.values.sample),
       pol: String(polOverride),
       t: String(state.values.t),
@@ -28,6 +36,8 @@ export function createRequestBuilders(deps) {
       z: String(state.values.z),
       sample_mode: normalizeMode(sampleModeOverride),
     });
+    applyProjectedDims(params);
+    return params;
   }
 
   function buildSliceParams(
@@ -53,6 +63,7 @@ export function createRequestBuilders(deps) {
     if (maxPixels && Number.isFinite(maxPixels) && maxPixels > 0) {
       params.set("max_pixels", String(Math.floor(maxPixels)));
     }
+    applyProjectedDims(params);
     return params;
   }
 
@@ -76,6 +87,7 @@ export function createRequestBuilders(deps) {
     if (maxPixels && Number.isFinite(maxPixels) && maxPixels > 0) {
       params.set("max_pixels", String(Math.floor(maxPixels)));
     }
+    applyProjectedDims(params);
     return params;
   }
 
@@ -102,6 +114,7 @@ export function createRequestBuilders(deps) {
       params.set("nu0", String(state.axisWindow.nu.start));
       params.set("nu1", String(state.axisWindow.nu.end + 1));
     }
+    applyProjectedDims(params);
     return params;
   }
 

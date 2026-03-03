@@ -4,9 +4,14 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from mobula.service.api_models import PlaneProfilesRequest, ProfilesRequest, RoiStatsRequest
+from mobula.service.api_models import HealpixProfilesRequest, PlaneProfilesRequest, ProfilesRequest, RoiStatsRequest
 from mobula.service.api_utils import _safe_dataset
-from mobula.service.profile_service import build_plane_profiles_response, build_profiles_response, build_roi_stats_response
+from mobula.service.profile_service import (
+    build_healpix_profiles_response,
+    build_plane_profiles_response,
+    build_profiles_response,
+    build_roi_stats_response,
+)
 from mobula.service.registry import DatasetRegistry
 
 
@@ -20,6 +25,11 @@ def _register_profile_routes(router: APIRouter, registry: DatasetRegistry) -> No
     def profiles_plane(data_id: str, req: PlaneProfilesRequest) -> dict[str, Any]:
         ds = _safe_dataset(registry, data_id)
         return build_plane_profiles_response(ds, req)
+
+    @router.post("/datasets/{data_id}/profiles-healpix")
+    def profiles_healpix(data_id: str, req: HealpixProfilesRequest) -> dict[str, Any]:
+        ds = _safe_dataset(registry, data_id)
+        return build_healpix_profiles_response(ds, req)
 
     @router.post("/datasets/{data_id}/roi-stats")
     def roi_stats(data_id: str, req: RoiStatsRequest) -> dict[str, Any]:

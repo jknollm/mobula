@@ -227,6 +227,26 @@ def test_mock_dataset_slice_and_roi() -> None:
     assert plane_profiles["spatial_axis"] == "x"
     assert len(plane_profiles["spatial_profile"]["coords"]) == shape[4]
 
+    healpix_profiles_res = client.post(
+        f"/api/datasets/{data_id}/profiles-healpix",
+        json={
+            "pixel_indices": [0, 1, 2, 3, 4],
+            "sample": 0,
+            "pol": 0,
+            "t": 0,
+            "nu": 0,
+            "y": 0,
+            "z": 0,
+        },
+    )
+    assert healpix_profiles_res.status_code == 200
+    healpix_profiles = healpix_profiles_res.json()
+    assert healpix_profiles["pixel_count"] == 5
+    assert len(healpix_profiles["time_profile"]["coords"]) == shape[2]
+    assert len(healpix_profiles["spectrum_profile"]["coords"]) == shape[3]
+    assert len(healpix_profiles["time_profile"]["series_mean"]) == shape[2]
+    assert len(healpix_profiles["spectrum_profile"]["series_mean"]) == shape[3]
+
     multispectral_res = client.get(
         f"/api/datasets/{data_id}/multispectral",
         params={"sample": 0, "pol": 0, "t": 0, "z": 0, "sample_mode": "single", "plane_x": "x", "plane_y": "y"},

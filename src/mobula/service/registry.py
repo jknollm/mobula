@@ -53,6 +53,14 @@ DEMO_DATASETS: tuple[DemoDatasetSpec, ...] = (
         data_id="demo-5d-time-3d-samples",
         cfg=MockCubeConfig(sample=4, pol=1, t=16, nu=1, x=64, y=64, z=48, seed=451, model="center_structured_time"),
     ),
+    DemoDatasetSpec(
+        data_id="demo-healpix-sky-samples-time-nu",
+        cfg=MockCubeConfig(sample=4, pol=1, t=20, nu=12, x=3072, y=1, z=1, seed=517, model="healpix_sky"),
+    ),
+    DemoDatasetSpec(
+        data_id="demo-healpix-sky-hires-samples-time-nu",
+        cfg=MockCubeConfig(sample=4, pol=1, t=20, nu=12, x=196608, y=1, z=1, seed=613, model="healpix_sky"),
+    ),
 )
 
 

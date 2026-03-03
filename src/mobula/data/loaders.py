@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 
 import numpy as np
@@ -29,6 +30,70 @@ def _as_text(value: Any) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8")
     return str(value)
+
+
+def _as_float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(out):
+        return None
+    return out
+
+
+def _dim_from_ctype(ctype: str) -> str | None:
+    upper = ctype.upper()
+    if "FREQ" in upper or "VELO" in upper or "WAVE" in upper:
+        return "nu"
+    if "TIME" in upper:
+        return "t"
+    if "STOKES" in upper or "POL" in upper:
+        return "pol"
+    if "SAMPLE" in upper:
+        return "sample"
+    if "RA" in upper or "GLON" in upper:
+        return "x"
+    if "DEC" in upper or "GLAT" in upper:
+        return "y"
+    if "X" in upper:
+        return "x"
+    if "Y" in upper:
+        return "y"
+    if "Z" in upper:
+        return "z"
+    return None
+
+
+def _axis_type_for_dim(dim: str, ctype: str | None = None) -> str:
+    upper = (ctype or "").upper()
+    if "RA" in upper:
+        return "ra"
+    if "DEC" in upper:
+        return "dec"
+    if "GLON" in upper:
+        return "glon"
+    if "GLAT" in upper:
+        return "glat"
+    if "FREQ" in upper or "VELO" in upper or "WAVE" in upper:
+        return "spectral"
+    if "TIME" in upper:
+        return "time"
+    if "STOKES" in upper or "POL" in upper:
+        return "polarization"
+    if "SAMPLE" in upper:
+        return "sample"
+    if dim == "nu":
+        return "spectral"
+    if dim == "t":
+        return "time"
+    if dim == "pol":
+        return "polarization"
+    if dim == "sample":
+        return "sample"
+    return "spatial"
 
 
 def pad_dataset_to_canonical(dataset: CubeDataset) -> tuple[CubeDataset, tuple[str, ...]]:
@@ -128,7 +193,11 @@ def load_hdf5(
         values=values,
         units=units,
         intensity_unit=str(intensity_unit),
-        wcs={"frame": "unknown", "source": "hdf5"},
+        wcs={
+            "frame": "unknown",
+            "source": "hdf5",
+            "axis_types": {dim: _axis_type_for_dim(dim) for dim in dims},
+        },
         provenance={"source": "hdf5", "path": str(path), "dataset_path": dataset_path},
     )
     dataset.validate()
@@ -156,22 +225,8 @@ def load_fits(
             parsed: list[str] = []
             for i in range(values.ndim):
                 ctype = str(header.get(f"CTYPE{i + 1}", "")).upper()
-                if "FREQ" in ctype or "VELO" in ctype or "WAVE" in ctype:
-                    parsed.append("nu")
-                elif "TIME" in ctype:
-                    parsed.append("t")
-                elif "STOKES" in ctype or "POL" in ctype:
-                    parsed.append("pol")
-                elif "SAMPLE" in ctype:
-                    parsed.append("sample")
-                elif "X" in ctype or "RA" in ctype:
-                    parsed.append("x")
-                elif "Y" in ctype or "DEC" in ctype:
-                    parsed.append("y")
-                elif "Z" in ctype:
-                    parsed.append("z")
-                else:
-                    parsed.append("")
+                inferred = _dim_from_ctype(ctype)
+                parsed.append("" if inferred is None else inferred)
 
             parsed = list(reversed(parsed))
             n = values.ndim
@@ -184,14 +239,26 @@ def load_fits(
         values, dims = reorder_to_canonical(values, dims)
         coords = _default_coords_from_shape(dims, values.shape)
         units = _default_units(dims)
+        axis_types = {dim: _axis_type_for_dim(dim) for dim in dims}
+        fits_axes: dict[str, dict[str, Any]] = {}
 
         for axis, dim in enumerate(reversed(dims), start=1):
+            ctype = _as_text(header.get(f"CTYPE{axis}", dim.upper()))
             cunit = header.get(f"CUNIT{axis}")
             if cunit:
                 units[dim] = str(cunit)
             crval = header.get(f"CRVAL{axis}")
             cdelt = header.get(f"CDELT{axis}")
             crpix = header.get(f"CRPIX{axis}")
+            axis_types[dim] = _axis_type_for_dim(dim, ctype)
+            fits_axes[dim] = {
+                "axis": int(axis),
+                "ctype": ctype,
+                "cunit": units.get(dim, ""),
+                "crval": _as_float_or_none(crval),
+                "cdelt": _as_float_or_none(cdelt),
+                "crpix": _as_float_or_none(crpix),
+            }
             if crval is not None and cdelt is not None and crpix is not None:
                 n = values.shape[dims.index(dim)]
                 pix = np.arange(1, n + 1, dtype=np.float64)
@@ -199,6 +266,21 @@ def load_fits(
 
         bunit = header.get("BUNIT", "arb")
         frame = header.get("RADESYS", header.get("WCSNAME", "unknown"))
+        wcs_global = {
+            "RADESYS": _as_text(header.get("RADESYS")) if header.get("RADESYS") is not None else None,
+            "WCSNAME": _as_text(header.get("WCSNAME")) if header.get("WCSNAME") is not None else None,
+            "EQUINOX": _as_float_or_none(header.get("EQUINOX")),
+            "SPECSYS": _as_text(header.get("SPECSYS")) if header.get("SPECSYS") is not None else None,
+            "SSYSOBS": _as_text(header.get("SSYSOBS")) if header.get("SSYSOBS") is not None else None,
+            "MJDREF": _as_float_or_none(header.get("MJDREF")),
+        }
+        wcs_global = {k: v for k, v in wcs_global.items() if v is not None}
+        fits_matrix: dict[str, float] = {}
+        for key, value in header.items():
+            if re.match(r"^(PC|CD)\d+_\d+$", key) or re.match(r"^CROTA\d+$", key):
+                fv = _as_float_or_none(value)
+                if fv is not None:
+                    fits_matrix[key] = fv
 
     dataset = CubeDataset(
         data_id=data_id or path.stem,
@@ -207,7 +289,14 @@ def load_fits(
         values=values,
         units=units,
         intensity_unit=str(bunit),
-        wcs={"frame": str(frame), "source": "fits"},
+        wcs={
+            "frame": str(frame),
+            "source": "fits",
+            "axis_types": axis_types,
+            "fits_axes": fits_axes,
+            "fits_global": wcs_global,
+            "fits_matrix": fits_matrix,
+        },
         provenance={"source": "fits", "path": str(path), "hdu_index": hdu_index},
     )
     dataset.validate()
@@ -275,7 +364,11 @@ def load_zarr(
         values=values,
         units=units,
         intensity_unit=intensity_unit,
-        wcs={"frame": _as_text(frame), "source": "zarr"},
+        wcs={
+            "frame": _as_text(frame),
+            "source": "zarr",
+            "axis_types": {dim: _axis_type_for_dim(dim) for dim in dims},
+        },
         provenance={"source": "zarr", "path": str(path), "data_key": data_key},
     )
     dataset.validate()

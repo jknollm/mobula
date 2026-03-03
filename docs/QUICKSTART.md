@@ -14,6 +14,8 @@ Open `http://127.0.0.1:8000`.
 
 - In the **Data** panel, choose a dataset from the **Dataset** dropdown.
 - Demo datasets are labeled with `[DEMO]`.
+- For spherical workflows, pick `demo-healpix-sky-samples-time-nu`.
+- For higher angular resolution, pick `demo-healpix-sky-hires-samples-time-nu`.
 - Or click **Load Data** to select a local `.h5`, `.hdf5`, `.fits`, `.fit`, `.fts`, or `.zarr` dataset.
 - Or drag and drop a local `.h5`, `.hdf5`, `.fits`, `.fit`, or `.fts` file into the central viewer panel.
 

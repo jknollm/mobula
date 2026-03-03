@@ -298,3 +298,4 @@ Examples of 400 errors:
 - `invalid sample_mode: ...`
 - `index for dim 'nu' out of bounds: ...`
 - `plane_x and plane_y must be different`
+- `FITS export for sphere/HEALPix cutouts is temporarily disabled and planned as a future feature; use format='hdf5'.`

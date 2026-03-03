@@ -54,5 +54,41 @@ class PlaneProfilesRequest(BaseModel):
     z: int | None = None
 
 
+class HealpixProfilesRequest(BaseModel):
+    pixel_indices: list[int] = Field(default_factory=list)
+    sample: int | None = None
+    pol: int | None = None
+    t: int | None = None
+    nu: int | None = None
+    y: int | None = None
+    z: int | None = None
+
+
+class ExportCutoutSaveRequest(BaseModel):
+    format: Literal["fits", "hdf5"] = "fits"
+    output_dir: str
+    filename: str | None = None
+    overwrite: bool = True
+    sample: int | None = None
+    pol: int | None = None
+    t: int | None = None
+    nu: int | None = None
+    x: int | None = None
+    y: int | None = None
+    z: int | None = None
+    sample_mode: str = "single"
+    plane_x: str = "x"
+    plane_y: str = "y"
+    u0: int | None = None
+    u1: int | None = None
+    v0: int | None = None
+    v1: int | None = None
+    t0: int | None = None
+    t1: int | None = None
+    nu0: int | None = None
+    nu1: int | None = None
+    pixel_indices: list[int] | None = None
+
+
 SampleMode = Literal["single", "mean", "std", "rel_uncert"]
 RangeMode = Literal["none", "time", "spectral", "time_spectral", "space", "full"]

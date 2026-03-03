@@ -47,6 +47,63 @@ def _coords_summary(ds: CubeDataset) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _is_power_of_two(v: int) -> bool:
+    return v > 0 and (v & (v - 1)) == 0
+
+
+def _healpix_nside_from_npix(npix: int) -> int | None:
+    if npix < 12 or npix % 12 != 0:
+        return None
+    nside_f = np.sqrt(npix / 12.0)
+    nside = int(round(float(nside_f)))
+    if nside * nside * 12 != npix:
+        return None
+    if not _is_power_of_two(nside):
+        return None
+    return nside
+
+
+def _parse_healpix_ordering(ds: CubeDataset) -> str:
+    candidates = [
+        ds.wcs.get("healpix_ordering"),
+        ds.wcs.get("healpix_order"),
+        ds.wcs.get("ordering"),
+        ds.wcs.get("order"),
+        ds.provenance.get("healpix_ordering"),
+        ds.provenance.get("healpix_order"),
+        ds.provenance.get("ordering"),
+        ds.provenance.get("order"),
+    ]
+    for raw in candidates:
+        if raw is None:
+            continue
+        txt = str(raw).strip().lower()
+        if "nest" in txt:
+            return "nested"
+        if "ring" in txt:
+            return "ring"
+    return "ring"
+
+
+def _sphere_summary(ds: CubeDataset) -> dict[str, Any] | None:
+    if "x" not in ds.dims or "y" not in ds.dims:
+        return None
+    x_size = int(_dim_size(ds, "x"))
+    y_size = int(_dim_size(ds, "y"))
+    if y_size != 1:
+        return None
+    nside = _healpix_nside_from_npix(x_size)
+    if nside is None:
+        return None
+    return {
+        "kind": "healpix",
+        "active": True,
+        "npix": x_size,
+        "nside": nside,
+        "ordering": _parse_healpix_ordering(ds),
+    }
+
+
 def _parse_sample_mode(mode: str) -> SampleMode:
     lowered = mode.strip().lower()
     if lowered not in {"single", "mean", "std", "rel_uncert"}:
@@ -100,4 +157,3 @@ def _clamp_dim_bounds(ds: CubeDataset, dim: str, a0: int, a1: int) -> tuple[int,
     if c1 <= c0:
         raise HTTPException(status_code=400, detail=f"invalid bounds for dim '{dim}'")
     return c0, c1
-

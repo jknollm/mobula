@@ -87,6 +87,27 @@ def test_ensure_default_datasets_is_idempotent() -> None:
     assert "demo-hires-3d-no-samples" in second
     assert "demo-long-2d-movie-pol" in second
     assert "demo-5d-time-3d-samples" in second
+    assert "demo-healpix-sky-samples-time-nu" in second
+    assert "demo-healpix-sky-hires-samples-time-nu" in second
+
+
+def test_healpix_demo_metadata_shape() -> None:
+    registry = DatasetRegistry()
+    summaries = registry.list()
+    summary = next(s for s in summaries if s.data_id == "demo-healpix-sky-samples-time-nu")
+    assert summary.shape[0] > 1  # sample
+    assert summary.shape[2] > 1  # time
+    assert summary.shape[3] > 1  # frequency
+    assert summary.shape[4] == 3072  # healpix npix
+    assert summary.shape[5] == 1
+
+
+def test_healpix_hires_demo_metadata_shape() -> None:
+    registry = DatasetRegistry()
+    summaries = registry.list()
+    summary = next(s for s in summaries if s.data_id == "demo-healpix-sky-hires-samples-time-nu")
+    assert summary.shape[4] == 196608  # healpix npix (nside=128)
+    assert summary.shape[5] == 1
 
 
 def test_load_local_loads_dataset_by_extension(tmp_path: Path) -> None:

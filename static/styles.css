@@ -67,13 +67,13 @@ header.panel {
 .brandLockup {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 0;
 }
 
-.brandText {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.brandBanner {
+  width: clamp(155px, 19vw, 310px);
+  height: auto;
+  display: block;
 }
 
 .brandLogo {
@@ -155,6 +155,13 @@ header p:not(.brandTagline) {
   padding-bottom: 20px;
   scroll-padding-bottom: 20px;
   align-self: stretch;
+}
+
+.panelTitle {
+  margin: 0 0 2px;
+  font-size: 0.98rem;
+  letter-spacing: 0.02em;
+  color: #d7e6f6;
 }
 
 .controlGroup {
@@ -405,12 +412,34 @@ button:focus-visible {
   min-width: 54px;
 }
 
+.sphereProjectionButtons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.sphereProjectionButtons .tinyBtn {
+  min-width: 0;
+  width: 100%;
+  font-size: 0.74rem;
+}
+
 .tinyBtn.activeScale {
   border-color: var(--accent);
   background: #142b45;
 }
 
 .tinyBtn.activeSpatial {
+  border-color: var(--accent);
+  background: #142b45;
+}
+
+.tinyBtn.activeProject {
+  border-color: var(--accent);
+  background: #142b45;
+}
+
+.tinyBtn.activeProjection {
   border-color: var(--accent);
   background: #142b45;
 }
@@ -652,6 +681,23 @@ canvas {
   flex: 0 0 auto;
 }
 
+.hoverReadout {
+  margin: 2px 0 10px;
+  padding: 6px 8px;
+  border: 1px solid rgba(126, 165, 207, 0.55);
+  border-radius: 8px;
+  background: rgba(8, 12, 20, 0.72);
+  color: #e6f2ff;
+  font-size: 0.72rem;
+  line-height: 1.28;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+  min-height: 7.2em;
+  max-height: 7.2em;
+  overflow: auto;
+}
+
 .metrics pre {
   min-height: 160px;
   margin: 0;
@@ -676,6 +722,16 @@ canvas {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.navPanel.isLocked {
+  opacity: 0.56;
+}
+
+.navPanel.isLocked .navCanvas {
+  cursor: not-allowed;
+  filter: saturate(0.72);
+  pointer-events: none;
 }
 
 .navTitle {
@@ -705,6 +761,13 @@ canvas {
   background: #0d1119;
 }
 
+.navCanvas.isProjected {
+  opacity: 0.55;
+  filter: saturate(0.75);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .navAxisRange {
   display: flex;
   justify-content: space-between;
@@ -725,6 +788,15 @@ canvas {
   margin: 0;
   font-size: 0.84rem;
   color: #c9d8e8;
+}
+
+.volumeRenderControls input[type="number"] {
+  width: 100%;
+  padding: 8px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: #0f1520;
+  color: var(--text);
 }
 
 .volumeSlider {
@@ -804,6 +876,27 @@ canvas {
   margin-top: -2px;
 }
 
+.volumeDualRangeBlock {
+  margin-top: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0d131d;
+}
+
+.volumeDualRangeBlock .dualRangeHeader,
+.volumeDualRangeBlock .dualRangeBounds {
+  font-size: 0.76rem;
+}
+
+#volumeSphereRangeMin {
+  z-index: 2;
+}
+
+#volumeSphereRangeMax {
+  z-index: 3;
+}
+
 .polCurrent {
   margin-top: 4px;
   color: var(--muted);
@@ -846,6 +939,94 @@ canvas {
   min-width: 90px;
   font-size: 0.76rem;
   padding: 5px 8px;
+}
+
+.toolbarExport {
+  width: auto;
+  min-width: 108px;
+  font-size: 0.76rem;
+  padding: 5px 8px;
+}
+
+.coordSystemControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #9fb0c4;
+  font-size: 0.76rem;
+}
+
+.coordSystemControl select {
+  width: auto;
+  min-width: 104px;
+  padding: 4px 7px;
+  font-size: 0.76rem;
+}
+
+.exportDialog {
+  width: min(560px, 94vw);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #111822;
+  color: #e7f1fb;
+  padding: 0;
+}
+
+.exportDialog::backdrop {
+  background: rgba(2, 6, 12, 0.55);
+}
+
+.exportDialogForm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+}
+
+.exportDialogForm h2 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+
+.exportFormatNote {
+  grid-column: 1 / -1;
+  font-size: 0.76rem;
+  color: #9fb8d3;
+}
+
+.exportLocationRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.exportLocationRow input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.exportOverwriteRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #b7c8da;
+  font-size: 0.86rem;
+}
+
+.exportStatus {
+  min-height: 1.2em;
+  color: #9fb8d3;
+  font-size: 0.8rem;
+}
+
+.exportStatus.error {
+  color: #f5b1b1;
+}
+
+.exportDialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .profileCanvas {
@@ -929,14 +1110,9 @@ canvas {
 
 @media (max-width: 760px) {
   .brandLockup {
-    flex-direction: column;
     align-items: flex-start;
-    gap: 12px;
   }
-  .brandLogo {
-    width: 58px;
-  }
-  .brandWordmark {
-    letter-spacing: 0.22em;
+  .brandBanner {
+    width: min(100%, 235px);
   }
 }

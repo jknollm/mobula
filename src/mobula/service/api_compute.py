@@ -82,6 +82,17 @@ def _profile_series(
     )
 
 
+def _normalize_project_dims(project_dims: tuple[str, ...] | list[str] | None) -> set[str]:
+    out: set[str] = set()
+    if not project_dims:
+        return out
+    for raw in project_dims:
+        dim = str(raw).strip().lower()
+        if dim:
+            out.add(dim)
+    return out
+
+
 def _extract_2d_slice(
     ds: CubeDataset,
     plane_x: str,
@@ -95,6 +106,7 @@ def _extract_2d_slice(
     y: int | None,
     z: int | None,
     pol_override: int | None = None,
+    project_dims: tuple[str, ...] | list[str] | None = None,
 ) -> tuple[np.ndarray, dict[str, int], dict[str, float]]:
     if plane_x == plane_y:
         raise HTTPException(status_code=400, detail="plane_x and plane_y must be different")
@@ -106,6 +118,12 @@ def _extract_2d_slice(
             status_code=400,
             detail="sample_mode mean/std/rel_uncert is incompatible when sample is used as a plane dimension",
         )
+    projected = _normalize_project_dims(project_dims)
+    for dim in projected:
+        if dim not in ds.dims:
+            raise HTTPException(status_code=400, detail=f"project dim '{dim}' not in dataset")
+        if dim in {plane_x, plane_y}:
+            raise HTTPException(status_code=400, detail=f"cannot project visible plane dim '{dim}'")
 
     requested = {
         "sample": sample,
@@ -123,6 +141,11 @@ def _extract_2d_slice(
 
     for dim in ds.dims:
         if dim in (plane_x, plane_y):
+            slicer.append(slice(None))
+            arr_dims.append(dim)
+            continue
+
+        if dim in projected:
             slicer.append(slice(None))
             arr_dims.append(dim)
             continue
@@ -149,6 +172,14 @@ def _extract_2d_slice(
             std_arr = arr.std(axis=sample_axis, dtype=np.float64)
             arr = _relative_uncertainty(mean_arr, std_arr).astype(np.float32)
         arr_dims = [d for d in arr_dims if d != "sample"]
+
+    for dim in projected:
+        if dim not in arr_dims:
+            continue
+        axis = arr_dims.index(dim)
+        arr = arr.mean(axis=axis, dtype=np.float64).astype(np.float32)
+        arr_dims.pop(axis)
+        selected_indices.pop(dim, None)
 
     if arr.ndim != 2:
         raise HTTPException(
@@ -181,10 +212,17 @@ def _extract_3d_volume(
     y: int | None,
     z: int | None,
     pol_override: int | None = None,
+    project_dims: tuple[str, ...] | list[str] | None = None,
 ) -> tuple[np.ndarray, dict[str, int], dict[str, float]]:
     for dim in ("x", "y", "z"):
         if dim not in ds.dims:
             raise HTTPException(status_code=400, detail=f"dataset missing '{dim}' dimension")
+    projected = _normalize_project_dims(project_dims)
+    for dim in projected:
+        if dim not in ds.dims:
+            raise HTTPException(status_code=400, detail=f"project dim '{dim}' not in dataset")
+        if dim in {"x", "y", "z"}:
+            raise HTTPException(status_code=400, detail=f"cannot project visible volume dim '{dim}'")
 
     requested = {
         "sample": sample,
@@ -202,6 +240,11 @@ def _extract_3d_volume(
 
     for dim in ds.dims:
         if dim in {"x", "y", "z"}:
+            slicer.append(slice(None))
+            arr_dims.append(dim)
+            continue
+
+        if dim in projected:
             slicer.append(slice(None))
             arr_dims.append(dim)
             continue
@@ -228,6 +271,14 @@ def _extract_3d_volume(
             arr = _relative_uncertainty(mean_arr, std_arr).astype(np.float32)
         arr_dims = [d for d in arr_dims if d != "sample"]
 
+    for dim in projected:
+        if dim not in arr_dims:
+            continue
+        axis = arr_dims.index(dim)
+        arr = arr.mean(axis=axis, dtype=np.float64).astype(np.float32)
+        arr_dims.pop(axis)
+        selected_indices.pop(dim, None)
+
     if arr.ndim != 3:
         raise HTTPException(status_code=500, detail=f"volume rank mismatch, expected 3D got {arr.ndim}")
 
@@ -240,4 +291,3 @@ def _extract_3d_volume(
 
     selected_coords = {dim: float(np.asarray(ds.coords[dim])[idx]) for dim, idx in selected_indices.items()}
     return arr, selected_indices, selected_coords
-

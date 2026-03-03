@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 import subprocess
 
 import numpy as np
 import pytest
+from astropy.io import fits
 
+from mobula.data.mock_cube import MockCubeConfig, generate_mock_dataset
 from mobula.data.schema import CubeDataset
 from mobula.service import api_routes_core
 
@@ -56,6 +59,44 @@ def test_meta_contains_expected_fields(client, base_dataset) -> None:
     assert body["coords"]["x"]["unit"] == base_dataset.units["x"]
     assert body["coords"]["x"]["size"] == base_dataset.shape[4]
     assert body["pol_labels"] == ["I", "Q", "U", "V"]
+    assert body["sphere"] is None
+
+
+def test_meta_reports_healpix_summary(client_factory) -> None:
+    ds = generate_mock_dataset(
+        "healpix-meta",
+        MockCubeConfig(sample=1, pol=1, t=2, nu=3, x=12, y=1, z=1, seed=99, model="dynamic"),
+    )
+    ds.wcs["healpix_ordering"] = "NESTED"
+    with client_factory(ds) as client:
+        res = client.get("/api/datasets/healpix-meta/meta")
+        assert res.status_code == 200
+        assert res.json()["sphere"] == {
+            "kind": "healpix",
+            "active": True,
+            "npix": 12,
+            "nside": 1,
+            "ordering": "nested",
+        }
+
+
+def test_healpix_sky_model_meta_detected(client_factory) -> None:
+    ds = generate_mock_dataset(
+        "healpix-sky-meta",
+        MockCubeConfig(sample=3, pol=1, t=6, nu=7, x=192, y=1, z=1, seed=19, model="healpix_sky"),
+    )
+    with client_factory(ds) as client:
+        res = client.get("/api/datasets/healpix-sky-meta/meta")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["wcs"]["projection"] == "HEALPIX"
+        assert body["sphere"] == {
+            "kind": "healpix",
+            "active": True,
+            "npix": 192,
+            "nside": 4,
+            "ordering": "ring",
+        }
 
 
 @pytest.mark.parametrize(
@@ -330,9 +371,217 @@ def test_slice_downsamples_with_max_pixels(client, base_dataset) -> None:
     assert body["full_shape"] == [base_dataset.shape[4], base_dataset.shape[5]]
 
 
+def test_slice_projects_along_time_axis(client, base_dataset) -> None:
+    params = {
+        "sample": 1,
+        "pol": 2,
+        "nu": 3,
+        "z": 1,
+        "plane_x": "x",
+        "plane_y": "y",
+        "project_dims": "t",
+    }
+    res = client.get(f"/api/datasets/{_data_id(base_dataset)}/slice", params=params)
+    assert res.status_code == 200
+    body = res.json()
+    actual = np.asarray(body["values"], dtype=np.float32).reshape(body["shape"])
+    expected = np.asarray(base_dataset.values[1, 2, :, 3, :, :, 1], dtype=np.float32).mean(axis=0)
+    np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
+    assert "t" not in body["selected_indices"]
+
+
+def test_slice_rejects_projection_of_plane_dimension(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/slice",
+        params={"plane_x": "x", "plane_y": "y", "project_dims": "x"},
+    )
+    assert res.status_code == 400
+    assert "cannot project visible plane dim" in res.json()["detail"]
+
+
 def test_slice_query_validation_for_max_pixels(client, base_dataset) -> None:
     res = client.get(f"/api/datasets/{_data_id(base_dataset)}/slice", params={"max_pixels": 0})
     assert res.status_code == 422
+
+
+def test_export_cutout_returns_fits_with_metadata(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/export-cutout",
+        params={
+            "sample_mode": "single",
+            "sample": 0,
+            "pol": 0,
+            "z": 0,
+            "u0": 3,
+            "u1": 8,
+            "v0": 4,
+            "v1": 10,
+            "t0": 1,
+            "t1": 5,
+            "nu0": 2,
+            "nu1": 7,
+            "plane_x": "x",
+            "plane_y": "y",
+        },
+    )
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("application/fits")
+    assert "attachment;" in res.headers.get("content-disposition", "")
+
+    with fits.open(io.BytesIO(res.content), mode="readonly", memmap=False) as hdul:
+        data = np.asarray(hdul[0].data)
+        # sample, pol, t, nu, x, y, z in canonical numpy order.
+        assert data.shape == (1, 1, 4, 4, 5, 3, 1)
+        assert hdul[0].header["MBMODE"] == "single"
+        assert hdul[0].header["MBPLNX"] == "x"
+        assert hdul[0].header["MBPLNY"] == "y"
+        ext_names = {hdu.name for hdu in hdul[1:]}
+        assert {"COORD_SAMPLE", "COORD_POL", "COORD_T", "COORD_NU", "COORD_X", "COORD_Y", "COORD_Z"} <= ext_names
+
+
+def test_export_cutout_rejects_invalid_zoom_bounds(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/export-cutout",
+        params={"u0": 5, "u1": 5, "plane_x": "x", "plane_y": "y"},
+    )
+    assert res.status_code == 400
+    assert "invalid bounds for dim 'x'" in res.json()["detail"]
+
+
+def test_export_cutout_save_fits_to_selected_folder(client, base_dataset, tmp_path: Path) -> None:
+    res = client.post(
+        f"/api/datasets/{_data_id(base_dataset)}/export-cutout/save",
+        json={
+            "format": "fits",
+            "output_dir": str(tmp_path),
+            "filename": "saved_cutout.fits",
+            "sample_mode": "single",
+            "sample": 0,
+            "pol": 0,
+            "z": 0,
+            "u0": 2,
+            "u1": 6,
+            "v0": 1,
+            "v1": 5,
+            "plane_x": "x",
+            "plane_y": "y",
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["saved"] is True
+    out_path = Path(body["path"])
+    assert out_path.exists()
+    with fits.open(out_path, mode="readonly", memmap=False) as hdul:
+        assert hdul[0].header["MBPLNX"] == "x"
+        assert hdul[0].header["MBPLNY"] == "y"
+
+
+def test_export_cutout_save_hdf5_to_selected_folder(client, base_dataset, tmp_path: Path) -> None:
+    h5py = pytest.importorskip("h5py")
+    res = client.post(
+        f"/api/datasets/{_data_id(base_dataset)}/export-cutout/save",
+        json={
+            "format": "hdf5",
+            "output_dir": str(tmp_path),
+            "filename": "saved_cutout.h5",
+            "sample_mode": "single",
+            "sample": 0,
+            "pol": 0,
+            "z": 0,
+            "u0": 2,
+            "u1": 6,
+            "v0": 1,
+            "v1": 5,
+            "plane_x": "x",
+            "plane_y": "y",
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    out_path = Path(body["path"])
+    assert out_path.exists()
+    with h5py.File(out_path, "r") as f:
+        assert "values" in f
+        assert "coords" in f
+        assert f["values"].attrs["plane_x"] == "x"
+        assert f["values"].attrs["plane_y"] == "y"
+
+
+def test_export_cutout_save_rejects_missing_output_dir(client, base_dataset, tmp_path: Path) -> None:
+    missing = tmp_path / "does-not-exist"
+    res = client.post(
+        f"/api/datasets/{_data_id(base_dataset)}/export-cutout/save",
+        json={"format": "fits", "output_dir": str(missing)},
+    )
+    assert res.status_code == 400
+    assert "output_dir is not a directory" in res.json()["detail"]
+
+
+def test_export_cutout_save_healpix_pixel_indices_to_fits_is_temporarily_disabled(client_factory, tmp_path: Path) -> None:
+    ds = generate_mock_dataset(
+        "healpix-export-fits",
+        MockCubeConfig(sample=2, pol=1, t=4, nu=5, x=192, y=1, z=1, seed=71, model="healpix_sky"),
+    )
+    with client_factory(ds) as custom_client:
+        res = custom_client.post(
+            "/api/datasets/healpix-export-fits/export-cutout/save",
+            json={
+                "format": "fits",
+                "output_dir": str(tmp_path),
+                "filename": "healpix_cutout.fits",
+                "sample_mode": "single",
+                "sample": 0,
+                "pol": 0,
+                "z": 0,
+                "t0": 1,
+                "t1": 3,
+                "nu0": 1,
+                "nu1": 4,
+                "plane_x": "x",
+                "plane_y": "y",
+                "pixel_indices": [18, 5, 0, 17],
+            },
+        )
+
+    assert res.status_code == 400
+    assert "future feature" in res.json()["detail"].lower()
+
+
+def test_export_cutout_save_healpix_pixel_indices_to_hdf5(client_factory, tmp_path: Path) -> None:
+    h5py = pytest.importorskip("h5py")
+    ds = generate_mock_dataset(
+        "healpix-export-hdf5",
+        MockCubeConfig(sample=2, pol=1, t=4, nu=5, x=192, y=1, z=1, seed=73, model="healpix_sky"),
+    )
+    with client_factory(ds) as custom_client:
+        res = custom_client.post(
+            "/api/datasets/healpix-export-hdf5/export-cutout/save",
+            json={
+                "format": "hdf5",
+                "output_dir": str(tmp_path),
+                "filename": "healpix_cutout.h5",
+                "sample_mode": "single",
+                "sample": 0,
+                "pol": 0,
+                "z": 0,
+                "t0": 1,
+                "t1": 3,
+                "nu0": 1,
+                "nu1": 4,
+                "plane_x": "x",
+                "plane_y": "y",
+                "pixel_indices": [18, 5, 0, 17],
+            },
+        )
+
+    assert res.status_code == 200
+    out_path = Path(res.json()["path"])
+    assert out_path.exists()
+    with h5py.File(out_path, "r") as f:
+        assert f["values"].attrs["x_index_scheme"] == "explicit"
+        idx = np.asarray(f["coords"]["x_indices"][...], dtype=np.int64)
+        np.testing.assert_array_equal(idx, np.asarray([0, 5, 17, 18], dtype=np.int64))
 
 
 @pytest.mark.parametrize("mode", ["single", "mean", "std", "rel_uncert"])
@@ -355,6 +604,17 @@ def test_volume_rejects_out_of_bounds_index(client, base_dataset) -> None:
     res = client.get(f"/api/datasets/{_data_id(base_dataset)}/volume", params={"sample": 999})
     assert res.status_code == 400
     assert "out of bounds" in res.json()["detail"]
+
+
+def test_volume_projects_along_time_axis(client, base_dataset) -> None:
+    params = {"sample": 1, "pol": 2, "nu": 3, "project_dims": "t"}
+    res = client.get(f"/api/datasets/{_data_id(base_dataset)}/volume", params=params)
+    assert res.status_code == 200
+    body = res.json()
+    actual = np.asarray(body["values"], dtype=np.float32).reshape(body["shape"])
+    expected = np.asarray(base_dataset.values[1, 2, :, 3, :, :, :], dtype=np.float32).mean(axis=0)
+    np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
+    assert "t" not in body["selected_indices"]
 
 
 def test_volume_requires_xyz_dimensions(client_factory, base_dataset, subset_builder) -> None:
@@ -657,6 +917,15 @@ def test_multispectral_rejects_plane_with_nu_axis(client, base_dataset) -> None:
     )
     assert res.status_code == 400
     assert "requires plane without 'nu'" in res.json()["detail"]
+
+
+def test_multispectral_rejects_projecting_nu(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"project_dims": "nu"},
+    )
+    assert res.status_code == 400
+    assert "cannot project multispectral dim" in res.json()["detail"]
 
 
 def test_multispectral_rejects_equal_plane_dims(client, base_dataset) -> None:

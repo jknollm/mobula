@@ -1,4 +1,9 @@
-# mobula
+<p>
+  <picture>
+    <source srcset="./static/assets/mobula_banner_black.svg" type="image/svg+xml" />
+    <img src="./static/assets/mobula_banner_black.png" alt="MOBULA - Navigating Domains" width="780" />
+  </picture>
+</p>
 
 mobula is a local interactive viewer for high-dimensional cube data with canonical axes:
 
@@ -36,6 +41,7 @@ Open:
 
 - Interactive 2D slice navigation across `XY`, `YZ`, `ZX`
 - Volume rendering over `x,y,z`
+- HEALPix sphere mode (`Mollweide`, `Inside-Out`, `Outside`) for spherical datasets
 - Time/spectral/hidden-spatial playback and linked profile graphs
 - Sample-aware views (`single`, `mean`, `std`, `rel_uncert`) and sample mosaics
 - Polarization tools (I/Q/U/V, EVPA overlay, derived polarization modes)
@@ -73,6 +79,12 @@ Run benchmark (app must already be running):
 ```bash
 source .venv/bin/activate
 python scripts/benchmark.py --dataset demo-quicklook-7d-pol-samples --n 40 --warmup 10
+```
+
+Regenerate brand banners:
+
+```bash
+python scripts/generate_brand_banners.py
 ```
 
 ## Current Scope

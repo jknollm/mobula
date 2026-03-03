@@ -83,6 +83,146 @@ def _build_spherical_signal(cfg: MockCubeConfig) -> np.ndarray:
     return base
 
 
+def _healpix_nside_from_npix(npix: int) -> int | None:
+    if npix < 12 or npix % 12 != 0:
+        return None
+    nside = int(round(float(np.sqrt(npix / 12.0))))
+    if 12 * nside * nside != npix:
+        return None
+    if nside <= 0 or (nside & (nside - 1)) != 0:
+        return None
+    return nside
+
+
+def _healpix_ring_pix_to_vector(nside: int, ipix: int) -> np.ndarray:
+    """Map a HEALPix RING pixel index to unit vector coordinates."""
+    npix = 12 * nside * nside
+    ncap = 2 * nside * (nside - 1)
+    nl2 = 2 * nside
+    nl4 = 4 * nside
+    ipix1 = ipix + 1
+
+    if ipix1 <= ncap:
+        hip = 0.5 * ipix1
+        fihip = np.floor(hip)
+        iring = int(np.floor(np.sqrt(hip - np.sqrt(fihip))) + 1)
+        iphi = ipix1 - 2 * iring * (iring - 1)
+        z = 1.0 - (iring * iring) / (3.0 * nside * nside)
+        phi = ((iphi - 0.5) * np.pi) / (2.0 * iring)
+    elif ipix1 <= npix - ncap:
+        ip = ipix1 - ncap - 1
+        iring = int(np.floor(ip / nl4) + nside)
+        iphi = int(ip % nl4) + 1
+        fodd = 0.5 * (1 + ((iring + nside) & 1))
+        z = (nl2 - iring) * (2.0 / (3.0 * nside))
+        phi = ((iphi - fodd) * np.pi) / nl2
+    else:
+        ip = npix - ipix1 + 1
+        hip = 0.5 * ip
+        fihip = np.floor(hip)
+        iring = int(np.floor(np.sqrt(hip - np.sqrt(fihip))) + 1)
+        iphi = 4 * iring + 1 - (ip - 2 * iring * (iring - 1))
+        z = -1.0 + (iring * iring) / (3.0 * nside * nside)
+        phi = ((iphi - 0.5) * np.pi) / (2.0 * iring)
+
+    st = np.sqrt(max(0.0, 1.0 - z * z))
+    return np.asarray([st * np.cos(phi), st * np.sin(phi), z], dtype=np.float32)
+
+
+def _healpix_ring_vectors(nside: int) -> np.ndarray:
+    npix = 12 * nside * nside
+    out = np.empty((npix, 3), dtype=np.float32)
+    for ipix in range(npix):
+        out[ipix] = _healpix_ring_pix_to_vector(nside, ipix)
+    return out
+
+
+def _unit_vector_from_lon_lat(lon: float, lat: float) -> np.ndarray:
+    c = np.cos(lat)
+    return np.asarray([c * np.cos(lon), c * np.sin(lon), np.sin(lat)], dtype=np.float32)
+
+
+def _build_healpix_sky_signal(cfg: MockCubeConfig) -> np.ndarray:
+    """Create a dynamic HEALPix sky map with moving hotspots and filaments."""
+    if cfg.y != 1 or cfg.z != 1:
+        raise ValueError("healpix_sky model requires y=1 and z=1")
+    nside = _healpix_nside_from_npix(cfg.x)
+    if nside is None:
+        raise ValueError(
+            f"healpix_sky requires x to be valid HEALPix npix=12*nside^2 with power-of-two nside; got x={cfg.x}"
+        )
+
+    vec = _healpix_ring_vectors(nside).astype(np.float32)
+    lon = np.arctan2(vec[:, 1], vec[:, 0]).astype(np.float32)
+    lat = np.arcsin(np.clip(vec[:, 2], -1.0, 1.0)).astype(np.float32)
+
+    ref_a = _unit_vector_from_lon_lat(np.deg2rad(42.0), np.deg2rad(18.0))
+    ref_b = _unit_vector_from_lon_lat(np.deg2rad(188.0), np.deg2rad(-24.0))
+    ref_c = _unit_vector_from_lon_lat(np.deg2rad(312.0), np.deg2rad(11.0))
+
+    base = np.empty((cfg.t, cfg.nu, cfg.x, cfg.y, cfg.z), dtype=np.float32)
+    eps = np.float32(1.0e-6)
+    for ti in range(cfg.t):
+        tphase = np.float32(2.0 * np.pi * ti / max(cfg.t, 1))
+        for ni in range(cfg.nu):
+            nphase = np.float32(2.0 * np.pi * ni / max(cfg.nu, 1))
+
+            src1 = _unit_vector_from_lon_lat(
+                float(0.55 * tphase + 0.35 * nphase),
+                float(0.32 * np.sin(0.7 * tphase - 0.4 * nphase)),
+            )
+            src2 = _unit_vector_from_lon_lat(
+                float(2.2 - 0.31 * tphase + 0.5 * nphase),
+                float(-0.26 + 0.15 * np.cos(0.5 * tphase + 0.7 * nphase)),
+            )
+            src3 = _unit_vector_from_lon_lat(
+                float(-1.4 + 0.18 * tphase - 0.7 * nphase),
+                float(0.05 + 0.2 * np.sin(0.9 * tphase + 0.2 * nphase)),
+            )
+            anchor = _unit_vector_from_lon_lat(
+                float(1.1 + 0.2 * nphase),
+                float(-0.25 + 0.1 * np.sin(tphase)),
+            )
+
+            dot1 = np.clip(vec @ src1, -1.0, 1.0)
+            dot2 = np.clip(vec @ src2, -1.0, 1.0)
+            dot3 = np.clip(vec @ src3, -1.0, 1.0)
+            dot_anchor = np.clip(vec @ anchor, -1.0, 1.0)
+            a1 = np.arccos(dot1).astype(np.float32)
+            a2 = np.arccos(dot2).astype(np.float32)
+            a3 = np.arccos(dot3).astype(np.float32)
+            da = np.arccos(dot_anchor).astype(np.float32)
+
+            hot_1 = np.exp(-(a1 * a1) / (2.0 * (0.18**2))).astype(np.float32)
+            hot_2 = np.exp(-(a2 * a2) / (2.0 * (0.14**2))).astype(np.float32)
+            hot_3 = np.exp(-(a3 * a3) / (2.0 * (0.11**2))).astype(np.float32)
+
+            ridge_center = (0.12 * np.sin(2.0 * (lon + 0.45 * tphase) - 0.3 * nphase)).astype(np.float32)
+            ridge = np.exp(-((lat - ridge_center) ** 2) / (2.0 * (0.11**2))).astype(np.float32)
+            equator_band = np.exp(-(lat**2) / (2.0 * (0.35**2))).astype(np.float32)
+            ripples = (0.5 + 0.5 * np.sin(5.0 * lon + 2.2 * tphase - 0.5 * nphase)).astype(np.float32) * equator_band
+
+            shock_r = np.float32(0.9 + 0.12 * np.sin(0.8 * tphase - 0.3 * nphase))
+            shock = np.exp(-((da - shock_r) ** 2) / (2.0 * (0.07**2))).astype(np.float32)
+
+            dip_a = (vec @ ref_a).astype(np.float32)
+            dip_b = (vec @ ref_b).astype(np.float32)
+            dip_c = (vec @ ref_c).astype(np.float32)
+            background = (0.17 + 0.09 * (dip_a**2) + 0.07 * np.maximum(dip_b, 0.0) + 0.03 * dip_c).astype(np.float32)
+
+            sky = (background + 0.85 * hot_1 + 0.72 * hot_2 + 0.58 * hot_3 + 0.45 * ridge + 0.32 * shock + 0.18 * ripples).astype(
+                np.float32
+            )
+            spectral_weight = np.float32(1.08 - 0.28 * (ni / max(cfg.nu - 1, 1)))
+            temporal_mod = np.float32(0.92 + 0.22 * np.sin(tphase + 0.4 * dip_c))
+            sky = np.maximum(spectral_weight * temporal_mod * sky, eps)
+            sky_peak = float(np.max(sky))
+            if sky_peak > 1.0e-8:
+                sky = (sky / sky_peak).astype(np.float32)
+            base[ti, ni, :, 0, 0] = sky
+    return base
+
+
 def _build_center_structured_signal(cfg: MockCubeConfig) -> np.ndarray:
     """Create a centrally bright 3D signal with asymmetric structure."""
     x = _unit_axis(cfg.x)
@@ -605,12 +745,18 @@ def generate_mock_dataset(
         base = _build_spiral_galaxy_signal(cfg)
     elif cfg.model == "filamentary_time":
         base = _build_filamentary_time_signal(cfg)
+    elif cfg.model == "healpix_sky":
+        base = _build_healpix_sky_signal(cfg)
     else:
         base = _build_base_signal(cfg)
 
     x = _physical_axis(-32.0, 32.0, cfg.x)
     y = _physical_axis(-32.0, 32.0, cfg.y)
     z = _physical_axis(-2.0, 2.0, cfg.z)
+    if cfg.model == "healpix_sky":
+        x = np.arange(cfg.x, dtype=np.float64)
+        y = np.array([0.0], dtype=np.float32)
+        z = np.array([0.0], dtype=np.float32)
 
     pol_cube = np.zeros((cfg.pol, cfg.t, cfg.nu, cfg.x, cfg.y, cfg.z), dtype=np.float32)
     pol_cube[0] = base
@@ -681,6 +827,30 @@ def generate_mock_dataset(
         "y": "arcsec",
         "z": "channel",
     }
+    wcs = {"frame": "ICRS", "projection": "TAN", "note": "mock synthetic coordinate model"}
+    if cfg.model == "healpix_sky":
+        nside = _healpix_nside_from_npix(cfg.x)
+        wcs = {
+            "frame": "ICRS",
+            "projection": "HEALPIX",
+            "healpix_ordering": "ring",
+            "healpix_nside": int(nside) if nside is not None else None,
+            "note": "mock HEALPix sky model",
+        }
+        units["x"] = "healpix-pix"
+        units["y"] = "index"
+        units["z"] = "index"
+
+    provenance = {
+        "source": "generated",
+        "generator": "generate_mock_dataset",
+        "seed": cfg.seed,
+        "model": cfg.model,
+        "shape": list(values.shape),
+        "pol_labels": ["I", "Q", "U", "V"][: cfg.pol],
+    }
+    if cfg.model == "healpix_sky":
+        provenance["healpix_ordering"] = "ring"
 
     dataset = CubeDataset(
         data_id=dataset_id,
@@ -689,15 +859,8 @@ def generate_mock_dataset(
         values=values,
         units=units,
         intensity_unit="arb",
-        wcs={"frame": "ICRS", "projection": "TAN", "note": "mock synthetic coordinate model"},
-        provenance={
-            "source": "generated",
-            "generator": "generate_mock_dataset",
-            "seed": cfg.seed,
-            "model": cfg.model,
-            "shape": list(values.shape),
-            "pol_labels": ["I", "Q", "U", "V"][: cfg.pol],
-        },
+        wcs=wcs,
+        provenance=provenance,
         uncertainty={"type": "sample-axis", "sample_dim": "sample", "weights": None},
     )
     dataset.validate()

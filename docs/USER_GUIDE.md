@@ -45,6 +45,17 @@ Controls:
 - Render modes: `Composite`, `MIP`, `MinIP`, `Average`, `Isosurface`
 - Additional controls: transfer function, opacity, gamma, cutoff, clipping, iso threshold
 
+### Sphere mode (HEALPix)
+
+- Auto-enabled when dataset metadata matches HEALPix sphere layout:
+  - `x` size is a valid HEALPix `npix` (`12 * nside^2`, power-of-two `nside`)
+  - `y` size is `1`
+- Projection controls in Spatial panel:
+  - `Mollweide`
+  - `Inside-Out Sky`
+  - `Outside Sphere`
+- Ordering comes from dataset metadata when available; defaults to `ring`.
+
 ## Temporal and Spectral Panels
 
 Each panel provides:
@@ -78,6 +89,7 @@ Mouse interactions:
 - Wheel: zoom
 - `Alt+drag` or right-button drag: pan (slice mode)
 - Drag in volume mode: rotate view
+- Drag in sphere mode: rotate view (hold `Shift` while dragging to make ROI selections)
 
 ## Selection and Profiles
 

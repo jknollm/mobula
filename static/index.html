@@ -16,16 +16,13 @@
     <main class="layout">
       <header class="panel brandPanel">
         <div class="brandLockup">
-          <img class="brandLogo" src="/static/assets/mobula_logo.png" alt="Mobula logo" />
-          <div class="brandText">
-            <h1 class="brandWordmark">MOBULA</h1>
-            <p class="brandTagline">Navigating Domains</p>
-          </div>
+          <img class="brandBanner" src="/static/assets/mobula_banner_white.svg" alt="MOBULA - Navigating Domains" />
         </div>
       </header>
 
       <div id="workspaceRow" class="workspaceRow">
       <section class="panel controls">
+        <h2 class="panelTitle">Controls</h2>
         <div id="dataControlGroup" class="controlGroup">
           <h2>Data</h2>
           <label>
@@ -110,7 +107,7 @@
                 # Samples
                 <select id="sampleGridCountSelect">
                   <option value="1">1</option>
-                  <option value="4">4</option>
+                  <option value="4" selected>4</option>
                   <option value="9">9</option>
                   <option value="16">16</option>
                 </select>
@@ -150,12 +147,24 @@
 
         <div id="spatialControlGroup" class="controlGroup">
           <h2>Spatial</h2>
-          <div class="toggleRow">
+          <div id="spatialViewRow" class="toggleRow">
             <span>Spatial View</span>
             <div class="miniGroup">
               <button id="spatialSliceBtn" class="tinyBtn" type="button">Slice</button>
               <button id="spatialVolumeBtn" class="tinyBtn" type="button">Volume</button>
+              <button id="spatialSphereBtn" class="tinyBtn" type="button">Sphere</button>
             </div>
+          </div>
+          <div id="sphereControls" class="navPanel">
+            <div class="navTitle">
+              <span>Sphere Projection</span>
+            </div>
+            <div class="sphereProjectionButtons" role="group" aria-label="Sphere projection mode">
+              <button id="sphereProjMollweideBtn" class="tinyBtn" type="button">Mollweide</button>
+              <button id="sphereProjInsideBtn" class="tinyBtn" type="button">Inside-Out</button>
+              <button id="sphereProjOutsideBtn" class="tinyBtn" type="button">Outside</button>
+            </div>
+            <div id="sphereMetaLabel" class="volumeBackendStatus"></div>
           </div>
           <label id="planeLabel">
             Plane
@@ -171,6 +180,7 @@
               <div class="navControlRow">
                 <span id="hiddenNavValue"></span>
                 <button id="hiddenPlayBtn" class="tinyBtn" type="button">Play</button>
+                <button id="hiddenProjectBtn" class="tinyBtn" type="button">Project</button>
               </div>
             </div>
             <canvas id="hiddenNavCanvas" class="navCanvas" width="300" height="88"></canvas>
@@ -199,7 +209,19 @@
                 <option value="minip">MinIP</option>
                 <option value="average">Average</option>
                 <option value="isosurface">Isosurface</option>
+                <option value="spherical">Sphere (Center)</option>
               </select>
+            </label>
+            <label id="volumeSphereProjectionLabel">
+              Sphere Projection
+              <select id="volumeSphereProjectionSelect">
+                <option value="mollweide" selected>Mollweide</option>
+                <option value="inside">Inside Perspective</option>
+              </select>
+            </label>
+            <label id="volumeSphereNsiteLabel">
+              nsite
+              <input id="volumeSphereNsiteInput" type="number" min="1" max="512" step="1" value="32" />
             </label>
             <label>
               Transfer Function
@@ -238,6 +260,21 @@
               </div>
               <input id="volumeClipFarRange" type="range" min="0.15" max="1" step="0.01" value="1.00" />
             </label>
+            <div id="volumeSphereRangeBlock" class="dualRangeBlock volumeDualRangeBlock">
+              <div class="dualRangeHeader">
+                <span class="dualRangeTitle">Radial Range</span>
+              </div>
+              <div id="volumeSphereRangeTrack" class="dualRangeTrack">
+                <span id="volumeSphereRangeMinValue" class="dualRangeValue">0.00</span>
+                <span id="volumeSphereRangeMaxValue" class="dualRangeValue">1.00</span>
+                <input id="volumeSphereRangeMin" type="range" min="0" max="1000" step="1" value="0" />
+                <input id="volumeSphereRangeMax" type="range" min="0" max="1000" step="1" value="1000" />
+              </div>
+              <div class="dualRangeBounds">
+                <span>0.00</span>
+                <span>1.00</span>
+              </div>
+            </div>
             <label id="volumeIsoThresholdLabel" class="volumeSlider">
               <div class="volumeSliderHeader">
                 <span>Iso Threshold</span>
@@ -256,6 +293,7 @@
               <div class="navControlRow">
                 <span id="tValue"></span>
                 <button id="timePlayBtn" class="tinyBtn" type="button">Play</button>
+                <button id="timeProjectBtn" class="tinyBtn" type="button">Project</button>
               </div>
             </div>
             <canvas id="timeNavCanvas" class="navCanvas" width="300" height="88"></canvas>
@@ -272,12 +310,13 @@
             <span>Multi-spectral</span>
             <button id="multiSpectralBtn" class="tinyBtn" type="button">Off</button>
           </div>
-          <div class="navPanel">
+          <div id="spectralNavPanel" class="navPanel">
             <div class="navTitle">
               <span>Spectral</span>
               <div class="navControlRow">
                 <span id="nuValue"></span>
                 <button id="freqPlayBtn" class="tinyBtn" type="button">Play</button>
+                <button id="freqProjectBtn" class="tinyBtn" type="button">Project</button>
               </div>
             </div>
             <canvas id="freqNavCanvas" class="navCanvas" width="300" height="88"></canvas>
@@ -305,7 +344,7 @@
               <select id="evpaDensitySelect">
                 <option value="8" selected>Sparse</option>
                 <option value="4">Medium</option>
-                <option value="2">Dense</option>
+                <option value="6">Dense</option>
               </select>
             </div>
             <div class="evpaThresholdRow">
@@ -346,6 +385,15 @@
             <button id="modeInspectBtn" type="button">Inspect</button>
             <button id="modeZoomBtn" type="button">Zoom</button>
           </div>
+          <label class="coordSystemControl">
+            Coords
+            <select id="coordSystemSelect">
+              <option value="native">Native</option>
+              <option value="pixel">Pixel</option>
+              <option value="galactic">Galactic</option>
+            </select>
+          </label>
+          <button id="exportZoomBtn" class="tinyBtn toolbarExport" type="button" disabled>Export Zoom</button>
           <button id="resetZoomBtn" class="tinyBtn toolbarReset" type="button">Reset</button>
         </div>
       </section>
@@ -353,8 +401,9 @@
       <div id="rightSplitter" class="colSplitter" role="separator" aria-orientation="vertical" aria-label="Resize right panel"></div>
 
       <section id="metricsPanel" class="panel metrics">
-        <h2 id="metricsTitle">Selected Area Profiles</h2>
+        <h2 id="metricsTitle">Inspect</h2>
         <p id="metricsHint">Click for point or drag for area.</p>
+        <div id="hoverReadout" class="hoverReadout">Move cursor over the image to inspect coordinates and flux.</div>
         <div id="timeProfileBlock">
           <h2>Time Flux Profile</h2>
           <canvas id="timeProfileCanvas" class="profileCanvas" width="300" height="180"></canvas>
@@ -370,6 +419,41 @@
       </section>
       </div>
     </main>
+
+    <dialog id="exportDialog" class="exportDialog">
+      <form method="dialog" class="exportDialogForm">
+        <h2>Export Zoom Cutout</h2>
+        <label>
+          Data Format
+          <select id="exportFormatSelect">
+            <option value="fits">FITS (.fits)</option>
+            <option value="hdf5">HDF5 (.h5)</option>
+          </select>
+          <span id="exportFormatNote" class="exportFormatNote"></span>
+        </label>
+        <label>
+          Save Location
+          <div class="exportLocationRow">
+            <input id="exportLocationInput" type="text" readonly placeholder="Choose a destination folder" />
+            <button id="exportBrowseBtn" class="tinyBtn" type="button">Browse</button>
+          </div>
+        </label>
+        <label>
+          File Name
+          <input id="exportFilenameInput" type="text" placeholder="cutout.fits" />
+        </label>
+        <label class="exportOverwriteRow">
+          <input id="exportOverwriteChk" type="checkbox" checked />
+          Overwrite existing file
+        </label>
+        <div id="exportStatus" class="exportStatus"></div>
+        <div class="exportDialogActions">
+          <button id="exportCancelBtn" class="tinyBtn" type="button">Cancel</button>
+          <button id="exportConfirmBtn" class="tinyBtn" type="button">Save</button>
+        </div>
+      </form>
+    </dialog>
+
     <script type="module" src="/static/app.js?v=20260302u"></script>
   </body>
 </html>

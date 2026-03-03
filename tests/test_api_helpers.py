@@ -135,6 +135,44 @@ def test_extract_2d_slice_rejects_sample_aggregation_with_sample_plane(base_data
         )
 
 
+def test_extract_2d_slice_projects_requested_dimension(base_dataset) -> None:
+    out, selected, _ = _extract_2d_slice(
+        ds=base_dataset,
+        plane_x="x",
+        plane_y="y",
+        sample_mode="single",
+        sample=1,
+        pol=2,
+        t=0,
+        nu=3,
+        x=None,
+        y=None,
+        z=1,
+        project_dims=("t",),
+    )
+    expected = np.asarray(base_dataset.values[1, 2, :, 3, :, :, 1], dtype=np.float32).mean(axis=0)
+    np.testing.assert_allclose(out, expected, rtol=1e-5, atol=1e-6)
+    assert "t" not in selected
+
+
+def test_extract_2d_slice_rejects_projection_of_plane_dimension(base_dataset) -> None:
+    with pytest.raises(HTTPException, match="cannot project visible plane dim"):
+        _extract_2d_slice(
+            ds=base_dataset,
+            plane_x="x",
+            plane_y="y",
+            sample_mode="single",
+            sample=0,
+            pol=0,
+            t=0,
+            nu=0,
+            x=None,
+            y=None,
+            z=0,
+            project_dims=("x",),
+        )
+
+
 def test_extract_3d_volume_rejects_dataset_without_spatial_dimension(base_dataset, subset_builder) -> None:
     no_z = subset_builder(base_dataset, ("sample", "pol", "t", "nu", "x", "y"), "no-z")
     with pytest.raises(HTTPException, match="dataset missing 'z'"):
@@ -149,6 +187,24 @@ def test_extract_3d_volume_rejects_dataset_without_spatial_dimension(base_datase
             y=0,
             z=None,
         )
+
+
+def test_extract_3d_volume_projects_requested_dimension(base_dataset) -> None:
+    out, selected, _ = _extract_3d_volume(
+        ds=base_dataset,
+        sample_mode="single",
+        sample=1,
+        pol=2,
+        t=0,
+        nu=3,
+        x=None,
+        y=None,
+        z=None,
+        project_dims=("t",),
+    )
+    expected = np.asarray(base_dataset.values[1, 2, :, 3, :, :, :], dtype=np.float32).mean(axis=0)
+    np.testing.assert_allclose(out, expected, rtol=1e-5, atol=1e-6)
+    assert "t" not in selected
 
 
 def test_profile_series_for_region_requires_vary_dimension(base_dataset, subset_builder) -> None:

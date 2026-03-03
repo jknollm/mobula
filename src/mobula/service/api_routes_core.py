@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from mobula.service.api_models import LoadLocalRequest, PickLocalPathRequest
-from mobula.service.api_utils import _coords_summary, _dim_size, _safe_dataset
+from mobula.service.api_utils import _coords_summary, _dim_size, _safe_dataset, _sphere_summary
 from mobula.service.registry import DatasetRegistry
 
 SUPPORTED_LOCAL_DATASET_EXTS = {".h5", ".hdf5", ".fits", ".fit", ".fts", ".zarr"}
@@ -261,4 +261,5 @@ def _register_core_routes(router: APIRouter, registry: DatasetRegistry) -> None:
             "provenance": ds.provenance,
             "uncertainty": ds.uncertainty,
             "pol_labels": pol_labels,
+            "sphere": _sphere_summary(ds),
         }
