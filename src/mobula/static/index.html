@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mobula</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Michroma&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css?v=20260302u" />
+  </head>
+  <body>
+    <main class="layout">
+      <header class="panel brandPanel">
+        <div class="brandLockup">
+          <img class="brandBanner" src="/static/assets/mobula_banner_white.svg" alt="MOBULA - Navigating Domains" />
+        </div>
+      </header>
+
+      <section class="panel datasetTabsPanel">
+        <div class="datasetTabsRow datasetTabsRowGlobal">
+          <div id="datasetTabs" class="datasetTabs" role="tablist" aria-label="Dataset tabs"></div>
+        </div>
+      </section>
+
+      <div id="workspaceRow" class="workspaceRow">
+      <section class="panel controls">
+        <h2 class="panelTitle">Controls</h2>
+        <div id="dataControlGroup" class="controlGroup">
+          <h2>Data</h2>
+          <label>
+            Dataset
+            <select id="datasetSelect"></select>
+          </label>
+          <div class="buttonRow">
+            <button id="systemPickerBtn" type="button">Load Data</button>
+          </div>
+          <div id="systemPickerStatus" class="pickerStatus"></div>
+          <label>
+            Color Map
+            <select id="colorMapSelect">
+              <option value="viridis">Viridis</option>
+              <option value="plasma">Plasma</option>
+              <option value="inferno">Inferno</option>
+              <option value="ehtplot">ehtplot</option>
+              <option value="gray">Gray</option>
+              <option value="diverging">Diverging</option>
+              <option value="circular">Circular</option>
+            </select>
+          </label>
+          <label id="colorNormalizationModeLabel">
+            Normalization
+            <select id="colorRangeModeSelect">
+              <option value="none">None</option>
+              <option value="time">Time</option>
+              <option value="spectral">Spectral</option>
+              <option value="time_spectral">Time+Spectral</option>
+              <option value="space">Space</option>
+              <option value="full">Full</option>
+            </select>
+          </label>
+          <div id="colorNormRangeBlock" class="dualRangeBlock">
+            <div class="dualRangeHeader">
+              <span class="dualRangeTitle">Range</span>
+            </div>
+            <div id="colorNormTrack" class="dualRangeTrack">
+              <span id="colorNormMinValue" class="dualRangeValue">--</span>
+              <span id="colorNormMaxValue" class="dualRangeValue">--</span>
+              <input id="colorNormMinRange" type="range" min="0" max="1000" step="1" value="0" />
+              <input id="colorNormMaxRange" type="range" min="0" max="1000" step="1" value="1000" />
+            </div>
+            <div class="dualRangeBounds">
+              <span id="colorNormBoundMin">--</span>
+              <span id="colorNormBoundMax">--</span>
+            </div>
+          </div>
+          <label>
+            Backend
+            <select id="sliceBackendSelect">
+              <option value="auto" selected>Auto (GPU if beneficial)</option>
+              <option value="gpu">GPU (WebGL2)</option>
+              <option value="cpu">CPU</option>
+            </select>
+          </label>
+          <div class="toggleRow">
+            <span>Flux Scale</span>
+            <div class="miniGroup">
+              <button id="fluxScaleLinearBtn" class="tinyBtn" type="button">Linear</button>
+              <button id="fluxScaleSqrtBtn" class="tinyBtn" type="button">Sqrt</button>
+              <button id="fluxScaleLogBtn" class="tinyBtn" type="button">Log</button>
+            </div>
+          </div>
+          <div id="sampleModeBlock" class="sampleModeBlock">
+            <span class="sampleModeTitle">Sample Mode</span>
+            <div class="sampleModeRow">
+              <button id="sampleModeMeanBtn" class="tinyBtn" type="button">Mean</button>
+              <button id="sampleModeStdBtn" class="tinyBtn" type="button">STD</button>
+              <button id="sampleModeSamplesBtn" class="tinyBtn" type="button">Samples</button>
+              <button id="sampleModeRelBtn" class="tinyBtn" type="button">rel. uncertainty</button>
+            </div>
+            <div id="sampleViewControls" class="sampleViewControls">
+              <span>Samples View</span>
+              <div class="miniGroup">
+                <button id="sampleViewMosaicBtn" class="tinyBtn" type="button">Mosaic</button>
+                <button id="sampleViewMorphBtn" class="tinyBtn" type="button">Morph</button>
+              </div>
+            </div>
+            <div id="sampleMosaicControls" class="sampleMosaicControls">
+              <label>
+                # Samples
+                <select id="sampleGridCountSelect">
+                  <option value="1">1</option>
+                  <option value="4" selected>4</option>
+                  <option value="9">9</option>
+                  <option value="16">16</option>
+                </select>
+              </label>
+              <button id="resampleSamplesBtn" class="tinyBtn" type="button">Resample</button>
+            </div>
+            <div id="sampleMorphControls" class="sampleMorphControls">
+              <label>
+                Sample Δt (between samples)
+                <select id="sampleMorphDeltaSelect">
+                  <option value="0.05">0.05s</option>
+                  <option value="0.1">0.1s</option>
+                  <option value="0.25">0.25s</option>
+                  <option value="0.5" selected>0.5s</option>
+                  <option value="1">1s</option>
+                  <option value="2">2s</option>
+                </select>
+              </label>
+              <span id="sampleMorphStatus" class="sampleMorphStatus"></span>
+            </div>
+          </div>
+          <div id="playbackTimingControls" class="playbackTimingControls">
+            <label id="playSpeedLabel">
+              Render FPS
+              <select id="playSpeedSelect">
+                <option value="1">1 fps</option>
+                <option value="2">2 fps</option>
+                <option value="4">4 fps</option>
+                <option value="7">7 fps</option>
+                <option value="10">10 fps</option>
+                <option value="15">15 fps</option>
+                <option value="20">20 fps</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div id="spatialControlGroup" class="controlGroup">
+          <h2>Spatial</h2>
+          <div id="spatialViewRow" class="toggleRow">
+            <span>Spatial View</span>
+            <div class="miniGroup">
+              <button id="spatialSliceBtn" class="tinyBtn" type="button">Slice</button>
+              <button id="spatialVolumeBtn" class="tinyBtn" type="button">Volume</button>
+              <button id="spatialSphereBtn" class="tinyBtn" type="button">Sphere</button>
+            </div>
+          </div>
+          <div id="sphereControls" class="navPanel">
+            <div class="navTitle">
+              <span>Sphere Projection</span>
+            </div>
+            <div class="sphereProjectionButtons" role="group" aria-label="Sphere projection mode">
+              <button id="sphereProjMollweideBtn" class="tinyBtn" type="button">Mollweide</button>
+              <button id="sphereProjInsideBtn" class="tinyBtn" type="button">Inside-Out</button>
+              <button id="sphereProjOutsideBtn" class="tinyBtn" type="button">Outside</button>
+            </div>
+            <div id="sphereMetaLabel" class="volumeBackendStatus"></div>
+          </div>
+          <label id="planeLabel">
+            Plane
+            <select id="planeSelect">
+              <option value="xy">XY</option>
+              <option value="yz">YZ</option>
+              <option value="zx">ZX</option>
+            </select>
+          </label>
+          <div id="hiddenNavPanel" class="navPanel">
+            <div class="navTitle">
+              <span id="hiddenAxisTitle">Unused Spatial Axis</span>
+              <div class="navControlRow">
+                <span id="hiddenNavValue"></span>
+                <button id="hiddenPlayBtn" class="tinyBtn" type="button">Play</button>
+                <button id="hiddenProjectBtn" class="tinyBtn" type="button">Project</button>
+              </div>
+            </div>
+            <canvas id="hiddenNavCanvas" class="navCanvas" width="300" height="88"></canvas>
+            <div class="navAxisRange">
+              <span id="hiddenAxisMin"></span>
+              <span id="hiddenAxisMax"></span>
+            </div>
+          </div>
+          <div id="volumeRenderControls" class="volumeRenderControls">
+            <h3>Volume Render</h3>
+            <div id="volumeBackendStatus" class="volumeBackendStatus"></div>
+            <label>
+              Quality
+              <select id="volumeQualitySelect">
+                <option value="draft">Draft</option>
+                <option value="balanced" selected>Balanced</option>
+                <option value="fine">Fine</option>
+                <option value="ultra">Ultra</option>
+              </select>
+            </label>
+            <label>
+              Render Mode
+              <select id="volumeRenderModeSelect">
+                <option value="composite" selected>Composite</option>
+                <option value="mip">MIP</option>
+                <option value="minip">MinIP</option>
+                <option value="average">Average</option>
+                <option value="isosurface">Isosurface</option>
+                <option value="spherical">Sphere (Center)</option>
+              </select>
+            </label>
+            <label id="volumeSphereProjectionLabel">
+              Sphere Projection
+              <select id="volumeSphereProjectionSelect">
+                <option value="mollweide" selected>Mollweide</option>
+                <option value="inside">Inside Perspective</option>
+              </select>
+            </label>
+            <label id="volumeSphereNsiteLabel">
+              nsite
+              <input id="volumeSphereNsiteInput" type="number" min="1" max="512" step="1" value="32" />
+            </label>
+            <label>
+              Transfer Function
+              <select id="volumeTfSelect">
+                <option value="linear" selected>Linear</option>
+                <option value="sqrt">Square Root</option>
+                <option value="square">Square</option>
+                <option value="sigmoid">Sigmoid</option>
+              </select>
+            </label>
+            <label class="volumeSlider">
+              <div class="volumeSliderHeader">
+                <span>Opacity</span>
+                <span id="volumeOpacityValue"></span>
+              </div>
+              <input id="volumeOpacityRange" type="range" min="0.1" max="12" step="0.1" value="1.2" />
+            </label>
+            <label class="volumeSlider">
+              <div class="volumeSliderHeader">
+                <span>Gamma</span>
+                <span id="volumeGammaValue"></span>
+              </div>
+              <input id="volumeGammaRange" type="range" min="0.5" max="1.8" step="0.05" value="0.9" />
+            </label>
+            <div id="volumeClipRangeBlock" class="dualRangeBlock volumeDualRangeBlock">
+              <div class="dualRangeHeader">
+                <span class="dualRangeTitle">Clip Range</span>
+              </div>
+              <div id="volumeClipRangeTrack" class="dualRangeTrack">
+                <span id="volumeClipRangeMinValue" class="dualRangeValue">0.00</span>
+                <span id="volumeClipRangeMaxValue" class="dualRangeValue">1.00</span>
+                <input id="volumeClipRangeMin" type="range" min="0" max="1000" step="1" value="0" />
+                <input id="volumeClipRangeMax" type="range" min="0" max="1000" step="1" value="1000" />
+              </div>
+              <div class="dualRangeBounds">
+                <span>0.00</span>
+                <span>1.00</span>
+              </div>
+            </div>
+            <div id="volumeSphereRangeBlock" class="dualRangeBlock volumeDualRangeBlock">
+              <div class="dualRangeHeader">
+                <span class="dualRangeTitle">Radial Range</span>
+              </div>
+              <div id="volumeSphereRangeTrack" class="dualRangeTrack">
+                <span id="volumeSphereRangeMinValue" class="dualRangeValue">0.00</span>
+                <span id="volumeSphereRangeMaxValue" class="dualRangeValue">1.00</span>
+                <input id="volumeSphereRangeMin" type="range" min="0" max="1000" step="1" value="0" />
+                <input id="volumeSphereRangeMax" type="range" min="0" max="1000" step="1" value="1000" />
+              </div>
+              <div class="dualRangeBounds">
+                <span>0.00</span>
+                <span>1.00</span>
+              </div>
+            </div>
+            <label id="volumeIsoThresholdLabel" class="volumeSlider">
+              <div class="volumeSliderHeader">
+                <span>Iso Threshold</span>
+                <span id="volumeIsoThresholdValue"></span>
+              </div>
+              <input id="volumeIsoThresholdRange" type="range" min="0.01" max="0.99" step="0.01" value="0.45" />
+            </label>
+          </div>
+        </div>
+
+        <div id="temporalControlGroup" class="controlGroup">
+          <h2>Temporal</h2>
+          <div class="navPanel">
+            <div class="navTitle">
+              <span>Time</span>
+              <div class="navControlRow">
+                <span id="tValue"></span>
+                <button id="timePlayBtn" class="tinyBtn" type="button">Play</button>
+                <button id="timeProjectBtn" class="tinyBtn" type="button">Project</button>
+              </div>
+            </div>
+            <canvas id="timeNavCanvas" class="navCanvas" width="300" height="88"></canvas>
+            <div class="navAxisRange">
+              <span id="timeAxisMin"></span>
+              <span id="timeAxisMax"></span>
+            </div>
+          </div>
+        </div>
+
+        <div id="spectralControlGroup" class="controlGroup">
+          <h2>Spectral</h2>
+          <div class="toggleRow">
+            <span>Multi-spectral</span>
+            <button id="multiSpectralBtn" class="tinyBtn" type="button">Off</button>
+          </div>
+          <div id="spectralNavPanel" class="navPanel">
+            <div class="navTitle">
+              <span>Spectral</span>
+              <div class="navControlRow">
+                <span id="nuValue"></span>
+                <button id="freqPlayBtn" class="tinyBtn" type="button">Play</button>
+                <button id="freqProjectBtn" class="tinyBtn" type="button">Project</button>
+              </div>
+            </div>
+            <canvas id="freqNavCanvas" class="navCanvas" width="300" height="88"></canvas>
+            <div class="navAxisRange">
+              <span id="freqAxisMin"></span>
+              <span id="freqAxisMax"></span>
+            </div>
+          </div>
+        </div>
+
+        <div id="polarizationControlGroup" class="controlGroup">
+          <h2>Polarization</h2>
+          <div class="polJump">
+            <div class="pillRow stokesRow">
+              <button id="polBtn0" type="button" data-pol="0">I</button>
+              <button id="polBtn1" type="button" data-pol="1">Q</button>
+              <button id="polBtn2" type="button" data-pol="2">U</button>
+              <button id="polBtn3" type="button" data-pol="3">V</button>
+            </div>
+            <div class="evpaRow">
+              <button id="evpaToggleBtn" type="button">EVPA</button>
+            </div>
+            <div class="evpaDensityRow">
+              <label for="evpaDensitySelect">Density</label>
+              <select id="evpaDensitySelect">
+                <option value="8" selected>Sparse</option>
+                <option value="4">Medium</option>
+                <option value="6">Dense</option>
+              </select>
+            </div>
+            <div class="evpaThresholdRow">
+              <label for="evpaIThresholdSelect">I threshold (% peak |I|)</label>
+              <select id="evpaIThresholdSelect">
+                <option value="0" selected>Off (0%)</option>
+                <option value="1">1%</option>
+                <option value="3">3%</option>
+                <option value="5">5%</option>
+                <option value="10">10%</option>
+              </select>
+            </div>
+            <div class="pillRow derivedRow">
+              <button id="fracPolBtn" type="button">Fractional Pol</button>
+              <button id="bfieldBtn" type="button">Magnetic Field Angle</button>
+              <button id="linPolBtn" type="button">Linear Pol</button>
+              <button id="circPolBtn" type="button">Circular Pol</button>
+            </div>
+            <div id="polValue" class="polCurrent"></div>
+          </div>
+        </div>
+      </section>
+
+      <div id="leftSplitter" class="colSplitter" role="separator" aria-orientation="vertical" aria-label="Resize left panel"></div>
+
+      <section class="panel viewer">
+        <canvas id="sliceCanvas" width="640" height="640"></canvas>
+        <div class="colorbarPanel">
+          <canvas id="colorbarCanvas" class="colorbarCanvas" width="640" height="26"></canvas>
+          <div class="colorbarLabels">
+            <span id="colorbarMin"></span>
+            <span id="colorbarMid"></span>
+            <span id="colorbarMax"></span>
+          </div>
+        </div>
+        <div class="viewerToolbar">
+          <div class="modeButtons">
+            <button id="modeInspectBtn" type="button">Inspect</button>
+            <button id="modeZoomBtn" type="button">Zoom</button>
+          </div>
+          <label class="coordSystemControl">
+            Coords
+            <select id="coordSystemSelect">
+              <option value="native">Native</option>
+              <option value="pixel">Pixel</option>
+              <option value="galactic">Galactic</option>
+            </select>
+          </label>
+          <button id="exportZoomBtn" class="tinyBtn toolbarExport" type="button" disabled>Export Zoom</button>
+          <button id="resetZoomBtn" class="tinyBtn toolbarReset" type="button">Reset</button>
+        </div>
+      </section>
+
+      <div id="rightSplitter" class="colSplitter" role="separator" aria-orientation="vertical" aria-label="Resize right panel"></div>
+
+      <section id="metricsPanel" class="panel metrics">
+        <h2 id="metricsTitle">Inspect</h2>
+        <p id="metricsHint">Click for point or drag for area.</p>
+        <div id="hoverReadout" class="hoverReadout">Move cursor over the image to inspect coordinates and flux.</div>
+        <div id="timeProfileBlock">
+          <h2>Time Flux Profile</h2>
+          <canvas id="timeProfileCanvas" class="profileCanvas" width="300" height="180"></canvas>
+        </div>
+        <div id="spectrumProfileBlock">
+          <h2>Spectral Flux Profile</h2>
+          <canvas id="spectrumProfileCanvas" class="profileCanvas" width="300" height="180"></canvas>
+        </div>
+        <div id="spatialProfileBlock">
+          <h2 id="spatialProfileTitle">Spatial Flux Profile</h2>
+          <canvas id="spatialProfileCanvas" class="profileCanvas" width="300" height="180"></canvas>
+        </div>
+      </section>
+      </div>
+    </main>
+
+    <dialog id="exportDialog" class="exportDialog">
+      <form method="dialog" class="exportDialogForm">
+        <h2>Export Zoom Cutout</h2>
+        <label>
+          Data Format
+          <select id="exportFormatSelect">
+            <option value="fits">FITS (.fits)</option>
+            <option value="hdf5">HDF5 (.h5)</option>
+          </select>
+          <span id="exportFormatNote" class="exportFormatNote"></span>
+        </label>
+        <label>
+          Save Location
+          <div class="exportLocationRow">
+            <input id="exportLocationInput" type="text" readonly placeholder="Choose a destination folder" />
+            <button id="exportBrowseBtn" class="tinyBtn" type="button">Browse</button>
+          </div>
+        </label>
+        <label>
+          File Name
+          <input id="exportFilenameInput" type="text" placeholder="cutout.fits" />
+        </label>
+        <label class="exportOverwriteRow">
+          <input id="exportOverwriteChk" type="checkbox" checked />
+          Overwrite existing file
+        </label>
+        <div id="exportStatus" class="exportStatus"></div>
+        <div class="exportDialogActions">
+          <button id="exportCancelBtn" class="tinyBtn" type="button">Cancel</button>
+          <button id="exportConfirmBtn" class="tinyBtn" type="button">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/static/app.js?v=20260302u"></script>
+  </body>
+</html>

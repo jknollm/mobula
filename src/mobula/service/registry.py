@@ -8,6 +8,7 @@ from threading import RLock
 
 from mobula.data.loaders import load_by_extension, pad_dataset_to_canonical
 from mobula.data.mock_cube import MockCubeConfig, generate_mock_dataset
+from mobula.paths import default_seeded_manifest_path
 from mobula.data.schema import CubeDataset
 
 
@@ -69,7 +70,7 @@ class DatasetRegistry:
         self._lock = RLock()
         self._datasets: dict[str, CubeDataset] = {}
         self._lazy_datasets: dict[str, tuple[DatasetSummary, Callable[[], CubeDataset]]] = {}
-        default_manifest = Path(__file__).resolve().parents[3] / "data" / "seeded" / "manifest.json"
+        default_manifest = default_seeded_manifest_path()
         self._seeded_manifest_path = Path(seeded_manifest_path).expanduser().resolve() if seeded_manifest_path else default_manifest
         self._register_lazy_defaults()
         self._register_seeded_local_datasets()

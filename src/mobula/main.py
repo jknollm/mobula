@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -9,8 +10,26 @@ from fastapi.staticfiles import StaticFiles
 from mobula.service.api import build_router
 from mobula.service.registry import DatasetRegistry
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-STATIC_DIR = BASE_DIR / "static"
+
+def _resolve_static_dir() -> Path:
+    env_static = os.environ.get("MOBULA_STATIC_DIR")
+    if env_static:
+        path = Path(env_static).expanduser().resolve()
+        if path.is_dir():
+            return path
+
+    package_static = Path(__file__).resolve().parent / "static"
+    if package_static.is_dir():
+        return package_static
+
+    repo_static = Path(__file__).resolve().parents[2] / "static"
+    if repo_static.is_dir():
+        return repo_static
+
+    raise RuntimeError("Unable to locate static assets directory.")
+
+
+STATIC_DIR = _resolve_static_dir()
 
 registry = DatasetRegistry()
 registry.ensure_default_datasets()

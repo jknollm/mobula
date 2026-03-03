@@ -43,6 +43,21 @@ python -m pip install -r requirements.txt
 PYTHONPATH=src uvicorn mobula.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
+## Option C: Install CLI
+
+```bash
+python -m pip install .
+mobula
+```
+
+Default bind: `127.0.0.1:8000`
+
+Optional:
+
+```bash
+mobula --host 0.0.0.0 --port 9000 --reload
+```
+
 ## Install Notes
 
 - The backend serves static UI assets from `static/`; no separate frontend build step is required.

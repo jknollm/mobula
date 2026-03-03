@@ -74,5 +74,4 @@ Requires app to be running.
 ## Current Constraints
 
 - Local-data workflow only; no remote data source integration
-- No packaging config yet (`pyproject.toml`/wheel not present)
 - Static frontend delivered directly by backend; no JS build pipeline in repo

@@ -24,6 +24,19 @@ Open:
 - Viewer: [http://127.0.0.1:8000](http://127.0.0.1:8000)
 - API docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
+## Install CLI
+
+```bash
+python -m pip install .
+mobula
+```
+
+Optional flags:
+
+```bash
+mobula --host 127.0.0.1 --port 8000 --reload
+```
+
 ## Documentation
 
 - [Docs Index](./docs/README.md)
@@ -90,5 +103,5 @@ python scripts/generate_brand_banners.py
 ## Current Scope
 
 - Local data workflows only
-- No packaging/release pipeline configured yet
+- Python package install supported (`mobula` CLI)
 - Frontend served as static assets by FastAPI
