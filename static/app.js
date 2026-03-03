@@ -1,6 +1,6 @@
 import { createGpuRenderers } from "./app_gpu.js";
 import { bindCanvasInteractions } from "./app_interactions.js";
-import { fetchJson, createRequestBuilders } from "./app_requests.js";
+import { fetchJson as fetchJsonBase, createRequestBuilders } from "./app_requests.js";
 import { resetForDatasetChange, resetForPlaneChange } from "./app_state_transitions.js";
 
 const PLANE_OPTIONS = {
@@ -100,6 +100,7 @@ const els = {
   temporalControlGroup: document.getElementById("temporalControlGroup"),
   spectralControlGroup: document.getElementById("spectralControlGroup"),
   polarizationControlGroup: document.getElementById("polarizationControlGroup"),
+  datasetTabs: document.getElementById("datasetTabs"),
 
   datasetSelect: document.getElementById("datasetSelect"),
   systemPickerBtn: document.getElementById("systemPickerBtn"),
@@ -164,10 +165,12 @@ const els = {
   volumeOpacityValue: document.getElementById("volumeOpacityValue"),
   volumeGammaRange: document.getElementById("volumeGammaRange"),
   volumeGammaValue: document.getElementById("volumeGammaValue"),
-  volumeClipNearRange: document.getElementById("volumeClipNearRange"),
-  volumeClipNearValue: document.getElementById("volumeClipNearValue"),
-  volumeClipFarRange: document.getElementById("volumeClipFarRange"),
-  volumeClipFarValue: document.getElementById("volumeClipFarValue"),
+  volumeClipRangeBlock: document.getElementById("volumeClipRangeBlock"),
+  volumeClipRangeTrack: document.getElementById("volumeClipRangeTrack"),
+  volumeClipRangeMin: document.getElementById("volumeClipRangeMin"),
+  volumeClipRangeMax: document.getElementById("volumeClipRangeMax"),
+  volumeClipRangeMinValue: document.getElementById("volumeClipRangeMinValue"),
+  volumeClipRangeMaxValue: document.getElementById("volumeClipRangeMaxValue"),
   volumeSphereRangeBlock: document.getElementById("volumeSphereRangeBlock"),
   volumeSphereRangeTrack: document.getElementById("volumeSphereRangeTrack"),
   volumeSphereRangeMin: document.getElementById("volumeSphereRangeMin"),
@@ -246,8 +249,11 @@ const els = {
   spatialProfileCanvas: document.getElementById("spatialProfileCanvas"),
 };
 
-const state = {
+function createViewerState() {
+  return {
   dataId: null,
+  pickerStatusMessage: "",
+  pickerStatusError: false,
   meta: null,
   plane: "xy",
   values: { sample: 0, pol: 0, t: 0, nu: 0, x: 0, y: 0, z: 0 },
@@ -399,7 +405,10 @@ const state = {
     renderer: null,
     lastError: "",
   },
-};
+  };
+}
+
+const state = createViewerState();
 
 const PROFILE_MARGIN = { l: 102, r: 18, t: 16, b: 62 };
 const NAV_MARGIN = { l: 40, r: 8, t: 6, b: 8 };
@@ -421,6 +430,8 @@ const COLOR_RANGE_MODE_OPTIONS = [
 ];
 const COLOR_NORM_SLIDER_STEPS = 1000;
 const COLOR_NORM_SLIDER_MIN_GAP = 1 / COLOR_NORM_SLIDER_STEPS;
+const VOLUME_CLIP_RANGE_STEPS = 1000;
+const VOLUME_CLIP_MIN_GAP = 0.01;
 const VOLUME_SPHERE_RANGE_STEPS = 1000;
 const VOLUME_SPHERE_MIN_GAP = 1 / VOLUME_SPHERE_RANGE_STEPS;
 const VOLUME_SPHERE_NSITE_MIN = 1;
@@ -443,7 +454,85 @@ const EQ_TO_GAL_MATRIX = [
   [0.4941094279, -0.44482963, 0.7469822445],
   [-0.867666149, -0.1980763734, 0.4559837762],
 ];
+const DATASET_TAB_LABEL_MAX = 42;
 let viewerDropDragDepth = 0;
+let stateEpoch = 0;
+let activeRequestController = new AbortController();
+const datasetTabs = [];
+let activeDatasetTabId = null;
+let nextDatasetTabId = 1;
+
+function isAbortError(err) {
+  return Boolean(err && (err.name === "AbortError" || /aborted/i.test(String(err.message || ""))));
+}
+
+function makeAbortError(message = "aborted") {
+  if (typeof DOMException === "function") return new DOMException(message, "AbortError");
+  const err = new Error(message);
+  err.name = "AbortError";
+  return err;
+}
+
+function assertEpoch(epoch) {
+  if (epoch !== stateEpoch) throw makeAbortError("stale state epoch");
+}
+
+function bumpStateEpoch() {
+  stateEpoch += 1;
+  try {
+    activeRequestController.abort();
+  } catch (_) {
+    // ignore abort errors
+  }
+  activeRequestController = new AbortController();
+}
+
+function activeEpoch() {
+  return stateEpoch;
+}
+
+function cloneSessionValue(value) {
+  if (value === null || value === undefined) return value;
+  if (Array.isArray(value)) {
+    // Large data payload arrays (slice/volume values) are treated as immutable and reused by reference.
+    if (value.length > 4096) return value;
+    return value.map((entry) => cloneSessionValue(entry));
+  }
+  if (typeof value === "object") {
+    if (Object.getPrototypeOf(value) !== Object.prototype) {
+      return value;
+    }
+    const out = {};
+    for (const [key, nested] of Object.entries(value)) {
+      out[key] = cloneSessionValue(nested);
+    }
+    return out;
+  }
+  return value;
+}
+
+function snapshotState() {
+  return cloneSessionValue(state);
+}
+
+function restoreState(snapshot) {
+  const base = createViewerState();
+  const source = snapshot && typeof snapshot === "object" ? snapshot : base;
+  const merged = { ...base, ...source };
+
+  for (const key of Object.keys(state)) {
+    if (!(key in merged)) delete state[key];
+  }
+  for (const [key, value] of Object.entries(merged)) {
+    state[key] = cloneSessionValue(value);
+  }
+}
+
+async function fetchJson(url, options = null) {
+  const opts = options ? { ...options } : {};
+  if (!opts.signal) opts.signal = activeRequestController.signal;
+  return fetchJsonBase(url, opts);
+}
 
 function planeDims() {
   return PLANE_OPTIONS[state.plane] || PLANE_OPTIONS.xy;
@@ -733,9 +822,62 @@ function setSliderFill(rangeEl) {
 function updateVolumeSliderTrackFill() {
   setSliderFill(els.volumeOpacityRange);
   setSliderFill(els.volumeGammaRange);
-  setSliderFill(els.volumeClipNearRange);
-  setSliderFill(els.volumeClipFarRange);
   setSliderFill(els.volumeIsoThresholdRange);
+}
+
+function setVolumeClipRangeActiveHandle(bound = null) {
+  if (!els.volumeClipRangeMin || !els.volumeClipRangeMax) return;
+  els.volumeClipRangeMin.classList.toggle("isActive", bound === "min");
+  els.volumeClipRangeMax.classList.toggle("isActive", bound === "max");
+}
+
+function syncVolumeClipRangeStateFromSteps(activeBound = null) {
+  if (!els.volumeClipRangeMin || !els.volumeClipRangeMax) return;
+  const minStep = Number.parseInt(els.volumeClipRangeMin.value, 10);
+  const maxStep = Number.parseInt(els.volumeClipRangeMax.value, 10);
+  if (!Number.isFinite(minStep) || !Number.isFinite(maxStep)) return;
+
+  let low = clamp(minStep / VOLUME_CLIP_RANGE_STEPS, 0, 0.95);
+  let high = clamp(maxStep / VOLUME_CLIP_RANGE_STEPS, 0.05, 1);
+  if (high <= low + VOLUME_CLIP_MIN_GAP) {
+    if (activeBound === "min") high = clamp(low + VOLUME_CLIP_MIN_GAP, 0.05, 1);
+    else low = clamp(high - VOLUME_CLIP_MIN_GAP, 0, 0.95);
+  }
+  low = clamp(low, 0, 0.95);
+  high = clamp(high, low + VOLUME_CLIP_MIN_GAP, 1);
+  state.volumeRender.clipNear = low;
+  state.volumeRender.clipFar = high;
+}
+
+function updateVolumeClipRangeUi() {
+  if (
+    !els.volumeClipRangeTrack ||
+    !els.volumeClipRangeMin ||
+    !els.volumeClipRangeMax ||
+    !els.volumeClipRangeMinValue ||
+    !els.volumeClipRangeMaxValue
+  ) {
+    return;
+  }
+  const low = clamp(state.volumeRender.clipNear, 0, 0.95);
+  const high = clamp(state.volumeRender.clipFar, Math.max(low + VOLUME_CLIP_MIN_GAP, 0.05), 1);
+  state.volumeRender.clipNear = low;
+  state.volumeRender.clipFar = high;
+
+  const minStep = Math.round(low * VOLUME_CLIP_RANGE_STEPS);
+  const maxStep = Math.round(high * VOLUME_CLIP_RANGE_STEPS);
+  els.volumeClipRangeMin.value = String(minStep);
+  els.volumeClipRangeMax.value = String(maxStep);
+
+  const leftPct = (100 * minStep) / VOLUME_CLIP_RANGE_STEPS;
+  const rightPct = (100 * maxStep) / VOLUME_CLIP_RANGE_STEPS;
+  els.volumeClipRangeTrack.style.setProperty("--range-left", `${leftPct.toFixed(3)}%`);
+  els.volumeClipRangeTrack.style.setProperty("--range-right", `${rightPct.toFixed(3)}%`);
+
+  els.volumeClipRangeMinValue.textContent = low.toFixed(2);
+  els.volumeClipRangeMaxValue.textContent = high.toFixed(2);
+  els.volumeClipRangeMinValue.style.left = `${clamp(leftPct, 2, 98).toFixed(3)}%`;
+  els.volumeClipRangeMaxValue.style.left = `${clamp(rightPct, 2, 98).toFixed(3)}%`;
 }
 
 function setVolumeSphereRangeActiveHandle(bound = null) {
@@ -803,26 +945,22 @@ function updateVolumeControlReadouts() {
   if (els.volumeTfSelect) els.volumeTfSelect.value = state.volumeRender.tf;
   if (els.volumeOpacityRange) els.volumeOpacityRange.value = String(state.volumeRender.opacity);
   if (els.volumeGammaRange) els.volumeGammaRange.value = String(state.volumeRender.gamma);
-  if (els.volumeClipNearRange) els.volumeClipNearRange.value = String(state.volumeRender.clipNear);
-  if (els.volumeClipFarRange) els.volumeClipFarRange.value = String(state.volumeRender.clipFar);
   if (els.volumeIsoThresholdRange) els.volumeIsoThresholdRange.value = String(state.volumeRender.isoThreshold);
   if (els.volumeOpacityValue) els.volumeOpacityValue.textContent = `${state.volumeRender.opacity.toFixed(1)}x`;
   if (els.volumeGammaValue) els.volumeGammaValue.textContent = state.volumeRender.gamma.toFixed(2);
-  if (els.volumeClipNearValue) els.volumeClipNearValue.textContent = state.volumeRender.clipNear.toFixed(2);
-  if (els.volumeClipFarValue) els.volumeClipFarValue.textContent = state.volumeRender.clipFar.toFixed(2);
   if (els.volumeIsoThresholdValue) els.volumeIsoThresholdValue.textContent = state.volumeRender.isoThreshold.toFixed(2);
   const sphericalMode = isVolumeSphericalMode();
   const compositeLike = state.volumeRender.mode === "composite" || sphericalMode;
   const isoMode = state.volumeRender.mode === "isosurface";
   setVisible(els.volumeSphereProjectionLabel, sphericalMode);
   setVisible(els.volumeSphereNsiteLabel, sphericalMode);
+  setVisible(els.volumeClipRangeBlock, !sphericalMode);
   setVisible(els.volumeSphereRangeBlock, sphericalMode);
-  setVisible(els.volumeClipNearRange ? els.volumeClipNearRange.closest("label") : null, !sphericalMode);
-  setVisible(els.volumeClipFarRange ? els.volumeClipFarRange.closest("label") : null, !sphericalMode);
   setVisible(els.volumeTfSelect ? els.volumeTfSelect.closest("label") : null, compositeLike);
   setVisible(els.volumeOpacityRange ? els.volumeOpacityRange.closest("label") : null, compositeLike);
   setVisible(els.volumeGammaRange ? els.volumeGammaRange.closest("label") : null, compositeLike);
   setVisible(els.volumeIsoThresholdLabel, isoMode);
+  if (!sphericalMode) updateVolumeClipRangeUi();
   updateVolumeSphereRangeUi();
   updateVolumeSliderTrackFill();
   if (els.volumeBackendStatus) {
@@ -3110,21 +3248,10 @@ function onVolumeRenderControlChange() {
     if (els.volumeSphereRangeMax && document.activeElement === els.volumeSphereRangeMax) activeBound = "max";
     syncVolumeSphereRangeStateFromSteps(activeBound);
   } else {
-    if (els.volumeClipNearRange) {
-      const v = Number.parseFloat(els.volumeClipNearRange.value);
-      if (Number.isFinite(v)) state.volumeRender.clipNear = clamp(v, 0, 0.95);
-    }
-    if (els.volumeClipFarRange) {
-      const v = Number.parseFloat(els.volumeClipFarRange.value);
-      if (Number.isFinite(v)) state.volumeRender.clipFar = clamp(v, 0.05, 1.0);
-    }
-    if (state.volumeRender.clipFar <= state.volumeRender.clipNear + 0.01) {
-      if (els.volumeClipNearRange && document.activeElement === els.volumeClipNearRange) {
-        state.volumeRender.clipFar = clamp(state.volumeRender.clipNear + 0.01, 0.05, 1.0);
-      } else {
-        state.volumeRender.clipNear = clamp(state.volumeRender.clipFar - 0.01, 0, 0.95);
-      }
-    }
+    let activeBound = null;
+    if (els.volumeClipRangeMin && document.activeElement === els.volumeClipRangeMin) activeBound = "min";
+    if (els.volumeClipRangeMax && document.activeElement === els.volumeClipRangeMax) activeBound = "max";
+    syncVolumeClipRangeStateFromSteps(activeBound);
   }
   if (els.volumeIsoThresholdRange) {
     const v = Number.parseFloat(els.volumeIsoThresholdRange.value);
@@ -5805,8 +5932,14 @@ async function refreshFixedColorRange() {
     return;
   }
 
-  const data = await fetchJson(`/api/datasets/${state.dataId}/intensity-range?${buildRangeParams().toString()}`);
-  state.fixedColorRange = isValidRangeStats(data) ? data : null;
+  const epoch = activeEpoch();
+  try {
+    const data = await fetchJson(`/api/datasets/${state.dataId}/intensity-range?${buildRangeParams().toString()}`);
+    assertEpoch(epoch);
+    state.fixedColorRange = isValidRangeStats(data) ? data : null;
+  } catch (err) {
+    if (!isAbortError(err)) throw err;
+  }
 }
 
 async function refreshEvpaTicks() {
@@ -5816,10 +5949,12 @@ async function refreshEvpaTicks() {
     return;
   }
 
+  const epoch = activeEpoch();
   try {
     if (isSamplesMode() && state.sampleGridIndices.length > 1) {
       const samples = state.sampleGridIndices.slice();
       const tickSets = await Promise.all(samples.map((sampleIdx) => fetchEvpaTicksForSample(sampleIdx)));
+      assertEpoch(epoch);
       const bySample = {};
       for (let i = 0; i < samples.length; i += 1) {
         bySample[String(samples[i])] = tickSets[i];
@@ -5829,9 +5964,11 @@ async function refreshEvpaTicks() {
       state.evpaTicks = bySample[String(activeSample)] || [];
     } else {
       state.evpaTicks = await fetchEvpaTicksForSample(state.values.sample);
+      assertEpoch(epoch);
       state.evpaTicksBySample = {};
     }
   } catch (err) {
+    if (isAbortError(err)) return;
     console.warn("EVPA overlay unavailable:", err);
     state.evpaTicks = [];
     state.evpaTicksBySample = {};
@@ -6125,6 +6262,9 @@ async function setSpatialMode(mode) {
 
 async function refreshSlice(options = {}) {
   if (!state.dataId) return;
+  const epoch = activeEpoch();
+  const ensureActive = () => assertEpoch(epoch);
+  try {
   state.hoverProbe = null;
   const playbackMode = options.playback === true;
   const lodMaxPixels = playbackMode && !isSphereMode() ? playbackMaxPixelsForFrame() : null;
@@ -6144,6 +6284,7 @@ async function refreshSlice(options = {}) {
   const evpaPromise = state.showEvpa && !isVolumeMode() && !isSphereMode() ? refreshEvpaTicks() : Promise.resolve();
   if (!playbackMode) {
     await refreshFixedColorRange();
+    ensureActive();
   }
 
   if (isVolumeMode()) {
@@ -6156,19 +6297,25 @@ async function refreshSlice(options = {}) {
     state.evpaTicksBySample = {};
     if (isSampleMorphMode()) {
       await evpaPromise;
+      ensureActive();
       const preserveAlpha = playbackMode || Boolean(state.sampleMorph.fromCanvas && state.sampleMorph.toCanvas);
       await prepareSampleMorphPair(lodMaxPixels, preserveAlpha);
+      ensureActive();
     } else if (state.sampleMode === "single") {
       const sampleIndices = state.sampleGridIndices.slice();
       const volumes = await Promise.all(
         sampleIndices.map((sampleIdx) => (isDerivedPolModeActive() ? fetchDerivedVolume(sampleIdx) : fetchVolume(sampleIdx)))
       );
+      ensureActive();
       await evpaPromise;
+      ensureActive();
       state.currentVolumeTiles = volumes;
       state.currentVolume = null;
     } else {
       const volume = isDerivedPolModeActive() ? await fetchDerivedVolume(undefined) : await fetchVolume(undefined);
+      ensureActive();
       await evpaPromise;
+      ensureActive();
       state.currentVolume = volume;
       state.currentVolumeTiles = null;
     }
@@ -6177,6 +6324,7 @@ async function refreshSlice(options = {}) {
       rerenderVolumeFrame();
     }
     await refreshViewProfiles();
+    ensureActive();
     syncSampleMorphPlayback();
     updateExportButtonState();
     updateHoverReadout();
@@ -6191,10 +6339,12 @@ async function refreshSlice(options = {}) {
 
   if (isSampleMorphMode()) {
     await evpaPromise;
+    ensureActive();
     state.currentMultispectralBands = null;
     const preserveAlpha =
       !state.sampleMorph.initializing && (playbackMode || Boolean(state.sampleMorph.fromSlice && state.sampleMorph.toSlice));
     await prepareSampleMorphPair(lodMaxPixels, preserveAlpha);
+    ensureActive();
   } else if (state.sampleMode === "single") {
     const sampleIndices = state.sampleGridIndices.slice();
     if (isMultiSpectralActive()) {
@@ -6203,7 +6353,9 @@ async function refreshSlice(options = {}) {
           fetchJson(`/api/datasets/${state.dataId}/multispectral?${buildMultispectralParams(sampleIdx, lodMaxPixels).toString()}`)
         )
       );
+      ensureActive();
       await evpaPromise;
+      ensureActive();
       const activeIdx = clamp(state.activeSampleTile, 0, Math.max(0, mosaics.length - 1));
       const primary = mosaics[activeIdx] || mosaics[0];
       state.currentMonoSlice = null;
@@ -6224,7 +6376,9 @@ async function refreshSlice(options = {}) {
             : fetchJson(`/api/datasets/${state.dataId}/slice?${buildSliceParams(undefined, sampleIdx, state.values.pol, state.sampleMode, lodMaxPixels).toString()}`)
         )
       );
+      ensureActive();
       await evpaPromise;
+      ensureActive();
       state.currentMultispectralBands = null;
       state.currentMultispectralSlice = null;
       state.currentMultispectralTiles = null;
@@ -6245,7 +6399,9 @@ async function refreshSlice(options = {}) {
     state.currentMonoSliceTiles = null;
     if (isMultiSpectralActive()) {
       const ms = await fetchJson(`/api/datasets/${state.dataId}/multispectral?${buildMultispectralParams(undefined, lodMaxPixels).toString()}`);
+      ensureActive();
       await evpaPromise;
+      ensureActive();
       state.currentMonoSlice = null;
       state.currentMultispectralBands = ms.bands || null;
       state.currentMultispectralSlice = ms;
@@ -6261,7 +6417,9 @@ async function refreshSlice(options = {}) {
         : await fetchJson(
             `/api/datasets/${state.dataId}/slice?${buildSliceParams(undefined, undefined, state.values.pol, state.sampleMode, lodMaxPixels).toString()}`
           );
+      ensureActive();
       await evpaPromise;
+      ensureActive();
       state.currentMonoSlice = slice;
       state.currentMultispectralBands = null;
       state.currentMultispectralSlice = null;
@@ -6278,6 +6436,7 @@ async function refreshSlice(options = {}) {
 
   if (!playbackMode) {
     await refreshViewProfiles();
+    ensureActive();
   } else {
     drawNavigationGraphs();
     if (state.selection) drawSelectionGraphs();
@@ -6285,6 +6444,9 @@ async function refreshSlice(options = {}) {
   syncSampleMorphPlayback();
   updateExportButtonState();
   updateHoverReadout();
+  } catch (err) {
+    if (!isAbortError(err)) throw err;
+  }
 }
 
 function profileForAxis(source, axis) {
@@ -6803,6 +6965,7 @@ async function refreshSelectionAnalytics() {
     return;
   }
 
+  const epoch = activeEpoch();
   const bounds = selectionBounds();
   if (!bounds) return;
   const token = ++state._selectionToken;
@@ -6836,10 +6999,12 @@ async function refreshSelectionAnalytics() {
         body: JSON.stringify(profileRequestBody(bounds)),
       });
     }
+    assertEpoch(epoch);
     if (token !== state._selectionToken) return;
     state.profiles = profiles;
   } catch (err) {
     if (token !== state._selectionToken) return;
+    if (isAbortError(err)) return;
     console.error(err);
     state.profiles = null;
   }
@@ -6849,6 +7014,7 @@ async function refreshSelectionAnalytics() {
 
 async function refreshViewProfiles() {
   if (!state.dataId || (!state.frameCanvas && !(state.frameTiles && state.frameTiles.length))) return;
+  const epoch = activeEpoch();
   const token = ++state._viewProfileToken;
   const bounds = currentViewBounds();
 
@@ -6888,10 +7054,12 @@ async function refreshViewProfiles() {
         body: JSON.stringify(profileRequestBody(bounds)),
       });
     }
+    assertEpoch(epoch);
     if (token !== state._viewProfileToken) return;
     state.viewProfiles = profiles;
   } catch (err) {
     if (token !== state._viewProfileToken) return;
+    if (isAbortError(err)) return;
     console.error(err);
     state.viewProfiles = null;
   }
@@ -7318,6 +7486,225 @@ async function onPlaneChange() {
   await refreshSlice();
 }
 
+function normalizeTabLabel(label) {
+  const txt = String(label || "").trim();
+  if (!txt) return "Untitled";
+  if (txt.length <= DATASET_TAB_LABEL_MAX) return txt;
+  return `${txt.slice(0, DATASET_TAB_LABEL_MAX - 1)}…`;
+}
+
+function createDatasetTab(baseLabel = null) {
+  const id = `tab-${nextDatasetTabId}`;
+  nextDatasetTabId += 1;
+  const fallbackLabel = baseLabel || `Tab ${nextDatasetTabId - 1}`;
+  return {
+    id,
+    fallbackLabel,
+    label: String(fallbackLabel || "").trim() || "Untitled",
+    snapshot: createViewerState(),
+  };
+}
+
+function activeDatasetTab() {
+  return datasetTabs.find((tab) => tab.id === activeDatasetTabId) || null;
+}
+
+function tabLabelForState(tabSnapshot, fallbackLabel) {
+  const dataId = String(tabSnapshot?.dataId || "").trim();
+  if (!dataId) return String(fallbackLabel || "").trim() || "Untitled";
+  return dataId;
+}
+
+function syncActiveTabSnapshot() {
+  const tab = activeDatasetTab();
+  if (!tab) return;
+  tab.snapshot = snapshotState();
+  tab.label = tabLabelForState(tab.snapshot, tab.fallbackLabel);
+}
+
+function refreshActiveTabLabel() {
+  const tab = activeDatasetTab();
+  if (!tab) return;
+  tab.label = tabLabelForState(state, tab.fallbackLabel);
+  renderDatasetTabs();
+}
+
+function renderDatasetTabs() {
+  if (!els.datasetTabs) return;
+  els.datasetTabs.innerHTML = "";
+
+  const createAddButton = () => {
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "datasetTabAddBtn";
+    addBtn.textContent = "+";
+    addBtn.title = "Create new dataset tab";
+    addBtn.setAttribute("aria-label", "Create new dataset tab");
+    addBtn.addEventListener("click", async () => {
+      await addDatasetTabAndActivate();
+    });
+    return addBtn;
+  };
+
+  for (let i = 0; i < datasetTabs.length; i += 1) {
+    const tab = datasetTabs[i];
+    const isActive = tab.id === activeDatasetTabId;
+    const fullLabel = String(tab.label || "").trim() || "Untitled";
+    const displayLabel = isActive ? fullLabel : normalizeTabLabel(fullLabel);
+    const item = document.createElement("div");
+    item.className = "datasetTabItem";
+    item.classList.toggle("isActive", isActive);
+
+    const selectBtn = document.createElement("button");
+    selectBtn.type = "button";
+    selectBtn.className = "datasetTabBtn";
+    selectBtn.textContent = displayLabel;
+    selectBtn.title = fullLabel;
+    selectBtn.setAttribute("role", "tab");
+    selectBtn.dataset.tabId = tab.id;
+    selectBtn.setAttribute("aria-selected", isActive ? "true" : "false");
+    selectBtn.addEventListener("click", async () => {
+      await activateDatasetTab(tab.id);
+    });
+    item.appendChild(selectBtn);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "datasetTabCloseBtn";
+    closeBtn.textContent = "x";
+    closeBtn.title = `Close ${fullLabel}`;
+    closeBtn.setAttribute("aria-label", `Close ${fullLabel}`);
+    closeBtn.disabled = datasetTabs.length <= 1;
+    closeBtn.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      await closeDatasetTab(tab.id);
+    });
+    item.appendChild(closeBtn);
+
+    els.datasetTabs.appendChild(item);
+  }
+  els.datasetTabs.appendChild(createAddButton());
+}
+
+function ensureActiveTabVisible() {
+  if (!els.datasetTabs) return;
+  const activeBtn = els.datasetTabs.querySelector(".datasetTabItem.isActive");
+  if (!activeBtn) return;
+  activeBtn.scrollIntoView({ inline: "nearest", block: "nearest", behavior: "smooth" });
+}
+
+function syncUiToState() {
+  if (els.datasetSelect) {
+    const wanted = state.dataId || "";
+    if (els.datasetSelect.value !== wanted) {
+      els.datasetSelect.value = wanted;
+    }
+  }
+  if (els.colorMapSelect) els.colorMapSelect.value = state.colorMap;
+  if (els.colorRangeModeSelect) els.colorRangeModeSelect.value = state.colorRangeMode;
+  if (els.sliceBackendSelect) els.sliceBackendSelect.value = state.sliceRender.backend;
+  if (els.playSpeedSelect) els.playSpeedSelect.value = String(state.playbackFps);
+  if (els.sampleMorphDeltaSelect) els.sampleMorphDeltaSelect.value = String(state.sampleMorphDeltaT);
+  if (els.coordSystemSelect) els.coordSystemSelect.value = state.coordSystem;
+  setSystemPickerStatus(state.pickerStatusMessage || "", Boolean(state.pickerStatusError));
+}
+
+async function activateDatasetTab(tabId) {
+  const target = datasetTabs.find((tab) => tab.id === tabId);
+  if (!target || target.id === activeDatasetTabId) return;
+
+  try {
+    stopPlayback();
+    stopSampleMorphPlayback();
+    syncActiveTabSnapshot();
+    activeDatasetTabId = target.id;
+    bumpStateEpoch();
+    restoreState(target.snapshot);
+    syncUiToState();
+    renderDatasetTabs();
+    ensureActiveTabVisible();
+    updateControlCaps();
+
+    if (state.dataId && !state.meta) {
+      try {
+        state.meta = await fetchJson(`/api/datasets/${state.dataId}/meta`);
+      } catch (err) {
+        if (!isAbortError(err)) {
+          setSystemPickerStatus(`Failed to restore tab dataset: ${err.message}`, true);
+        }
+        return;
+      }
+    }
+
+    if (state.dataId) {
+      const hasFrame = Boolean(state.frameCanvas || (state.frameTiles && state.frameTiles.length));
+      if (!hasFrame) {
+        await refreshSlice();
+        if (state.selection) await refreshSelectionAnalytics();
+        else drawSelectionGraphs();
+      } else {
+        drawFrameAndOverlays();
+        drawNavigationGraphs();
+        drawSelectionGraphs();
+        drawColorbar();
+      }
+      return;
+    }
+
+    drawFrameAndOverlays();
+    drawNavigationGraphs();
+    drawSelectionGraphs();
+    drawColorbar();
+  } catch (err) {
+    if (!isAbortError(err)) {
+      setSystemPickerStatus(`Tab switch failed: ${err.message}`, true);
+    }
+  }
+}
+
+async function addDatasetTabAndActivate() {
+  syncActiveTabSnapshot();
+  const tab = createDatasetTab();
+  datasetTabs.push(tab);
+  renderDatasetTabs();
+  await activateDatasetTab(tab.id);
+  setSystemPickerStatus("New tab ready. Load a dataset to begin.");
+}
+
+async function closeDatasetTab(tabId) {
+  const idx = datasetTabs.findIndex((tab) => tab.id === tabId);
+  if (idx < 0) return;
+
+  syncActiveTabSnapshot();
+  const closingActive = datasetTabs[idx].id === activeDatasetTabId;
+
+  if (datasetTabs.length <= 1) {
+    const onlyTab = datasetTabs[0];
+    onlyTab.snapshot = createViewerState();
+    onlyTab.label = tabLabelForState(onlyTab.snapshot, onlyTab.fallbackLabel);
+    activeDatasetTabId = onlyTab.id;
+    bumpStateEpoch();
+    restoreState(onlyTab.snapshot);
+    syncUiToState();
+    updateControlCaps();
+    drawFrameAndOverlays();
+    drawNavigationGraphs();
+    drawSelectionGraphs();
+    drawColorbar();
+    renderDatasetTabs();
+    return;
+  }
+
+  datasetTabs.splice(idx, 1);
+  renderDatasetTabs();
+  if (!closingActive) return;
+
+  const fallback = datasetTabs[idx] || datasetTabs[idx - 1] || datasetTabs[0];
+  if (!fallback) return;
+  await activateDatasetTab(fallback.id);
+}
+
 function isDemoDatasetSummary(ds) {
   const source = String(ds?.source || "").toLowerCase();
   const dataId = String(ds?.data_id || "").toLowerCase();
@@ -7330,7 +7717,9 @@ function isSeededDatasetSummary(ds) {
 }
 
 async function refreshDatasetOptions(preferredDataId = null) {
+  const epoch = activeEpoch();
   const list = await fetchJson("/api/datasets");
+  assertEpoch(epoch);
   const visibleDatasets = Array.isArray(list.datasets) ? list.datasets.filter((ds) => !isSeededDatasetSummary(ds)) : [];
   const previous = state.dataId;
   const selected = preferredDataId || previous;
@@ -7363,9 +7752,13 @@ async function refreshDatasetOptions(preferredDataId = null) {
 }
 
 function setSystemPickerStatus(message, isError = false) {
+  const nextMessage = message || "";
+  const nextError = Boolean(isError);
+  state.pickerStatusMessage = nextMessage;
+  state.pickerStatusError = nextError;
   if (!els.systemPickerStatus) return;
-  els.systemPickerStatus.textContent = message || "";
-  els.systemPickerStatus.classList.toggle("error", Boolean(isError));
+  els.systemPickerStatus.textContent = nextMessage;
+  els.systemPickerStatus.classList.toggle("error", nextError);
 }
 
 function shouldOfferAxisMapping(message) {
@@ -7508,6 +7901,7 @@ function installDatasetDropHandlers() {
 }
 
 async function loadDatasetFromLocalPath(path, options = {}) {
+  const epoch = activeEpoch();
   const dims = Array.isArray(options.dims) ? options.dims : null;
   const padMissingDims = Boolean(options.padMissingDims);
   if (dims && dims.length) {
@@ -7526,7 +7920,9 @@ async function loadDatasetFromLocalPath(path, options = {}) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    assertEpoch(epoch);
     await refreshDatasetOptions(payload.loaded);
+    assertEpoch(epoch);
     els.datasetSelect.value = payload.loaded;
     await onDatasetChange();
     const padded = Array.isArray(payload.padded_dims) ? payload.padded_dims : [];
@@ -7538,6 +7934,7 @@ async function loadDatasetFromLocalPath(path, options = {}) {
     }
     setSystemPickerStatus(`Loaded ${payload.loaded} (${payload.shape.join("x")})`);
   } catch (err) {
+    if (isAbortError(err)) return;
     if (!dims && shouldOfferAxisMapping(err.message)) {
       const mapping = promptForAxisMapping();
       if (mapping) {
@@ -7552,6 +7949,7 @@ async function loadDatasetFromLocalPath(path, options = {}) {
 }
 
 async function loadDatasetFromUpload(file, options = {}) {
+  const epoch = activeEpoch();
   const dims = Array.isArray(options.dims) ? options.dims : null;
   const padMissingDims = Boolean(options.padMissingDims);
   if (dims && dims.length) {
@@ -7571,7 +7969,9 @@ async function loadDatasetFromUpload(file, options = {}) {
       method: "POST",
       body,
     });
+    assertEpoch(epoch);
     await refreshDatasetOptions(payload.loaded);
+    assertEpoch(epoch);
     els.datasetSelect.value = payload.loaded;
     await onDatasetChange();
     const padded = Array.isArray(payload.padded_dims) ? payload.padded_dims : [];
@@ -7583,6 +7983,7 @@ async function loadDatasetFromUpload(file, options = {}) {
     }
     setSystemPickerStatus(`Loaded ${payload.loaded} (${payload.shape.join("x")})`);
   } catch (err) {
+    if (isAbortError(err)) return;
     if (!dims && shouldOfferAxisMapping(err.message)) {
       const mapping = promptForAxisMapping();
       if (mapping) {
@@ -7597,11 +7998,13 @@ async function loadDatasetFromUpload(file, options = {}) {
 }
 
 async function pickPathWithSystemDialog() {
+  const epoch = activeEpoch();
   setSystemPickerStatus("Opening system picker...");
   try {
     const payload = await fetchJson("/api/fs/pick", {
       method: "POST",
     });
+    assertEpoch(epoch);
     if (payload.canceled) {
       setSystemPickerStatus("Selection canceled");
       return;
@@ -7618,64 +8021,83 @@ async function pickPathWithSystemDialog() {
 
     setSystemPickerStatus("Selected path is not a supported dataset format", true);
   } catch (err) {
+    if (isAbortError(err)) return;
     setSystemPickerStatus(`System picker failed: ${err.message}`, true);
   }
 }
 
 async function onDatasetChange() {
+  const expectedEpoch = activeEpoch() + 1;
+  bumpStateEpoch();
   stopPlayback();
   stopSampleMorphPlayback();
-  const selectedId = els.datasetSelect.value;
-  if (!selectedId) {
-    state.dataId = null;
-    state.meta = null;
+  try {
+    const selectedId = els.datasetSelect.value;
+    if (!selectedId) {
+      state.dataId = null;
+      state.meta = null;
+      resetForDatasetChange(state);
+      resetSampleMorphState();
+      resetView();
+      updateControlCaps();
+      drawFrameAndOverlays();
+      drawNavigationGraphs();
+      drawSelectionGraphs();
+      drawColorbar();
+      setSystemPickerStatus("No dataset loaded.");
+      refreshActiveTabLabel();
+      return;
+    }
+
+    state.dataId = selectedId;
+    setSystemPickerStatus("");
+    state.meta = await fetchJson(`/api/datasets/${state.dataId}/meta`);
+    assertEpoch(expectedEpoch);
     resetForDatasetChange(state);
+    state.sphereMeta = detectSphereMeta(state.meta);
+    state.sphereVectorKey = "";
+    state.sphereVectors = null;
+    state.sphereSimplexKey = "";
+    state.sphereSimplexFaces = null;
+    state.sphereMeshCanvas = null;
+    state.sphereRingLutKey = "";
+    state.sphereRingLut = null;
+    state.sphereRayGridKey = "";
+    state.sphereRayGrid = null;
+    state.sphereInsideScale = SPHERE_INSIDE_SCALE;
+    state.sphereYaw = 0;
+    state.spherePitch = 0;
+    state.sphereDrag = null;
+    state.sphereProjection = "mollweide";
+    if (isSphereDataset()) {
+      state.plane = "xy";
+      state.spatialMode = "sphere";
+    } else if (state.spatialMode === "sphere") {
+      state.spatialMode = "slice";
+    }
     resetSampleMorphState();
+
     resetView();
     updateControlCaps();
-    drawFrameAndOverlays();
-    drawNavigationGraphs();
     drawSelectionGraphs();
-    drawColorbar();
-    setSystemPickerStatus("No dataset loaded.");
-    return;
+    await refreshSlice();
+    refreshActiveTabLabel();
+  } catch (err) {
+    if (!isAbortError(err)) throw err;
   }
-
-  state.dataId = selectedId;
-  setSystemPickerStatus("");
-  state.meta = await fetchJson(`/api/datasets/${state.dataId}/meta`);
-  resetForDatasetChange(state);
-  state.sphereMeta = detectSphereMeta(state.meta);
-  state.sphereVectorKey = "";
-  state.sphereVectors = null;
-  state.sphereSimplexKey = "";
-  state.sphereSimplexFaces = null;
-  state.sphereMeshCanvas = null;
-  state.sphereRingLutKey = "";
-  state.sphereRingLut = null;
-  state.sphereRayGridKey = "";
-  state.sphereRayGrid = null;
-  state.sphereInsideScale = SPHERE_INSIDE_SCALE;
-  state.sphereYaw = 0;
-  state.spherePitch = 0;
-  state.sphereDrag = null;
-  state.sphereProjection = "mollweide";
-  if (isSphereDataset()) {
-    state.plane = "xy";
-    state.spatialMode = "sphere";
-  } else if (state.spatialMode === "sphere") {
-    state.spatialMode = "slice";
-  }
-  resetSampleMorphState();
-
-  resetView();
-  updateControlCaps();
-  drawSelectionGraphs();
-  await refreshSlice();
 }
 
 async function init() {
+  if (!datasetTabs.length) {
+    const firstTab = createDatasetTab("Tab 1");
+    firstTab.snapshot = snapshotState();
+    datasetTabs.push(firstTab);
+    activeDatasetTabId = firstTab.id;
+    renderDatasetTabs();
+  }
+
   await refreshDatasetOptions();
+  syncUiToState();
 
   els.canvas.width = 640;
   els.canvas.height = 640;
@@ -7796,8 +8218,18 @@ async function init() {
   els.volumeTfSelect.addEventListener("change", onVolumeRenderControlChange);
   els.volumeOpacityRange.addEventListener("input", onVolumeRenderControlChange);
   els.volumeGammaRange.addEventListener("input", onVolumeRenderControlChange);
-  els.volumeClipNearRange.addEventListener("input", onVolumeRenderControlChange);
-  els.volumeClipFarRange.addEventListener("input", onVolumeRenderControlChange);
+  if (els.volumeClipRangeMin && els.volumeClipRangeMax) {
+    els.volumeClipRangeMin.addEventListener("pointerdown", () => setVolumeClipRangeActiveHandle("min"));
+    els.volumeClipRangeMax.addEventListener("pointerdown", () => setVolumeClipRangeActiveHandle("max"));
+    els.volumeClipRangeMin.addEventListener("focus", () => setVolumeClipRangeActiveHandle("min"));
+    els.volumeClipRangeMax.addEventListener("focus", () => setVolumeClipRangeActiveHandle("max"));
+    els.volumeClipRangeMin.addEventListener("input", onVolumeRenderControlChange);
+    els.volumeClipRangeMax.addEventListener("input", onVolumeRenderControlChange);
+    els.volumeClipRangeMin.addEventListener("change", onVolumeRenderControlChange);
+    els.volumeClipRangeMax.addEventListener("change", onVolumeRenderControlChange);
+    els.volumeClipRangeMin.addEventListener("blur", () => setVolumeClipRangeActiveHandle(null));
+    els.volumeClipRangeMax.addEventListener("blur", () => setVolumeClipRangeActiveHandle(null));
+  }
   els.volumeIsoThresholdRange.addEventListener("input", onVolumeRenderControlChange);
 
   els.multiSpectralBtn.addEventListener("click", async () => {

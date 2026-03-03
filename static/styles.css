@@ -57,6 +57,12 @@ header.panel {
   margin-bottom: 12px;
 }
 
+.datasetTabsPanel {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+  padding: 6px 10px 0;
+}
+
 .brandPanel {
   padding: 7px 14px;
   background:
@@ -179,6 +185,135 @@ header p:not(.brandTagline) {
   font-size: 0.95rem;
   letter-spacing: 0.02em;
   color: #c9d8e8;
+}
+
+.datasetTabsRow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.datasetTabsRowGlobal {
+  width: 100%;
+}
+
+.datasetTabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  overflow-x: auto;
+  padding: 0 3px;
+  border-bottom: 1px solid rgba(86, 117, 151, 0.52);
+}
+
+.datasetTabs::-webkit-scrollbar {
+  height: 6px;
+}
+
+.datasetTabs::-webkit-scrollbar-thumb {
+  background: rgba(110, 140, 176, 0.45);
+  border-radius: 999px;
+}
+
+.datasetTabItem {
+  display: flex;
+  align-items: center;
+  min-width: 120px;
+  max-width: 240px;
+  margin-right: 4px;
+  border-radius: 10px 10px 0 0;
+  border: 1px solid #30445f;
+  border-bottom-color: rgba(86, 117, 151, 0.52);
+  background: linear-gradient(180deg, #122037, #0e1729 70%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.datasetTabBtn {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  margin: 0;
+  padding: 7px 8px 6px 12px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #b9cbe0;
+  font-size: 0.76rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: none;
+}
+
+.datasetTabBtn:hover {
+  border-color: transparent;
+}
+
+.datasetTabBtn:focus-visible {
+  border-color: transparent;
+  box-shadow: none;
+  outline: 1px solid rgba(var(--accent-rgb), 0.55);
+  outline-offset: -1px;
+}
+
+.datasetTabItem.isActive {
+  border-color: rgba(var(--accent-rgb), 0.95);
+  border-bottom-color: #0f182b;
+  background: linear-gradient(180deg, #1a3350, #13253d 76%);
+  box-shadow: 0 -1px 0 rgba(var(--accent-rgb), 0.22) inset, 0 0 10px rgba(var(--accent-rgb), 0.13);
+  max-width: none;
+}
+
+.datasetTabItem.isActive .datasetTabBtn {
+  color: #eff6ff;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.datasetTabCloseBtn {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-right: 8px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #a9bfd9;
+  font-size: 0.67rem;
+  line-height: 1;
+}
+
+.datasetTabCloseBtn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18);
+  color: #edf5ff;
+  border-color: transparent;
+}
+
+.datasetTabCloseBtn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.datasetTabAddBtn {
+  flex: 0 0 auto;
+  min-width: 36px;
+  width: 36px;
+  height: 31px;
+  margin-right: 4px;
+  padding: 0;
+  border-radius: 8px 8px 0 0;
+  border: 1px solid #355071;
+  border-bottom-color: rgba(86, 117, 151, 0.52);
+  background: linear-gradient(180deg, #132640, #0f1c31 74%);
+  color: #d4e4f6;
+  font-size: 1.05rem;
+  line-height: 1;
+  text-align: center;
 }
 
 label {
@@ -897,6 +1032,14 @@ canvas {
   z-index: 3;
 }
 
+#volumeClipRangeMin {
+  z-index: 2;
+}
+
+#volumeClipRangeMax {
+  z-index: 3;
+}
+
 .polCurrent {
   margin-top: 4px;
   color: var(--muted);
@@ -1114,5 +1257,9 @@ canvas {
   }
   .brandBanner {
     width: min(100%, 235px);
+  }
+  .datasetTabItem {
+    min-width: 94px;
+    max-width: 160px;
   }
 }
