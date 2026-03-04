@@ -315,6 +315,19 @@
             <span>Multi-spectral</span>
             <button id="multiSpectralBtn" class="tinyBtn" type="button">Off</button>
           </div>
+          <div id="spectralMapControls" class="spectralMapControls">
+            <div class="spectralMapAxisRow">
+              <span>Frequency Axis</span>
+              <button id="msNuAxisLogBtn" class="tinyBtn" type="button" aria-pressed="false">Linear</button>
+            </div>
+            <label class="volumeSlider" for="msDeslopeRange">
+              <div class="volumeSliderHeader">
+                <span>Spectral Index Correction</span>
+                <span id="msDeslopeValue">0.0</span>
+              </div>
+              <input id="msDeslopeRange" type="range" min="-4" max="4" step="0.1" value="0" />
+            </label>
+          </div>
           <div id="spectralNavPanel" class="navPanel">
             <div class="navTitle">
               <span>Spectral</span>
@@ -386,20 +399,17 @@
           </div>
         </div>
         <div class="viewerToolbar">
-          <div class="modeButtons">
-            <button id="modeInspectBtn" type="button">Inspect</button>
-            <button id="modeZoomBtn" type="button">Zoom</button>
+          <div class="viewerToolbarLeft">
+            <button id="exportZoomBtn" class="tinyBtn toolbarExport" type="button" disabled>Export Zoom</button>
+            <button id="saveImagesBtn" class="tinyBtn toolbarSaveImages" type="button" disabled>Save Images</button>
           </div>
-          <label class="coordSystemControl">
-            Coords
-            <select id="coordSystemSelect">
-              <option value="native">Native</option>
-              <option value="pixel">Pixel</option>
-              <option value="galactic">Galactic</option>
-            </select>
-          </label>
-          <button id="exportZoomBtn" class="tinyBtn toolbarExport" type="button" disabled>Export Zoom</button>
-          <button id="resetZoomBtn" class="tinyBtn toolbarReset" type="button">Reset</button>
+          <div class="viewerToolbarRight">
+            <div class="modeButtons">
+              <button id="modeInspectBtn" type="button">Inspect</button>
+              <button id="modeZoomBtn" type="button">Zoom</button>
+            </div>
+            <button id="resetZoomBtn" class="tinyBtn toolbarReset" type="button">Reset</button>
+          </div>
         </div>
       </section>
 
@@ -455,6 +465,32 @@
         <div class="exportDialogActions">
           <button id="exportCancelBtn" class="tinyBtn" type="button">Cancel</button>
           <button id="exportConfirmBtn" class="tinyBtn" type="button">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="saveImagesDialog" class="exportDialog">
+      <form method="dialog" class="exportDialogForm">
+        <h2>Save Current Images</h2>
+        <label>
+          Save Location
+          <div class="exportLocationRow">
+            <input id="saveImagesLocationInput" type="text" readonly placeholder="Choose a destination folder" />
+            <button id="saveImagesBrowseBtn" class="tinyBtn" type="button">Browse</button>
+          </div>
+        </label>
+        <label>
+          File Prefix
+          <input id="saveImagesPrefixInput" type="text" placeholder="dataset_snapshot" />
+        </label>
+        <label class="exportOverwriteRow">
+          <input id="saveImagesOverwriteChk" type="checkbox" checked />
+          Overwrite existing files
+        </label>
+        <div id="saveImagesStatus" class="exportStatus"></div>
+        <div class="exportDialogActions">
+          <button id="saveImagesCancelBtn" class="tinyBtn" type="button">Cancel</button>
+          <button id="saveImagesConfirmBtn" class="tinyBtn" type="button">Save Images</button>
         </div>
       </form>
     </dialog>

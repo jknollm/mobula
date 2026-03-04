@@ -542,6 +542,22 @@ button:focus-visible {
   color: var(--muted);
 }
 
+.spectralMapControls {
+  display: none;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.spectralMapAxisRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .miniGroup {
   display: flex;
   gap: 6px;

@@ -315,6 +315,19 @@
             <span>Multi-spectral</span>
             <button id="multiSpectralBtn" class="tinyBtn" type="button">Off</button>
           </div>
+          <div id="spectralMapControls" class="spectralMapControls">
+            <div class="spectralMapAxisRow">
+              <span>Frequency Axis</span>
+              <button id="msNuAxisLogBtn" class="tinyBtn" type="button" aria-pressed="false">Linear</button>
+            </div>
+            <label class="volumeSlider" for="msDeslopeRange">
+              <div class="volumeSliderHeader">
+                <span>Spectral Index Correction</span>
+                <span id="msDeslopeValue">0.0</span>
+              </div>
+              <input id="msDeslopeRange" type="range" min="-4" max="4" step="0.1" value="0" />
+            </label>
+          </div>
           <div id="spectralNavPanel" class="navPanel">
             <div class="navTitle">
               <span>Spectral</span>

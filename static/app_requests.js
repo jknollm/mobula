@@ -69,6 +69,8 @@ export function createRequestBuilders(deps) {
 
   function buildMultispectralParams(sampleOverride, maxPixels = null) {
     const p = planeDims();
+    const axisScale = state.multiSpectralNuAxisScale === "log" ? "log" : "linear";
+    const deslope = Number.isFinite(state.multiSpectralDeslope) ? state.multiSpectralDeslope : 0;
     const params = new URLSearchParams({
       sample: String(sampleOverride !== undefined ? sampleOverride : state.values.sample),
       pol: String(state.values.pol),
@@ -79,6 +81,8 @@ export function createRequestBuilders(deps) {
       sample_mode: normalizeMode(state.sampleMode),
       plane_x: p.planeX,
       plane_y: p.planeY,
+      nu_axis_scale: axisScale,
+      deslope: String(deslope),
     });
     if (state.axisWindow.nu) {
       params.set("nu0", String(state.axisWindow.nu.start));

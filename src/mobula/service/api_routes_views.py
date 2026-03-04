@@ -187,6 +187,8 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
         sample_mode: str = Query(default="single"),
         plane_x: str = Query(default="x"),
         plane_y: str = Query(default="y"),
+        nu_axis_scale: str = Query(default="linear"),
+        deslope: float = Query(default=0.0, ge=-8.0, le=8.0),
         project_dims: str | None = Query(default=None),
     ) -> dict[str, Any]:
         ds = _safe_dataset(registry, data_id)
@@ -206,6 +208,8 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
             sample_mode=mode,
             plane_x=plane_x,
             plane_y=plane_y,
+            nu_axis_scale=nu_axis_scale,
+            deslope=deslope,
             project_dims=project,
         )
 

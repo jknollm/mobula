@@ -34,6 +34,13 @@ def _physical_axis(lo: float, hi: float, n: int) -> np.ndarray:
     return np.linspace(lo, hi, n, dtype=np.float32)
 
 
+def _radio_frequency_axis(n: int, lo_hz: float = 1.0e9, hi_hz: float = 1.0e11) -> np.ndarray:
+    """Return radio frequencies spanning two decades, default 1-100 GHz."""
+    if n <= 1:
+        return np.array([np.sqrt(lo_hz * hi_hz)], dtype=np.float64)
+    return np.geomspace(lo_hz, hi_hz, n, dtype=np.float64)
+
+
 def _build_base_signal(cfg: MockCubeConfig) -> np.ndarray:
     """Create a dynamic spatial signal across t/nu/z."""
     x = _unit_axis(cfg.x)
@@ -364,12 +371,17 @@ def _build_ring_shock_signal(cfg: MockCubeConfig) -> np.ndarray:
     return base
 
 
-def _build_radio_galaxy_signal(cfg: MockCubeConfig) -> np.ndarray:
+def _build_radio_galaxy_signal(cfg: MockCubeConfig, nu_hz: np.ndarray | None = None) -> np.ndarray:
     """Create a core-jet-lobe morphology resembling a classical double radio galaxy."""
     x = _unit_axis(cfg.x)
     y = _unit_axis(cfg.y)
     z = _unit_axis(cfg.z)
     xx, yy, zz = np.meshgrid(x, y, z, indexing="ij")
+    nu_axis = _radio_frequency_axis(cfg.nu) if nu_hz is None else np.asarray(nu_hz, dtype=np.float64).reshape(-1)
+    if nu_axis.size != cfg.nu:
+        raise ValueError(f"radio_galaxy requires nu_hz to have size cfg.nu={cfg.nu}, got {nu_axis.size}")
+    nu_ref = float(np.sqrt(float(np.min(nu_axis)) * float(np.max(nu_axis))))
+    nu_ratio = np.maximum(nu_axis / max(nu_ref, 1.0e-30), 1.0e-12)
 
     base = np.empty((cfg.t, cfg.nu, cfg.x, cfg.y, cfg.z), dtype=np.float32)
     for ti in range(cfg.t):
@@ -379,10 +391,15 @@ def _build_radio_galaxy_signal(cfg: MockCubeConfig) -> np.ndarray:
         s = np.float32(np.sin(axis_angle))
         along = c * xx + s * yy
         across = -s * xx + c * yy
+        # Lobe outskirts age faster -> steeper spectra and lower break frequencies.
+        lobe_age = np.clip((np.abs(along) - 0.12) / 0.72, 0.0, 1.0).astype(np.float32)
+        lobe_alpha = (-0.90 - 0.55 * lobe_age).astype(np.float32)
+        break_nu = (4.0e10 * (1.0 - 0.50 * lobe_age) + 2.0e9).astype(np.float32)
 
         for ni in range(cfg.nu):
             nphase = 2.0 * np.pi * ni / max(cfg.nu, 1)
-            spectral_weight = np.float32(1.10 - 0.26 * (ni / max(cfg.nu - 1, 1)))
+            nu_ratio_i = float(nu_ratio[ni])
+            nu_i = float(nu_axis[ni])
 
             core_sigma = np.float32(0.035 + 0.004 * np.sin(0.4 * nphase))
             core = np.exp(-((xx**2 + yy**2 + (1.5 * zz) ** 2) / (2.0 * core_sigma**2))).astype(np.float32)
@@ -423,15 +440,29 @@ def _build_radio_galaxy_signal(cfg: MockCubeConfig) -> np.ndarray:
 
             texture = 0.012 * np.cos(10.0 * along + 2.5 * across + 0.9 * nphase + 0.6 * tphase).astype(np.float32)
             asym = np.float32(1.0 + 0.10 * np.sin(0.7 * nphase))
-            base[ti, ni] = spectral_weight * (
-                0.40 * core
-                + 1.05 * (asym * lobe_n + (2.0 - asym) * lobe_s)
-                + 0.95 * (hotspot_n + hotspot_s)
-                + 0.78 * jet
-                + 0.20 * bridge
-                + 0.15 * cocoon
-                - 0.18 * cavity
-            ) + texture * cocoon
+
+            # Component-wise synchrotron-like spectral laws with aging at high frequencies.
+            core_spec = np.float32(np.power(nu_ratio_i, -0.12 + 0.04 * np.sin(0.5 * tphase)))
+            jet_spec = np.float32(np.power(nu_ratio_i, -0.62 + 0.06 * np.cos(0.4 * tphase)))
+            hotspot_spec = np.float32(np.power(nu_ratio_i, -0.48))
+            bridge_spec = np.float32(np.power(nu_ratio_i, -0.78))
+            cocoon_spec = np.float32(np.power(nu_ratio_i, -0.95))
+
+            lobe_spec = np.power(np.float32(nu_ratio_i), lobe_alpha).astype(np.float32)
+            nu_over_break = (np.float32(nu_i) / np.maximum(break_nu, np.float32(1.0e9))).astype(np.float32)
+            aging_cutoff = np.exp(-np.power(nu_over_break, np.float32(0.75))).astype(np.float32)
+            lobe_spec = (lobe_spec * aging_cutoff).astype(np.float32)
+
+            emission = (
+                core_spec * (0.50 * core)
+                + lobe_spec * (1.02 * (asym * lobe_n + (2.0 - asym) * lobe_s))
+                + hotspot_spec * (1.10 * (hotspot_n + hotspot_s))
+                + jet_spec * (0.82 * jet)
+                + bridge_spec * (0.22 * bridge)
+                + cocoon_spec * (0.15 * cocoon)
+                - jet_spec * (0.16 * cavity)
+            ).astype(np.float32)
+            base[ti, ni] = np.maximum(emission + texture * cocoon, 0.0)
     return base
 
 
@@ -729,6 +760,11 @@ def generate_mock_dataset(
 ) -> CubeDataset:
     cfg = cfg or MockCubeConfig()
     rng = np.random.default_rng(cfg.seed)
+    nu_coords = (
+        _radio_frequency_axis(cfg.nu)
+        if cfg.model == "radio_galaxy"
+        else np.linspace(88.0e9, 112.0e9, cfg.nu, dtype=np.float64)
+    )
     if cfg.model == "spherical":
         base = _build_spherical_signal(cfg)
     elif cfg.model == "center_structured":
@@ -738,7 +774,7 @@ def generate_mock_dataset(
     elif cfg.model == "ring_shock":
         base = _build_ring_shock_signal(cfg)
     elif cfg.model == "radio_galaxy":
-        base = _build_radio_galaxy_signal(cfg)
+        base = _build_radio_galaxy_signal(cfg, nu_hz=nu_coords)
     elif cfg.model == "hydrogen_orbitals":
         base = _build_hydrogen_orbital_signal(cfg)
     elif cfg.model == "spiral_galaxy":
@@ -813,7 +849,7 @@ def generate_mock_dataset(
         "sample": np.arange(cfg.sample, dtype=np.int32),
         "pol": np.arange(cfg.pol, dtype=np.int32),
         "t": np.linspace(0.0, 70.0, cfg.t, dtype=np.float32),
-        "nu": np.linspace(88.0e9, 112.0e9, cfg.nu, dtype=np.float64),
+        "nu": nu_coords,
         "x": x,
         "y": y,
         "z": z,
@@ -849,6 +885,9 @@ def generate_mock_dataset(
         "shape": list(values.shape),
         "pol_labels": ["I", "Q", "U", "V"][: cfg.pol],
     }
+    if cfg.model == "radio_galaxy":
+        provenance["nu_range_hz"] = [float(np.min(nu_coords)), float(np.max(nu_coords))]
+        provenance["nu_spacing"] = "log"
     if cfg.model == "healpix_sky":
         provenance["healpix_ordering"] = "ring"
 

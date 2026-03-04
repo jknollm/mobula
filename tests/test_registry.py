@@ -99,6 +99,24 @@ def test_healpix_demo_metadata_shape() -> None:
     assert summary.shape[5] == 1
 
 
+def test_radio_galaxy_has_wide_frequency_range_and_steepens() -> None:
+    ds = generate_mock_dataset(
+        "radio-wideband",
+        MockCubeConfig(sample=1, pol=1, t=1, nu=12, x=64, y=32, z=1, seed=133, model="radio_galaxy"),
+    )
+    nu = np.asarray(ds.coords["nu"], dtype=np.float64)
+    assert nu.shape == (12,)
+    assert np.isclose(nu[0], 1.0e9, rtol=1.0e-6)
+    assert np.isclose(nu[-1], 1.0e11, rtol=1.0e-6)
+    assert np.all(np.diff(nu) > 0)
+
+    i_cube = np.asarray(ds.values[0, 0, 0, :, :, :, :], dtype=np.float64)
+    mean_spec = i_cube.mean(axis=(1, 2, 3))
+    assert mean_spec[0] > mean_spec[-1]
+    # Across 1-100 GHz the synthetic spectrum should show a strong decline.
+    assert mean_spec[0] / max(mean_spec[-1], 1.0e-12) > 8.0
+
+
 def test_load_local_loads_dataset_by_extension(tmp_path: Path) -> None:
     h5py = pytest.importorskip("h5py")
     values = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)

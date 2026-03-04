@@ -307,6 +307,9 @@ class GpuSphereRenderer {
       uniform float u_rgb_max_positive_r;
       uniform float u_rgb_max_positive_g;
       uniform float u_rgb_max_positive_b;
+      uniform float u_rgb_gain_r;
+      uniform float u_rgb_gain_g;
+      uniform float u_rgb_gain_b;
 
       out vec4 outColor;
 
@@ -330,7 +333,7 @@ class GpuSphereRenderer {
         }
         int vx = idx % max(1, u_values_w);
         int vy = idx / max(1, u_values_w);
-        vec3 sampleV = texelFetch(u_values, ivec2(vx, vy), 0).rgb;
+        vec3 sampleV = texelFetch(u_values, ivec2(vx, vy), 0).rgb * vec3(u_rgb_gain_r, u_rgb_gain_g, u_rgb_gain_b);
 
         float nr = normalizeRgbChannel(sampleV.r, u_rgb_min_r, u_rgb_max_r, u_rgb_max_positive_r);
         float ng = normalizeRgbChannel(sampleV.g, u_rgb_min_g, u_rgb_max_g, u_rgb_max_positive_g);
@@ -400,6 +403,9 @@ class GpuSphereRenderer {
       rgbMaxPositiveR: gl.getUniformLocation(this.colorRgbProgram, "u_rgb_max_positive_r"),
       rgbMaxPositiveG: gl.getUniformLocation(this.colorRgbProgram, "u_rgb_max_positive_g"),
       rgbMaxPositiveB: gl.getUniformLocation(this.colorRgbProgram, "u_rgb_max_positive_b"),
+      rgbGainR: gl.getUniformLocation(this.colorRgbProgram, "u_rgb_gain_r"),
+      rgbGainG: gl.getUniformLocation(this.colorRgbProgram, "u_rgb_gain_g"),
+      rgbGainB: gl.getUniformLocation(this.colorRgbProgram, "u_rgb_gain_b"),
     };
     this.indexUniforms = commonUniforms(this.indexProgram);
 
@@ -586,17 +592,23 @@ class GpuSphereRenderer {
     gl.uniform1i(uniforms.useCircularBfield, opts.useCircularBfield ? 1 : 0);
   }
 
-  setRgbUniforms(uniforms, rgbStats) {
+  setRgbUniforms(uniforms, rgbStats, rgbGains = null) {
     const gl = this.gl;
-    gl.uniform1f(uniforms.rgbMinR, rgbStats.minR);
-    gl.uniform1f(uniforms.rgbMaxR, rgbStats.maxR);
-    gl.uniform1f(uniforms.rgbMinG, rgbStats.minG);
-    gl.uniform1f(uniforms.rgbMaxG, rgbStats.maxG);
-    gl.uniform1f(uniforms.rgbMinB, rgbStats.minB);
-    gl.uniform1f(uniforms.rgbMaxB, rgbStats.maxB);
-    gl.uniform1f(uniforms.rgbMaxPositiveR, rgbStats.maxPositiveR);
-    gl.uniform1f(uniforms.rgbMaxPositiveG, rgbStats.maxPositiveG);
-    gl.uniform1f(uniforms.rgbMaxPositiveB, rgbStats.maxPositiveB);
+    const gainR = Array.isArray(rgbGains) && Number.isFinite(rgbGains[0]) && rgbGains[0] > 0 ? rgbGains[0] : 1;
+    const gainG = Array.isArray(rgbGains) && Number.isFinite(rgbGains[1]) && rgbGains[1] > 0 ? rgbGains[1] : 1;
+    const gainB = Array.isArray(rgbGains) && Number.isFinite(rgbGains[2]) && rgbGains[2] > 0 ? rgbGains[2] : 1;
+    gl.uniform1f(uniforms.rgbGainR, gainR);
+    gl.uniform1f(uniforms.rgbGainG, gainG);
+    gl.uniform1f(uniforms.rgbGainB, gainB);
+    gl.uniform1f(uniforms.rgbMinR, rgbStats.minR * gainR);
+    gl.uniform1f(uniforms.rgbMaxR, rgbStats.maxR * gainR);
+    gl.uniform1f(uniforms.rgbMinG, rgbStats.minG * gainG);
+    gl.uniform1f(uniforms.rgbMaxG, rgbStats.maxG * gainG);
+    gl.uniform1f(uniforms.rgbMinB, rgbStats.minB * gainB);
+    gl.uniform1f(uniforms.rgbMaxB, rgbStats.maxB * gainB);
+    gl.uniform1f(uniforms.rgbMaxPositiveR, rgbStats.maxPositiveR * gainR);
+    gl.uniform1f(uniforms.rgbMaxPositiveG, rgbStats.maxPositiveG * gainG);
+    gl.uniform1f(uniforms.rgbMaxPositiveB, rgbStats.maxPositiveB * gainB);
   }
 
   render(params) {
@@ -612,6 +624,7 @@ class GpuSphereRenderer {
       height,
       ordering,
       ringLut,
+      rgbGains = null,
       rangeOverride = null,
       stats = null,
       includeIndexMap = true,
@@ -744,7 +757,7 @@ class GpuSphereRenderer {
     } else {
       gl.useProgram(this.colorRgbProgram);
       this.setCommonUniforms(this.colorRgbUniforms, uniformOpts);
-      this.setRgbUniforms(this.colorRgbUniforms, rgbStats);
+      this.setRgbUniforms(this.colorRgbUniforms, rgbStats, rgbGains);
     }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
@@ -982,6 +995,207 @@ class GpuSliceRenderer {
     gl.uniform1f(this.uniforms.maxPositive, maxPositive);
     gl.uniform1f(this.uniforms.minPositive, minPositive);
     gl.uniform1i(this.uniforms.fluxScale, state.fluxScale === "log" ? 1 : 0);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    const out = document.createElement("canvas");
+    out.width = width;
+    out.height = height;
+    out.getContext("2d").drawImage(this.canvas, 0, 0);
+    return out;
+  }
+}
+
+class GpuRgbRenderer {
+  constructor() {
+    this.canvas = document.createElement("canvas");
+    this.gl = this.canvas.getContext("webgl2", {
+      antialias: false,
+      alpha: false,
+      premultipliedAlpha: false,
+      preserveDrawingBuffer: false,
+      depth: false,
+      stencil: false,
+      desynchronized: true,
+    });
+    if (!this.gl) throw new Error("WebGL2 not supported");
+
+    const gl = this.gl;
+    const vs = `#version 300 es
+      precision highp float;
+      out vec2 v_uv;
+      const vec2 POS[3] = vec2[3](
+        vec2(-1.0, -1.0),
+        vec2( 3.0, -1.0),
+        vec2(-1.0,  3.0)
+      );
+      void main() {
+        vec2 p = POS[gl_VertexID];
+        v_uv = 0.5 * (p + 1.0);
+        gl_Position = vec4(p, 0.0, 1.0);
+      }
+    `;
+    const fs = `#version 300 es
+      precision highp float;
+      precision highp sampler2D;
+      in vec2 v_uv;
+      out vec4 outColor;
+
+      uniform sampler2D u_red;
+      uniform sampler2D u_green;
+      uniform sampler2D u_blue;
+      uniform vec3 u_gain;
+      uniform vec3 u_min_v;
+      uniform vec3 u_max_v;
+      uniform vec3 u_max_positive;
+      uniform int u_flux_scale;
+
+      float normalizeChannel(float sampleV, float minV, float maxV, float maxPositiveV) {
+        if (u_flux_scale == 1) {
+          if (sampleV < 0.0) return -1.0;
+          float hi = max(0.0, maxPositiveV);
+          if (!(hi > 0.0)) return 0.0;
+          return log(1.0 + sampleV) / max(1.0e-9, log(1.0 + hi));
+        }
+        float t = clamp((sampleV - minV) / max(1.0e-9, maxV - minV), 0.0, 1.0);
+        if (u_flux_scale == 2) return sqrt(t);
+        return t;
+      }
+
+      void main() {
+        vec2 uv = vec2(v_uv.x, 1.0 - v_uv.y);
+        vec3 sampleV = vec3(
+          texture(u_red, uv).r,
+          texture(u_green, uv).r,
+          texture(u_blue, uv).r
+        ) * u_gain;
+
+        float nr = normalizeChannel(sampleV.r, u_min_v.r, u_max_v.r, u_max_positive.r);
+        float ng = normalizeChannel(sampleV.g, u_min_v.g, u_max_v.g, u_max_positive.g);
+        float nb = normalizeChannel(sampleV.b, u_min_v.b, u_max_v.b, u_max_positive.b);
+        if (u_flux_scale == 1 && (nr < 0.0 || ng < 0.0 || nb < 0.0)) {
+          outColor = vec4(1.0, 1.0, 1.0, 1.0);
+          return;
+        }
+        outColor = vec4(clamp(vec3(nr, ng, nb), 0.0, 1.0), 1.0);
+      }
+    `;
+
+    this.program = createWebGlProgram(gl, vs, fs);
+    this.vao = gl.createVertexArray();
+    gl.bindVertexArray(this.vao);
+    this.uniforms = {
+      red: gl.getUniformLocation(this.program, "u_red"),
+      green: gl.getUniformLocation(this.program, "u_green"),
+      blue: gl.getUniformLocation(this.program, "u_blue"),
+      gain: gl.getUniformLocation(this.program, "u_gain"),
+      minV: gl.getUniformLocation(this.program, "u_min_v"),
+      maxV: gl.getUniformLocation(this.program, "u_max_v"),
+      maxPositive: gl.getUniformLocation(this.program, "u_max_positive"),
+      fluxScale: gl.getUniformLocation(this.program, "u_flux_scale"),
+    };
+
+    this.valueTextureCache = new WeakMap();
+    this.channelStatsCache = new WeakMap();
+  }
+
+  valueTextureFor(values, width, height) {
+    const gl = this.gl;
+    let rec = this.valueTextureCache.get(values);
+    if (rec && rec.width === width && rec.height === height) {
+      return rec.texture;
+    }
+
+    const texData = new Float32Array(width * height);
+    for (let x = 0; x < width; x += 1) {
+      const srcBase = x * height;
+      for (let y = 0; y < height; y += 1) {
+        texData[y * width + x] = values[srcBase + y];
+      }
+    }
+
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, width, height, 0, gl.RED, gl.FLOAT, texData);
+
+    rec = { texture: tex, width, height };
+    this.valueTextureCache.set(values, rec);
+    return tex;
+  }
+
+  channelStats(values) {
+    let rec = this.channelStatsCache.get(values);
+    if (rec) return rec;
+    const mm = minMax(values);
+    let maxPositive = 0;
+    for (let i = 0; i < values.length; i += 1) {
+      const v = values[i];
+      if (v > maxPositive) maxPositive = v;
+    }
+    rec = {
+      min: Number.isFinite(mm.min) ? mm.min : 0,
+      max: Number.isFinite(mm.max) ? mm.max : 1,
+      maxPositive: Math.max(0, maxPositive),
+    };
+    this.channelStatsCache.set(values, rec);
+    return rec;
+  }
+
+  render(width, height, redVals, greenVals, blueVals, options = null) {
+    if (width < 1 || height < 1) return null;
+    if (!Array.isArray(redVals) || !Array.isArray(greenVals) || !Array.isArray(blueVals)) return null;
+    if (redVals.length !== width * height || greenVals.length !== width * height || blueVals.length !== width * height) return null;
+
+    const gainsIn = Array.isArray(options?.gains) ? options.gains : [1, 1, 1];
+    const gainR = Number.isFinite(gainsIn[0]) && gainsIn[0] > 0 ? gainsIn[0] : 1;
+    const gainG = Number.isFinite(gainsIn[1]) && gainsIn[1] > 0 ? gainsIn[1] : 1;
+    const gainB = Number.isFinite(gainsIn[2]) && gainsIn[2] > 0 ? gainsIn[2] : 1;
+    const fluxScale = options?.fluxScale === "log" ? 1 : options?.fluxScale === "sqrt" ? 2 : 0;
+
+    const statsR = this.channelStats(redVals);
+    const statsG = this.channelStats(greenVals);
+    const statsB = this.channelStats(blueVals);
+
+    const gl = this.gl;
+    this.canvas.width = width;
+    this.canvas.height = height;
+
+    const texR = this.valueTextureFor(redVals, width, height);
+    const texG = this.valueTextureFor(greenVals, width, height);
+    const texB = this.valueTextureFor(blueVals, width, height);
+
+    gl.viewport(0, 0, width, height);
+    gl.disable(gl.BLEND);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(this.program);
+    gl.bindVertexArray(this.vao);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texR);
+    gl.uniform1i(this.uniforms.red, 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, texG);
+    gl.uniform1i(this.uniforms.green, 1);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, texB);
+    gl.uniform1i(this.uniforms.blue, 2);
+
+    gl.uniform3f(this.uniforms.gain, gainR, gainG, gainB);
+    gl.uniform3f(this.uniforms.minV, statsR.min * gainR, statsG.min * gainG, statsB.min * gainB);
+    gl.uniform3f(this.uniforms.maxV, statsR.max * gainR, statsG.max * gainG, statsB.max * gainB);
+    gl.uniform3f(
+      this.uniforms.maxPositive,
+      statsR.maxPositive * gainR,
+      statsG.maxPositive * gainG,
+      statsB.maxPositive * gainB
+    );
+    gl.uniform1i(this.uniforms.fluxScale, fluxScale);
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
@@ -1497,5 +1711,5 @@ class GpuVolumeRenderer {
 }
 
 
-  return { GpuSliceRenderer, GpuVolumeRenderer, GpuSphereRenderer, GPU_VOLUME_MAX_STEPS };
+  return { GpuSliceRenderer, GpuRgbRenderer, GpuVolumeRenderer, GpuSphereRenderer, GPU_VOLUME_MAX_STEPS };
 }

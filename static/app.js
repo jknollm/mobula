@@ -186,6 +186,10 @@ const els = {
   hiddenAxisMax: document.getElementById("hiddenAxisMax"),
 
   multiSpectralBtn: document.getElementById("multiSpectralBtn"),
+  spectralMapControls: document.getElementById("spectralMapControls"),
+  msNuAxisLogBtn: document.getElementById("msNuAxisLogBtn"),
+  msDeslopeRange: document.getElementById("msDeslopeRange"),
+  msDeslopeValue: document.getElementById("msDeslopeValue"),
   spectralNavPanel: document.getElementById("spectralNavPanel"),
   tValue: document.getElementById("tValue"),
   nuValue: document.getElementById("nuValue"),
@@ -225,6 +229,7 @@ const els = {
   modeZoomBtn: document.getElementById("modeZoomBtn"),
   coordSystemSelect: document.getElementById("coordSystemSelect"),
   exportZoomBtn: document.getElementById("exportZoomBtn"),
+  saveImagesBtn: document.getElementById("saveImagesBtn"),
   resetZoomBtn: document.getElementById("resetZoomBtn"),
   hoverReadout: document.getElementById("hoverReadout"),
   exportDialog: document.getElementById("exportDialog"),
@@ -237,6 +242,14 @@ const els = {
   exportStatus: document.getElementById("exportStatus"),
   exportCancelBtn: document.getElementById("exportCancelBtn"),
   exportConfirmBtn: document.getElementById("exportConfirmBtn"),
+  saveImagesDialog: document.getElementById("saveImagesDialog"),
+  saveImagesLocationInput: document.getElementById("saveImagesLocationInput"),
+  saveImagesBrowseBtn: document.getElementById("saveImagesBrowseBtn"),
+  saveImagesPrefixInput: document.getElementById("saveImagesPrefixInput"),
+  saveImagesOverwriteChk: document.getElementById("saveImagesOverwriteChk"),
+  saveImagesStatus: document.getElementById("saveImagesStatus"),
+  saveImagesCancelBtn: document.getElementById("saveImagesCancelBtn"),
+  saveImagesConfirmBtn: document.getElementById("saveImagesConfirmBtn"),
 
   metricsPanel: document.getElementById("metricsPanel"),
   metricsTitle: document.getElementById("metricsTitle"),
@@ -307,6 +320,8 @@ function createViewerState() {
   volumeSphereRayGrid: null,
   fluxScale: "linear",
   multiSpectral: false,
+  multiSpectralNuAxisScale: "linear",
+  multiSpectralDeslope: 0,
   dragMode: null,
   dragModeModifier: null,
   sliceRender: {
@@ -343,6 +358,11 @@ function createViewerState() {
     filename: "",
     overwrite: true,
   },
+  saveImagesPrefs: {
+    outputDir: DEFAULT_EXPORT_OUTPUT_DIR,
+    prefix: "",
+    overwrite: true,
+  },
 
   selection: null,
   selectionDrag: null,
@@ -367,13 +387,14 @@ function createViewerState() {
   sampleMorphTimer: null,
   playbackBusy: false,
   playbackRefineToken: 0,
-  playbackPreviewMaxPixels: 360000,
+  playbackPreviewMaxPixels: 220000,
 
   _selectionToken: 0,
   _viewProfileToken: 0,
   _resizePanelsRaf: 0,
   _resizePanelsNeedsGraphs: false,
   _colorNormRerenderTimer: null,
+  _multispectralRerenderRaf: 0,
   profileZoom: {},
   panelWidths: { left: null, right: null },
   volumeYaw: 0.65,
@@ -398,6 +419,11 @@ function createViewerState() {
     lastError: "",
   },
   sliceGpu: {
+    available: null,
+    renderer: null,
+    lastError: "",
+  },
+  rgbGpu: {
     available: null,
     renderer: null,
     lastError: "",
@@ -438,6 +464,9 @@ const VOLUME_SPHERE_RANGE_STEPS = 1000;
 const VOLUME_SPHERE_MIN_GAP = 1 / VOLUME_SPHERE_RANGE_STEPS;
 const VOLUME_SPHERE_NSITE_MIN = 1;
 const VOLUME_SPHERE_NSITE_MAX = 512;
+const PLAYBACK_PREVIEW_BASE_MAX_PIXELS = 220000;
+const PLAYBACK_PREVIEW_MIN_PIXELS = 90000;
+const PLAYBACK_PREVIEW_MAX_PIXELS = 520000;
 const SAMPLE_MORPH_AXIS = "__sample_morph__";
 const DERIVED_POL_MODES = {
   none: { label: "None" },
@@ -542,6 +571,24 @@ function planeDims() {
 
 function hiddenDim() {
   return planeDims().hidden;
+}
+
+function hasThirdSpatialDimension() {
+  let varying = 0;
+  for (const dim of ["x", "y", "z"]) {
+    if (axisSize(dim) > 1) varying += 1;
+  }
+  return varying >= 3;
+}
+
+function preferredSpatialPlaneForDataset() {
+  const xVar = axisSize("x") > 1;
+  const yVar = axisSize("y") > 1;
+  const zVar = axisSize("z") > 1;
+  if (xVar && yVar) return "xy";
+  if (yVar && zVar) return "yz";
+  if (zVar && xVar) return "zx";
+  return "xy";
 }
 
 function axisSize(dim) {
@@ -806,7 +853,25 @@ function sliceBackendMode(width = 0, height = 0) {
   if (!sliceGpuAvailable()) return "cpu";
   if (requested === "gpu") return "gpu";
   const pixels = Math.max(1, width) * Math.max(1, height);
-  return pixels >= 512 * 512 ? "gpu" : "cpu";
+  return pixels >= 320 * 320 ? "gpu" : "cpu";
+}
+
+function rgbGpuAvailableKnown() {
+  return state.rgbGpu.available !== null;
+}
+
+function rgbGpuAvailable() {
+  return state.rgbGpu.available === true;
+}
+
+function rgbBackendMode(width = 0, height = 0) {
+  const requested = state.sliceRender.backend;
+  if (requested === "cpu") return "cpu";
+  if (!rgbGpuAvailableKnown()) ensureRgbGpuRenderer();
+  if (!rgbGpuAvailable()) return "cpu";
+  if (requested === "gpu") return "gpu";
+  const pixels = Math.max(1, width) * Math.max(1, height);
+  return pixels >= 220 * 220 ? "gpu" : "cpu";
 }
 
 function sphereGpuAvailableKnown() {
@@ -1035,6 +1100,50 @@ function syncSampleMorphPlayback() {
   }
 }
 
+function playbackIntervalMs() {
+  return Math.max(30, Math.floor(1000 / Math.max(1, state.playbackFps)));
+}
+
+function tunePlaybackPreviewBudget(frameMs) {
+  const targetMs = playbackIntervalMs();
+  const current = Math.max(PLAYBACK_PREVIEW_MIN_PIXELS, Math.floor(state.playbackPreviewMaxPixels || PLAYBACK_PREVIEW_BASE_MAX_PIXELS));
+  if (frameMs > targetMs * 1.2) {
+    state.playbackPreviewMaxPixels = Math.max(PLAYBACK_PREVIEW_MIN_PIXELS, Math.floor(current * 0.85));
+    return;
+  }
+  if (frameMs < targetMs * 0.7) {
+    state.playbackPreviewMaxPixels = Math.min(PLAYBACK_PREVIEW_MAX_PIXELS, Math.floor(current * 1.05));
+  }
+}
+
+async function runPlaybackTick(axis) {
+  if (!axis || !isPlaying() || state.playbackAxis !== axis) return;
+  if (state.playbackBusy) {
+    scheduleNextPlaybackTick(axis);
+    return;
+  }
+  state.playbackBusy = true;
+  const startedAt = performance.now();
+  try {
+    await advanceAxisPlayback(axis);
+  } finally {
+    state.playbackBusy = false;
+    tunePlaybackPreviewBudget(performance.now() - startedAt);
+  }
+  scheduleNextPlaybackTick(axis);
+}
+
+function scheduleNextPlaybackTick(axis, delayMs = null) {
+  if (!axis || state.playbackAxis !== axis) return;
+  if (state.playbackTimer) {
+    clearTimeout(state.playbackTimer);
+  }
+  const waitMs = Number.isFinite(delayMs) && delayMs !== null ? Math.max(0, Math.floor(delayMs)) : playbackIntervalMs();
+  state.playbackTimer = setTimeout(() => {
+    void runPlaybackTick(axis);
+  }, waitMs);
+}
+
 function playbackMaxPixelsForFrame() {
   const tileCount = isSamplesMode() ? Math.max(1, state.sampleGridIndices.length || 1) : 1;
   const budget = Math.max(40000, state.playbackPreviewMaxPixels);
@@ -1119,6 +1228,50 @@ function canUseMultiSpectral() {
 
 function isMultiSpectralActive() {
   return state.multiSpectral && canUseMultiSpectral();
+}
+
+function multispectralFrameActive() {
+  return (
+    isMultiSpectralActive() ||
+    Boolean(state.sampleMorph.multispectral) ||
+    Boolean(state.currentMultispectralSlice) ||
+    (Array.isArray(state.currentMultispectralTiles) && state.currentMultispectralTiles.length > 0)
+  );
+}
+
+function multispectralDeslopeLabel() {
+  const alpha = Number.isFinite(state.multiSpectralDeslope) ? state.multiSpectralDeslope : 0;
+  return alpha.toFixed(1);
+}
+
+function multispectralBandCenterHz(band) {
+  if (!Array.isArray(band) || band.length < 2) return Number.NaN;
+  const lo = Number.parseFloat(band[0]);
+  const hi = Number.parseFloat(band[1]);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return Number.NaN;
+  const low = Math.min(lo, hi);
+  const high = Math.max(lo, hi);
+  if (low > 0 && high > 0) return Math.sqrt(low * high);
+  return 0.5 * (low + high);
+}
+
+function multispectralCorrectionGains(payload, targetAlpha = state.multiSpectralDeslope) {
+  const bands = payload && payload.bands ? payload.bands : null;
+  if (!bands) return [1, 1, 1];
+  const alphaTarget = Number.isFinite(targetAlpha) ? targetAlpha : 0;
+  const alphaBase = Number.isFinite(bands.deslope) ? bands.deslope : 0;
+  const deltaAlpha = alphaTarget - alphaBase;
+  if (Math.abs(deltaAlpha) <= 1.0e-8) return [1, 1, 1];
+
+  const ref = Number.isFinite(bands.deslope_ref) ? bands.deslope_ref : null;
+  if (!(ref > 0)) return [1, 1, 1];
+  const gainForBand = (band) => {
+    const center = multispectralBandCenterHz(band);
+    if (!(center > 0)) return 1;
+    const gain = (center / ref) ** deltaAlpha;
+    return Number.isFinite(gain) && gain > 0 ? gain : 1;
+  };
+  return [gainForBand(bands.red), gainForBand(bands.green), gainForBand(bands.blue)];
 }
 
 function isAxisSelectorLocked(axis) {
@@ -1863,17 +2016,17 @@ function colorForSpectralNu(freqHz, bands) {
   const cG = 0.5 * (g[0] + g[1]);
   const cR = 0.5 * (r[0] + r[1]);
 
-  if (!Number.isFinite(cB) || !Number.isFinite(cG) || !Number.isFinite(cR) || cB >= cG || cG >= cR) {
+  if (!Number.isFinite(cB) || !Number.isFinite(cG) || !Number.isFinite(cR) || cR >= cG || cG >= cB) {
     return [255, 255, 255];
   }
 
   if (freqHz <= cG) {
-    const t = clamp((freqHz - cB) / Math.max(1e-9, cG - cB), 0, 1);
-    return [0, Math.round(255 * t), Math.round(255 * (1 - t))];
+    const t = clamp((freqHz - cR) / Math.max(1e-9, cG - cR), 0, 1);
+    return [Math.round(255 * (1 - t)), Math.round(255 * t), 0];
   }
 
-  const t = clamp((freqHz - cG) / Math.max(1e-9, cR - cG), 0, 1);
-  return [Math.round(255 * t), Math.round(255 * (1 - t)), 0];
+  const t = clamp((freqHz - cG) / Math.max(1e-9, cB - cG), 0, 1);
+  return [0, Math.round(255 * (1 - t)), Math.round(255 * t)];
 }
 
 function normalizeFluxLog(v, maxPositive, minPositive = 0) {
@@ -1924,10 +2077,13 @@ function resetView() {
     return;
   }
   const p = planeDims();
-  state.view.u = 0;
-  state.view.v = 0;
-  state.view.w = axisSize(p.planeX);
-  state.view.h = axisSize(p.planeY);
+  const imgW = axisSize(p.planeX);
+  const imgH = axisSize(p.planeY);
+  const base = sliceFullViewWindow(imgW, imgH);
+  state.view.w = base.w;
+  state.view.h = base.h;
+  state.view.u = 0.5 * (imgW - base.w);
+  state.view.v = 0.5 * (imgH - base.h);
 }
 
 function sphereZoomOutLimit() {
@@ -1946,6 +2102,23 @@ function mollweideViewAspect() {
   const w = Number.isFinite(els?.canvas?.width) ? els.canvas.width : 1;
   const h = Number.isFinite(els?.canvas?.height) ? els.canvas.height : 1;
   return Math.max(1.0e-6, w / Math.max(1.0e-6, h));
+}
+
+function sliceViewAspect() {
+  const w = Number.isFinite(els?.canvas?.width) ? els.canvas.width : 1;
+  const h = Number.isFinite(els?.canvas?.height) ? els.canvas.height : 1;
+  return Math.max(1.0e-6, w / Math.max(1.0e-6, h));
+}
+
+function sliceFullViewWindow(imgW, imgH) {
+  const a = sliceViewAspect();
+  const imgAspect = imgW / Math.max(1.0e-6, imgH);
+  if (imgAspect >= a) {
+    const w = imgW;
+    return { w, h: w / a };
+  }
+  const h = imgH;
+  return { w: h * a, h };
 }
 
 function mollweideFullViewWindow(imgW, imgH) {
@@ -2024,6 +2197,57 @@ function getViewRect() {
     if (!Number.isFinite(w) || w <= 0 || !Number.isFinite(h) || h <= 0) {
       w = bounds.base.w;
       h = bounds.base.h;
+    }
+    const cx = (Number.isFinite(state.view.u) ? state.view.u : 0) + 0.5 * w;
+    const cy = (Number.isFinite(state.view.v) ? state.view.v : 0) + 0.5 * h;
+
+    if (w / Math.max(1.0e-6, h) > targetAspect) h = w / targetAspect;
+    else w = h * targetAspect;
+
+    w = clamp(w, minW, maxW);
+    h = w / targetAspect;
+    if (h < minH) {
+      h = minH;
+      w = h * targetAspect;
+    }
+    if (h > maxH) {
+      h = maxH;
+      w = h * targetAspect;
+    }
+
+    state.view.w = w;
+    state.view.h = h;
+    state.view.u = cx - 0.5 * w;
+    state.view.v = cy - 0.5 * h;
+
+    if (state.view.w > imgW) state.view.u = 0.5 * (imgW - state.view.w);
+    else state.view.u = clamp(state.view.u, 0, imgW - state.view.w);
+    if (state.view.h > imgH) state.view.v = 0.5 * (imgH - state.view.h);
+    else state.view.v = clamp(state.view.v, 0, imgH - state.view.h);
+
+    return {
+      srcX: state.view.u,
+      srcY: state.view.v,
+      srcW: state.view.w,
+      srcH: state.view.h,
+      imgW,
+      imgH,
+    };
+  }
+
+  if (!isSphereMode()) {
+    const base = sliceFullViewWindow(imgW, imgH);
+    const targetAspect = base.w / Math.max(1.0e-6, base.h);
+    const minW = Math.min(2, base.w);
+    const minH = Math.min(2, base.h);
+    const maxW = base.w;
+    const maxH = base.h;
+
+    let w = state.view.w;
+    let h = state.view.h;
+    if (!Number.isFinite(w) || w <= 0 || !Number.isFinite(h) || h <= 0) {
+      w = base.w;
+      h = base.h;
     }
     const cx = (Number.isFinite(state.view.u) ? state.view.u : 0) + 0.5 * w;
     const cy = (Number.isFinite(state.view.v) ? state.view.v : 0) + 0.5 * h;
@@ -2399,6 +2623,9 @@ function updateExportButtonState() {
     const unsupported = Boolean(state.dataId) && !exportZoomModeSupported();
     els.exportZoomBtn.disabled = !enabled;
     els.exportZoomBtn.classList.toggle("unsupported", unsupported);
+  }
+  if (els.saveImagesBtn) {
+    els.saveImagesBtn.disabled = !state.dataId;
   }
 }
 
@@ -2926,6 +3153,225 @@ async function saveExportCutoutFromDialog() {
   closeExportDialog();
 }
 
+function snapshotTimestamp() {
+  return new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "_");
+}
+
+function defaultSaveImagesPrefix() {
+  const base = state.dataId ? state.dataId : "mobula";
+  return `${base}_${snapshotTimestamp()}`;
+}
+
+function normalizeSaveImagesPrefix(prefix) {
+  let out = String(prefix || "").trim();
+  if (!out) out = defaultSaveImagesPrefix();
+  out = out.replace(/[\\/]/g, "_");
+  out = out.replace(/\s+/g, "_");
+  out = out.replace(/[^A-Za-z0-9._-]/g, "");
+  out = out.replace(/_+/g, "_");
+  return out || defaultSaveImagesPrefix();
+}
+
+function visibleCanvasForSnapshot(canvas, container = null) {
+  if (!canvas || canvas.width < 1 || canvas.height < 1) return null;
+  if (container && container.offsetParent === null) return null;
+  return canvas;
+}
+
+function drawSnapshotCardBackground(ctx, width, height) {
+  ctx.fillStyle = "#0b1119";
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = "rgba(143, 176, 211, 0.38)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, width - 1, height - 1);
+}
+
+function buildViewerSnapshotCanvas() {
+  const source = visibleCanvasForSnapshot(els.canvas);
+  if (!source) throw new Error("Viewer canvas is not available.");
+  const colorbar = visibleCanvasForSnapshot(els.colorbarCanvas);
+
+  const maxMainDim = 1200;
+  const sourceMax = Math.max(source.width, source.height, 1);
+  const scale = Math.min(1, maxMainDim / sourceMax);
+  const mainW = Math.max(320, Math.round(source.width * scale));
+  const mainH = Math.max(240, Math.round(source.height * scale));
+
+  const pad = 20;
+  const titleH = 26;
+  const blockGap = 12;
+  const colorbarH = colorbar
+    ? clamp(Math.round((colorbar.height / Math.max(1, colorbar.width)) * mainW), 18, 40)
+    : 0;
+  const outW = mainW + pad * 2;
+  const outH = pad * 2 + titleH + mainH + (colorbar ? blockGap + colorbarH : 0);
+
+  const out = document.createElement("canvas");
+  out.width = outW;
+  out.height = outH;
+  const ctx = out.getContext("2d");
+  if (!ctx) throw new Error("Could not initialize viewer snapshot.");
+
+  drawSnapshotCardBackground(ctx, outW, outH);
+  ctx.fillStyle = "#e8f2ff";
+  ctx.font = "600 16px 'Source Sans 3', sans-serif";
+  ctx.fillText("Viewer", pad, pad + 17);
+
+  let y = pad + titleH;
+  ctx.drawImage(source, pad, y, mainW, mainH);
+  y += mainH;
+
+  if (colorbar) {
+    y += blockGap;
+    ctx.drawImage(colorbar, pad, y, mainW, colorbarH);
+  }
+  return out;
+}
+
+function collectInspectSnapshotCharts() {
+  if (!state.selection) return [];
+  const charts = [];
+  const timeCanvas = visibleCanvasForSnapshot(els.timeProfileCanvas, els.timeProfileBlock);
+  if (timeCanvas) charts.push({ key: "time_profile", title: "Time Flux Profile", canvas: timeCanvas });
+  const specCanvas = visibleCanvasForSnapshot(els.spectrumProfileCanvas, els.spectrumProfileBlock);
+  if (specCanvas) charts.push({ key: "spectral_profile", title: "Spectral Flux Profile", canvas: specCanvas });
+  const spatialCanvas = visibleCanvasForSnapshot(els.spatialProfileCanvas, els.spatialProfileBlock);
+  if (spatialCanvas) {
+    charts.push({
+      key: "spatial_profile",
+      title: els.spatialProfileTitle?.textContent || "Spatial Flux Profile",
+      canvas: spatialCanvas,
+    });
+  }
+  return charts;
+}
+
+function buildGraphSnapshotCanvas(entry) {
+  if (!entry || !entry.canvas) throw new Error("Inspect graph is not available.");
+  const source = entry.canvas;
+  const pad = 20;
+  const titleH = 26;
+  const targetW = clamp(source.width, 360, 960);
+  const scale = targetW / Math.max(1, source.width);
+  const targetH = Math.max(150, Math.round(source.height * scale));
+  const outW = targetW + pad * 2;
+  const outH = targetH + pad * 2 + titleH;
+
+  const out = document.createElement("canvas");
+  out.width = outW;
+  out.height = outH;
+  const ctx = out.getContext("2d");
+  if (!ctx) throw new Error("Could not initialize graph snapshot.");
+
+  drawSnapshotCardBackground(ctx, outW, outH);
+  ctx.fillStyle = "#e8f2ff";
+  ctx.font = "600 16px 'Source Sans 3', sans-serif";
+  ctx.fillText(entry.title || "Profile Graph", pad, pad + 17);
+  ctx.drawImage(source, pad, pad + titleH, targetW, targetH);
+  return out;
+}
+
+function setSaveImagesStatus(message, error = false) {
+  if (!els.saveImagesStatus) return;
+  els.saveImagesStatus.textContent = message || "";
+  els.saveImagesStatus.classList.toggle("error", Boolean(error));
+}
+
+function updateSaveImagesDialogFields() {
+  if (!els.saveImagesPrefixInput || !els.saveImagesLocationInput || !els.saveImagesOverwriteChk) return;
+  if (!state.saveImagesPrefs.outputDir) {
+    state.saveImagesPrefs.outputDir = DEFAULT_EXPORT_OUTPUT_DIR;
+  }
+  if (!state.saveImagesPrefs.prefix) {
+    state.saveImagesPrefs.prefix = defaultSaveImagesPrefix();
+  }
+  state.saveImagesPrefs.prefix = normalizeSaveImagesPrefix(state.saveImagesPrefs.prefix);
+  els.saveImagesPrefixInput.value = state.saveImagesPrefs.prefix;
+  els.saveImagesLocationInput.value = state.saveImagesPrefs.outputDir || "";
+  els.saveImagesOverwriteChk.checked = state.saveImagesPrefs.overwrite !== false;
+}
+
+async function chooseSaveImagesFolder() {
+  const payload = await fetchJson("/api/fs/pick", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target: "folder" }),
+  });
+  if (payload.canceled) return false;
+  if (!payload.exists || !payload.is_dir) {
+    throw new Error(`invalid folder: ${payload.path || "unknown"}`);
+  }
+  state.saveImagesPrefs.outputDir = payload.path;
+  updateSaveImagesDialogFields();
+  return true;
+}
+
+function openSaveImagesDialog() {
+  if (!els.saveImagesDialog) return;
+  if (!state.saveImagesPrefs.prefix) {
+    state.saveImagesPrefs.prefix = defaultSaveImagesPrefix();
+  }
+  updateSaveImagesDialogFields();
+  setSaveImagesStatus("");
+  if (typeof els.saveImagesDialog.showModal === "function") {
+    els.saveImagesDialog.showModal();
+  }
+}
+
+function closeSaveImagesDialog() {
+  if (!els.saveImagesDialog) return;
+  if (els.saveImagesDialog.open) {
+    els.saveImagesDialog.close();
+  }
+  setSaveImagesStatus("");
+}
+
+function buildSaveImagesRequestBody() {
+  const prefix = normalizeSaveImagesPrefix(state.saveImagesPrefs.prefix);
+  state.saveImagesPrefs.prefix = prefix;
+
+  const viewerCanvas = buildViewerSnapshotCanvas();
+  const images = [{ filename: `${prefix}_viewer.png`, data_url: viewerCanvas.toDataURL("image/png") }];
+  for (const chart of collectInspectSnapshotCharts()) {
+    const graphCanvas = buildGraphSnapshotCanvas(chart);
+    images.push({
+      filename: `${prefix}_${chart.key}.png`,
+      data_url: graphCanvas.toDataURL("image/png"),
+    });
+  }
+  return {
+    output_dir: state.saveImagesPrefs.outputDir,
+    overwrite: state.saveImagesPrefs.overwrite !== false,
+    images,
+  };
+}
+
+async function saveCurrentImagesFromDialog() {
+  if (!state.dataId || !els.saveImagesPrefixInput || !els.saveImagesOverwriteChk) return;
+  state.saveImagesPrefs.prefix = normalizeSaveImagesPrefix(els.saveImagesPrefixInput.value);
+  state.saveImagesPrefs.overwrite = Boolean(els.saveImagesOverwriteChk.checked);
+
+  if (!state.saveImagesPrefs.outputDir) {
+    setSaveImagesStatus("Choose a destination folder.", true);
+    const selected = await chooseSaveImagesFolder();
+    if (!selected) return;
+  }
+
+  setSaveImagesStatus("Preparing snapshots...");
+  const reqBody = buildSaveImagesRequestBody();
+  setSaveImagesStatus("Saving images...");
+  const response = await fetchJson(`/api/datasets/${state.dataId}/save-images`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(reqBody),
+  });
+  if (!response.saved) {
+    throw new Error(response.detail || "save failed");
+  }
+  setSystemPickerStatus("");
+  closeSaveImagesDialog();
+}
+
 function modifierDragMode(metaDown, shiftDown) {
   if (metaDown) return "zoom";
   if (shiftDown) return "investigate";
@@ -3149,6 +3595,13 @@ function updateDomainVisibility() {
   const nuVarying = axisVarying("nu");
   const sampleVarying = axisVarying("sample");
   const polVarying = axisVarying("pol");
+  const thirdSpatialDim = hasThirdSpatialDimension();
+  if (!thirdSpatialDim) {
+    const preferredPlane = preferredSpatialPlaneForDataset();
+    if (state.plane !== preferredPlane) {
+      state.plane = preferredPlane;
+    }
+  }
   const hiddenAxis = hiddenDim();
   const hiddenSpatialVarying = axisVarying(hiddenAxis);
   if (sphereMode && !sphereDataset) {
@@ -3216,7 +3669,7 @@ function updateDomainVisibility() {
   setVisible(els.spatialSphereBtn, sphereDataset);
   setVisible(els.temporalControlGroup, tVarying);
   setVisible(els.spectralControlGroup, nuVarying);
-  setVisible(els.planeLabel, !volumeMode && !sphereMode);
+  setVisible(els.planeLabel, !volumeMode && !sphereMode && thirdSpatialDim);
   setVisible(els.hiddenNavPanel, !volumeMode && !sphereMode && hiddenSpatialVarying);
   setVisible(els.volumeRenderControls, volumeMode);
   setVisible(els.sphereControls, sphereMode);
@@ -3326,12 +3779,33 @@ function updateControlCaps() {
     els.sphereMetaLabel.textContent = "";
   }
   els.planeSelect.value = state.plane;
-  els.planeSelect.disabled = isVolumeMode() || isSphereMode();
+  els.planeSelect.disabled = isVolumeMode() || isSphereMode() || !hasThirdSpatialDimension();
   const msAvailable = canUseMultiSpectral();
   if (!msAvailable) state.multiSpectral = false;
+  if (state.multiSpectralNuAxisScale !== "log") state.multiSpectralNuAxisScale = "linear";
+  if (!Number.isFinite(state.multiSpectralDeslope)) state.multiSpectralDeslope = 0;
+  state.multiSpectralDeslope = clamp(state.multiSpectralDeslope, -8, 8);
   els.multiSpectralBtn.disabled = !msAvailable;
   els.multiSpectralBtn.textContent = state.multiSpectral ? "On" : "Off";
   els.multiSpectralBtn.classList.toggle("activeAux", state.multiSpectral);
+  if (els.spectralMapControls) {
+    els.spectralMapControls.style.display = msAvailable && state.multiSpectral ? "grid" : "none";
+  }
+  if (els.msNuAxisLogBtn) {
+    const logAxis = state.multiSpectralNuAxisScale === "log";
+    els.msNuAxisLogBtn.disabled = !msAvailable || !state.multiSpectral;
+    els.msNuAxisLogBtn.textContent = logAxis ? "Log" : "Linear";
+    els.msNuAxisLogBtn.classList.toggle("activeAux", logAxis);
+    els.msNuAxisLogBtn.setAttribute("aria-pressed", logAxis ? "true" : "false");
+  }
+  if (els.msDeslopeRange) {
+    els.msDeslopeRange.value = String(state.multiSpectralDeslope);
+    els.msDeslopeRange.disabled = !msAvailable || !state.multiSpectral;
+    setSliderFill(els.msDeslopeRange);
+  }
+  if (els.msDeslopeValue) {
+    els.msDeslopeValue.textContent = multispectralDeslopeLabel();
+  }
   if (els.spectralNavPanel) {
     els.spectralNavPanel.classList.toggle("isLocked", spectralSelectorLocked);
   }
@@ -3360,6 +3834,97 @@ function setFluxScale(mode) {
   updateControlCaps();
   drawSelectionGraphs();
   refreshSlice();
+}
+
+function rerenderMultispectralFromCache() {
+  if (!multispectralFrameActive()) {
+    drawColorbar();
+    return false;
+  }
+  if (isSphereMode()) {
+    if (
+      Boolean(state.currentMultispectralSlice) ||
+      (Array.isArray(state.currentMultispectralTiles) && state.currentMultispectralTiles.length) ||
+      (isSampleMorphMode() && state.sampleMorph.multispectral && state.sampleMorph.fromSlice && state.sampleMorph.toSlice)
+    ) {
+      rerenderSphereFrame();
+      return true;
+    }
+    drawColorbar();
+    return false;
+  }
+
+  if (isSampleMorphMode() && state.sampleMorph.multispectral && state.sampleMorph.fromSlice && state.sampleMorph.toSlice) {
+    state.sampleMorph.fromCanvas = createRgbCanvas(
+      state.sampleMorph.fromSlice.shape[0],
+      state.sampleMorph.fromSlice.shape[1],
+      state.sampleMorph.fromSlice.values.r,
+      state.sampleMorph.fromSlice.values.g,
+      state.sampleMorph.fromSlice.values.b,
+      state.sampleMorph.fromSlice
+    );
+    state.sampleMorph.toCanvas = createRgbCanvas(
+      state.sampleMorph.toSlice.shape[0],
+      state.sampleMorph.toSlice.shape[1],
+      state.sampleMorph.toSlice.values.r,
+      state.sampleMorph.toSlice.values.g,
+      state.sampleMorph.toSlice.values.b,
+      state.sampleMorph.toSlice
+    );
+    renderSampleMorphFrame();
+    return true;
+  }
+
+  if (Array.isArray(state.currentMultispectralTiles) && state.currentMultispectralTiles.length) {
+    const activeIdx = clamp(state.activeSampleTile, 0, Math.max(0, state.currentMultispectralTiles.length - 1));
+    const primary = state.currentMultispectralTiles[activeIdx] || state.currentMultispectralTiles[0] || null;
+    state.currentMultispectralSlice = primary;
+    state.currentMultispectralBands = primary ? primary.bands || null : null;
+    const selectedCoords = primary ? primary.selected_coords || indicesToCoords(primary.selected_indices) : null;
+    const tiles = state.currentMultispectralTiles.map((ms) =>
+      createRgbCanvas(ms.shape[0], ms.shape[1], ms.values.r, ms.values.g, ms.values.b, ms)
+    );
+    renderTileFrame(tiles, state.sampleGridSize, selectedCoords, null);
+    return true;
+  }
+
+  if (state.currentMultispectralSlice) {
+    const ms = state.currentMultispectralSlice;
+    state.currentMultispectralBands = ms.bands || null;
+    renderFrame(
+      createRgbCanvas(ms.shape[0], ms.shape[1], ms.values.r, ms.values.g, ms.values.b, ms),
+      ms.selected_coords || indicesToCoords(ms.selected_indices),
+      null
+    );
+    return true;
+  }
+
+  drawColorbar();
+  return false;
+}
+
+function scheduleMultispectralLocalRerender() {
+  if (state._multispectralRerenderRaf) return;
+  state._multispectralRerenderRaf = window.requestAnimationFrame(() => {
+    state._multispectralRerenderRaf = 0;
+    rerenderMultispectralFromCache();
+  });
+}
+
+async function refreshMultispectralControlsFromServer() {
+  if (state._multispectralRerenderRaf) {
+    window.cancelAnimationFrame(state._multispectralRerenderRaf);
+    state._multispectralRerenderRaf = 0;
+  }
+  if (!multispectralFrameActive()) {
+    drawColorbar();
+    return;
+  }
+  try {
+    await refreshSlice();
+  } catch (err) {
+    if (!isAbortError(err)) console.warn("multispectral control refresh failed:", err);
+  }
 }
 
 function onVolumeRenderControlChange() {
@@ -4305,23 +4870,29 @@ function colorizeScalar(v, mm, maxPositive, minPositive) {
   return colorForNorm(norm);
 }
 
-function colorizeMultispectral(rv, gv, bv, stats) {
+function colorizeMultispectral(rv, gv, bv, stats, gains = null) {
+  const gainR = Array.isArray(gains) && Number.isFinite(gains[0]) && gains[0] > 0 ? gains[0] : 1;
+  const gainG = Array.isArray(gains) && Number.isFinite(gains[1]) && gains[1] > 0 ? gains[1] : 1;
+  const gainB = Array.isArray(gains) && Number.isFinite(gains[2]) && gains[2] > 0 ? gains[2] : 1;
+  const rSample = rv * gainR;
+  const gSample = gv * gainG;
+  const bSample = bv * gainB;
   if (state.fluxScale === "log") {
-    if (rv < 0 || gv < 0 || bv < 0) return [255, 255, 255];
-    const r = normalizeFluxLog(rv, stats.maxR) ?? 0;
-    const g = normalizeFluxLog(gv, stats.maxG) ?? 0;
-    const b = normalizeFluxLog(bv, stats.maxB) ?? 0;
+    if (rSample < 0 || gSample < 0 || bSample < 0) return [255, 255, 255];
+    const r = normalizeFluxLog(rSample, stats.maxR * gainR) ?? 0;
+    const g = normalizeFluxLog(gSample, stats.maxG * gainG) ?? 0;
+    const b = normalizeFluxLog(bSample, stats.maxB * gainB) ?? 0;
     return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
   }
   if (state.fluxScale === "sqrt") {
-    const r = Math.sqrt(clamp((rv - stats.mmR.min) / stats.spanR, 0, 1));
-    const g = Math.sqrt(clamp((gv - stats.mmG.min) / stats.spanG, 0, 1));
-    const b = Math.sqrt(clamp((bv - stats.mmB.min) / stats.spanB, 0, 1));
+    const r = Math.sqrt(clamp((rSample - stats.mmR.min * gainR) / (stats.spanR * gainR || 1), 0, 1));
+    const g = Math.sqrt(clamp((gSample - stats.mmG.min * gainG) / (stats.spanG * gainG || 1), 0, 1));
+    const b = Math.sqrt(clamp((bSample - stats.mmB.min * gainB) / (stats.spanB * gainB || 1), 0, 1));
     return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
   }
-  const r = clamp((rv - stats.mmR.min) / stats.spanR, 0, 1);
-  const g = clamp((gv - stats.mmG.min) / stats.spanG, 0, 1);
-  const b = clamp((bv - stats.mmB.min) / stats.spanB, 0, 1);
+  const r = clamp((rSample - stats.mmR.min * gainR) / (stats.spanR * gainR || 1), 0, 1);
+  const g = clamp((gSample - stats.mmG.min * gainG) / (stats.spanG * gainG || 1), 0, 1);
+  const b = clamp((bSample - stats.mmB.min * gainB) / (stats.spanB * gainB || 1), 0, 1);
   return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
 }
 
@@ -4670,6 +5241,7 @@ function createSphereCanvasCpu(slice, rangeOverride = null, options = null) {
   let maxPositive = 0;
   let minPositive = 0;
   let rgbStats = null;
+  const rgbGains = rgbMode ? multispectralCorrectionGains(slice) : null;
   if (scalarMode) {
     const sliceStats = isValidRangeStats(slice?.stats) ? slice.stats : null;
     const baseStats = fixedStats ? { min: fixedStats.min, max: fixedStats.max } : sliceStats ? sliceStats : minMax(values);
@@ -4708,7 +5280,7 @@ function createSphereCanvasCpu(slice, rangeOverride = null, options = null) {
   const pixelColor = (ipix) =>
     scalarMode
       ? colorizeScalar(values[ipix], mm, maxPositive, minPositive)
-      : colorizeMultispectral(rgbValues.r[ipix], rgbValues.g[ipix], rgbValues.b[ipix], rgbStats);
+      : colorizeMultispectral(rgbValues.r[ipix], rgbValues.g[ipix], rgbValues.b[ipix], rgbStats, rgbGains);
 
   const projection = state.sphereProjection || "mollweide";
   if (renderSphereRayMapped(img, indexMap, width, height, projection, npix, pixelColor, vectors)) {
@@ -4809,6 +5381,7 @@ function createSphereCanvas(slice, rangeOverride = null, options = null) {
         const gpu = renderer.render({
           values: scalarMode ? values : null,
           rgbValues: rgbMode ? rgbValues : null,
+          rgbGains: rgbMode ? multispectralCorrectionGains(slice) : null,
           npix,
           nside: state.sphereMeta.nside,
           projection: state.sphereProjection || "mollweide",
@@ -4927,13 +5500,38 @@ function createSingleCanvas(slice, rangeOverride = null, options = null) {
 }
 
 function createRgbCanvas(width, height, redVals, greenVals, blueVals, payload = null) {
+  const gains = multispectralCorrectionGains(payload);
+  if (rgbBackendMode(width, height) === "gpu") {
+    const renderer = ensureRgbGpuRenderer();
+    if (renderer) {
+      try {
+        const gpu = renderer.render(width, height, redVals, greenVals, blueVals, {
+          gains,
+          fluxScale: state.fluxScale,
+        });
+        if (gpu) {
+          const [fullW, fullH] = payloadFullShape(payload, width, height);
+          return upscaleCanvasNearest(gpu, fullW, fullH);
+        }
+      } catch (err) {
+        state.rgbGpu.lastError = err && err.message ? err.message : "render failed";
+        state.rgbGpu.available = false;
+        state.rgbGpu.renderer = null;
+      }
+    }
+  }
+
+  const [gainR, gainG, gainB] = gains;
   const img = els.canvas.getContext("2d").createImageData(width, height);
   const mmR = minMax(redVals);
   const mmG = minMax(greenVals);
   const mmB = minMax(blueVals);
-  const spanR = mmR.max - mmR.min || 1;
-  const spanG = mmG.max - mmG.min || 1;
-  const spanB = mmB.max - mmB.min || 1;
+  const minR = mmR.min * gainR;
+  const minG = mmG.min * gainG;
+  const minB = mmB.min * gainB;
+  const spanR = (mmR.max - mmR.min) * gainR || 1;
+  const spanG = (mmG.max - mmG.min) * gainG || 1;
+  const spanB = (mmB.max - mmB.min) * gainB || 1;
   let maxR = 0;
   let maxG = 0;
   let maxB = 0;
@@ -4943,14 +5541,17 @@ function createRgbCanvas(width, height, redVals, greenVals, blueVals, payload = 
       if (greenVals[i] > maxG) maxG = greenVals[i];
       if (blueVals[i] > maxB) maxB = blueVals[i];
     }
+    maxR *= gainR;
+    maxG *= gainG;
+    maxB *= gainB;
   }
 
   for (let x = 0; x < width; x += 1) {
     for (let y = 0; y < height; y += 1) {
       const src = x * height + y;
-      const rv = redVals[src];
-      const gv = greenVals[src];
-      const bv = blueVals[src];
+      const rv = redVals[src] * gainR;
+      const gv = greenVals[src] * gainG;
+      const bv = blueVals[src] * gainB;
       let r;
       let g;
       let b;
@@ -4965,13 +5566,13 @@ function createRgbCanvas(width, height, redVals, greenVals, blueVals, payload = 
           b = normalizeFluxLog(bv, maxB) ?? 0;
         }
       } else if (state.fluxScale === "sqrt") {
-        r = Math.sqrt(clamp((rv - mmR.min) / spanR, 0, 1));
-        g = Math.sqrt(clamp((gv - mmG.min) / spanG, 0, 1));
-        b = Math.sqrt(clamp((bv - mmB.min) / spanB, 0, 1));
+        r = Math.sqrt(clamp((rv - minR) / spanR, 0, 1));
+        g = Math.sqrt(clamp((gv - minG) / spanG, 0, 1));
+        b = Math.sqrt(clamp((bv - minB) / spanB, 0, 1));
       } else {
-        r = clamp((rv - mmR.min) / spanR, 0, 1);
-        g = clamp((gv - mmG.min) / spanG, 0, 1);
-        b = clamp((bv - mmB.min) / spanB, 0, 1);
+        r = clamp((rv - minR) / spanR, 0, 1);
+        g = clamp((gv - minG) / spanG, 0, 1);
+        b = clamp((bv - minB) / spanB, 0, 1);
       }
       const dst = (y * width + x) * 4;
       img.data[dst + 0] = Math.round(r * 255);
@@ -5028,7 +5629,7 @@ const { buildVolumeParams, buildSliceParams, buildMultispectralParams, buildRang
     getProjectedDims: projectedDimsForCurrentView,
   });
 
-const { GpuSliceRenderer, GpuVolumeRenderer, GpuSphereRenderer, GPU_VOLUME_MAX_STEPS } = createGpuRenderers({
+const { GpuSliceRenderer, GpuRgbRenderer, GpuVolumeRenderer, GpuSphereRenderer, GPU_VOLUME_MAX_STEPS } = createGpuRenderers({
   state,
   colorForNorm,
   isValidRangeStats,
@@ -5056,6 +5657,26 @@ function ensureSliceGpuRenderer() {
     state.sliceGpu.renderer = null;
     state.sliceGpu.available = false;
     state.sliceGpu.lastError = err && err.message ? err.message : "initialization failed";
+    return null;
+  }
+}
+
+function ensureRgbGpuRenderer() {
+  if (state.rgbGpu.renderer) {
+    state.rgbGpu.available = true;
+    return state.rgbGpu.renderer;
+  }
+  if (state.rgbGpu.available === false) return null;
+  try {
+    const renderer = new GpuRgbRenderer();
+    state.rgbGpu.renderer = renderer;
+    state.rgbGpu.available = true;
+    state.rgbGpu.lastError = "";
+    return renderer;
+  } catch (err) {
+    state.rgbGpu.renderer = null;
+    state.rgbGpu.available = false;
+    state.rgbGpu.lastError = err && err.message ? err.message : "initialization failed";
     return null;
   }
 }
@@ -5459,25 +6080,40 @@ function drawColorbar() {
   const unit = state.currentIntensityUnit || (state.meta ? state.meta.intensity_unit || "" : "");
   if (state.multiSpectral && state.currentMultispectralBands) {
     const bands = state.currentMultispectralBands;
-    const nuMin = bands.blue ? bands.blue[0] : 0;
-    const nuMax = bands.red ? bands.red[1] : 1;
-    const nuSpan = Math.max(1e-9, nuMax - nuMin);
+    const redBand = bands.red || [0, 1];
+    const greenBand = bands.green || [0, 1];
+    const blueBand = bands.blue || [0, 1];
+    const nuMin = redBand[0];
+    const nuMax = blueBand[1];
+    const requestedAxisScale = bands.axis_scale === "log" ? "log" : "linear";
+    const logAxisUsable = requestedAxisScale === "log" && nuMin > 0 && nuMax > nuMin;
+    const axisScale = logAxisUsable ? "log" : "linear";
+    const axisFromNu = (nu) => (axisScale === "log" ? Math.log10(Math.max(nu, 1e-30)) : nu);
+    const nuFromAxis = (axisCoord) => (axisScale === "log" ? 10 ** axisCoord : axisCoord);
+    const axisMin = axisFromNu(nuMin);
+    const axisMax = axisFromNu(nuMax);
+    const axisSpan = Math.max(1e-9, axisMax - axisMin);
     const unitNu = bands.unit || dimUnit("nu") || "Hz";
+    const deslopeAlpha = Number.isFinite(state.multiSpectralDeslope)
+      ? state.multiSpectralDeslope
+      : Number.isFinite(bands.deslope)
+      ? bands.deslope
+      : 0;
 
     for (let x = 0; x < w; x += 1) {
       const t = x / Math.max(1, w - 1);
-      const nu = nuMin + t * nuSpan;
+      const nu = nuFromAxis(axisMin + t * axisSpan);
       const [r, g, b] = colorForSpectralNu(nu, bands);
       ctx.fillStyle = `rgb(${r} ${g} ${b})`;
       ctx.fillRect(x, 0, 1, h);
     }
 
-    const bgEdge = 0.5 * ((bands.blue?.[1] ?? nuMin) + (bands.green?.[0] ?? nuMin));
-    const grEdge = 0.5 * ((bands.green?.[1] ?? nuMax) + (bands.red?.[0] ?? nuMax));
-    const xOf = (nu) => ((nu - nuMin) / nuSpan) * (w - 1);
+    const rgEdge = 0.5 * ((redBand[1] ?? nuMin) + (greenBand[0] ?? nuMin));
+    const gbEdge = 0.5 * ((greenBand[1] ?? nuMax) + (blueBand[0] ?? nuMax));
+    const xOf = (nu) => ((axisFromNu(nu) - axisMin) / axisSpan) * (w - 1);
     ctx.strokeStyle = "rgba(237, 242, 247, 0.85)";
     ctx.lineWidth = 1;
-    for (const edge of [bgEdge, grEdge]) {
+    for (const edge of [rgEdge, gbEdge]) {
       if (Number.isFinite(edge) && edge > nuMin && edge < nuMax) {
         const x = xOf(edge);
         ctx.beginPath();
@@ -5488,7 +6124,9 @@ function drawColorbar() {
     }
 
     els.colorbarMin.textContent = fmtPhysical("nu", nuMin, unitNu);
-    els.colorbarMid.textContent = "Spectral map: B -> G -> R";
+    const axisLabel = axisScale === "log" ? "log nu" : "linear nu";
+    const deslopeLabel = Math.abs(deslopeAlpha) > 1.0e-6 ? `, spectral index correction=${deslopeAlpha.toFixed(1)}` : "";
+    els.colorbarMid.textContent = `Spectral map: R -> G -> B (${axisLabel}${deslopeLabel})`;
     els.colorbarMax.textContent = fmtPhysical("nu", nuMax, unitNu);
   } else {
     const stats = activeIntensityRangeStats();
@@ -5659,6 +6297,9 @@ function sampleMorphMultispectralBands(fromSlice, toSlice, alpha) {
     green: interpolateBandWindow(fromBands.green, toBands.green, alpha),
     red: interpolateBandWindow(fromBands.red, toBands.red, alpha),
     unit: toBands.unit || fromBands.unit || dimUnit("nu") || "Hz",
+    axis_scale: toBands.axis_scale || fromBands.axis_scale || state.multiSpectralNuAxisScale,
+    deslope: state.multiSpectralDeslope,
+    deslope_ref: Number.isFinite(toBands.deslope_ref) ? toBands.deslope_ref : fromBands.deslope_ref,
   };
 }
 
@@ -6522,9 +7163,14 @@ async function refreshSlice(options = {}) {
 
   state.currentVolume = null;
   state.currentVolumeTiles = null;
-  state.currentMonoSliceTiles = null;
-  state.currentMultispectralSlice = null;
-  state.currentMultispectralTiles = null;
+  const preserveSphereSampleTiles = isSphereMode() && isSamplesMode() && !isSampleMorphMode();
+  if (!preserveSphereSampleTiles) {
+    state.currentMonoSlice = null;
+    state.currentMonoSliceTiles = null;
+    state.currentMultispectralBands = null;
+    state.currentMultispectralSlice = null;
+    state.currentMultispectralTiles = null;
+  }
 
   if (isSampleMorphMode()) {
     await evpaPromise;
@@ -7287,7 +7933,7 @@ async function advanceAxisPlayback(axis) {
 function stopPlayback(refine = false) {
   const wasPlaying = state.playbackTimer !== null;
   if (state.playbackTimer) {
-    clearInterval(state.playbackTimer);
+    clearTimeout(state.playbackTimer);
     state.playbackTimer = null;
   }
   state.playbackAxis = null;
@@ -7303,18 +7949,8 @@ function startPlayback(axis) {
   stopSampleMorphPlayback();
   stopPlayback(false);
   state.playbackAxis = axis;
-
-  const intervalMs = Math.max(30, Math.floor(1000 / Math.max(1, state.playbackFps)));
-  state.playbackTimer = setInterval(async () => {
-    if (state.playbackBusy) return;
-    state.playbackBusy = true;
-
-    try {
-      await advanceAxisPlayback(axis);
-    } finally {
-      state.playbackBusy = false;
-    }
-  }, intervalMs);
+  state.playbackPreviewMaxPixels = PLAYBACK_PREVIEW_BASE_MAX_PIXELS;
+  scheduleNextPlaybackTick(axis, 0);
 
   updatePlayUi();
 }
@@ -7735,6 +8371,9 @@ function syncActiveTabSnapshot() {
 function refreshActiveTabLabel() {
   const tab = activeDatasetTab();
   if (!tab) return;
+  if (tab.snapshot && typeof tab.snapshot === "object") {
+    tab.snapshot.dataId = state.dataId;
+  }
   tab.label = tabLabelForState(state, tab.fallbackLabel);
   renderDatasetTabs();
 }
@@ -8319,6 +8958,7 @@ async function onDatasetChange() {
     }
 
     state.dataId = selectedId;
+    refreshActiveTabLabel();
     setSystemPickerStatus("");
     state.meta = await fetchJson(`/api/datasets/${state.dataId}/meta`);
     assertEpoch(expectedEpoch);
@@ -8514,6 +9154,30 @@ async function init() {
     updateControlCaps();
     await refreshSlice();
   });
+  if (els.msNuAxisLogBtn) {
+    els.msNuAxisLogBtn.addEventListener("click", async () => {
+      if (!canUseMultiSpectral()) return;
+      state.multiSpectralNuAxisScale = state.multiSpectralNuAxisScale === "log" ? "linear" : "log";
+      updateControlCaps();
+      await refreshMultispectralControlsFromServer();
+    });
+  }
+  if (els.msDeslopeRange) {
+    els.msDeslopeRange.addEventListener("input", () => {
+      const parsed = Number.parseFloat(els.msDeslopeRange.value);
+      state.multiSpectralDeslope = Number.isFinite(parsed) ? clamp(parsed, -8, 8) : 0;
+      if (els.msDeslopeValue) els.msDeslopeValue.textContent = multispectralDeslopeLabel();
+      setSliderFill(els.msDeslopeRange);
+      scheduleMultispectralLocalRerender();
+    });
+    els.msDeslopeRange.addEventListener("change", async () => {
+      const parsed = Number.parseFloat(els.msDeslopeRange.value);
+      state.multiSpectralDeslope = Number.isFinite(parsed) ? clamp(parsed, -8, 8) : 0;
+      if (els.msDeslopeValue) els.msDeslopeValue.textContent = multispectralDeslopeLabel();
+      setSliderFill(els.msDeslopeRange);
+      await refreshMultispectralControlsFromServer();
+    });
+  }
 
   els.timePlayBtn.addEventListener("click", () => toggleAxisPlayback("t"));
   els.freqPlayBtn.addEventListener("click", () => toggleAxisPlayback("nu"));
@@ -8622,6 +9286,13 @@ async function init() {
     });
   }
 
+  if (els.saveImagesBtn) {
+    els.saveImagesBtn.addEventListener("click", async () => {
+      if (els.saveImagesBtn.disabled) return;
+      openSaveImagesDialog();
+    });
+  }
+
   if (els.exportFormatSelect) {
     els.exportFormatSelect.addEventListener("change", () => {
       const raw = isValidExportFormat(els.exportFormatSelect.value) ? els.exportFormatSelect.value : "fits";
@@ -8682,6 +9353,57 @@ async function init() {
     });
     els.exportDialog.addEventListener("close", () => {
       setExportStatus("");
+    });
+  }
+
+  if (els.saveImagesPrefixInput) {
+    els.saveImagesPrefixInput.addEventListener("input", () => {
+      state.saveImagesPrefs.prefix = els.saveImagesPrefixInput.value;
+      setSaveImagesStatus("");
+    });
+  }
+
+  if (els.saveImagesOverwriteChk) {
+    els.saveImagesOverwriteChk.addEventListener("change", () => {
+      state.saveImagesPrefs.overwrite = Boolean(els.saveImagesOverwriteChk.checked);
+    });
+  }
+
+  if (els.saveImagesBrowseBtn) {
+    els.saveImagesBrowseBtn.addEventListener("click", async () => {
+      try {
+        await chooseSaveImagesFolder();
+        setSaveImagesStatus("");
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        setSaveImagesStatus(message, true);
+      }
+    });
+  }
+
+  if (els.saveImagesCancelBtn) {
+    els.saveImagesCancelBtn.addEventListener("click", () => {
+      closeSaveImagesDialog();
+    });
+  }
+
+  if (els.saveImagesConfirmBtn) {
+    els.saveImagesConfirmBtn.addEventListener("click", async () => {
+      try {
+        await saveCurrentImagesFromDialog();
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        setSaveImagesStatus(`Save failed: ${message}`, true);
+      }
+    });
+  }
+
+  if (els.saveImagesDialog) {
+    els.saveImagesDialog.addEventListener("cancel", () => {
+      setSaveImagesStatus("");
+    });
+    els.saveImagesDialog.addEventListener("close", () => {
+      setSaveImagesStatus("");
     });
   }
 

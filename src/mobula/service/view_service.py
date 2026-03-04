@@ -375,6 +375,8 @@ def build_multispectral_response(
     sample_mode: SampleMode,
     plane_x: str,
     plane_y: str,
+    nu_axis_scale: str = "linear",
+    deslope: float = 0.0,
     project_dims: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Build an RGB multispectral projection from a spectral cube."""
@@ -437,19 +439,71 @@ def build_multispectral_response(
     if n_nu < 3:
         raise HTTPException(status_code=400, detail="need at least 3 spectral channels for multispectral RGB")
 
-    edges = np.linspace(0, n_nu, 4, dtype=int)
-    edges[1] = max(edges[1], 1)
-    edges[2] = max(edges[2], edges[1] + 1)
-    edges[3] = n_nu
-    b = arr[edges[0] : edges[1]].mean(axis=0, dtype=np.float64)
-    g = arr[edges[1] : edges[2]].mean(axis=0, dtype=np.float64)
-    r = arr[edges[2] : edges[3]].mean(axis=0, dtype=np.float64)
+    nu_coords = np.asarray(ds.coords["nu"], dtype=np.float64).reshape(-1)[lo:hi]
+    axis_scale = str(nu_axis_scale or "linear").strip().lower()
+    if axis_scale not in {"linear", "log"}:
+        raise HTTPException(status_code=400, detail="nu_axis_scale must be 'linear' or 'log'")
+
+    if not np.isfinite(deslope):
+        raise HTTPException(status_code=400, detail="deslope must be finite")
+
+    deslope_ref: float | None = None
+    if float(deslope) != 0.0:
+        nu_abs = np.abs(np.asarray(nu_coords, dtype=np.float64))
+        valid = np.isfinite(nu_abs) & (nu_abs > 0)
+        if np.any(valid):
+            deslope_ref = float(np.median(nu_abs[valid]))
+            weights = np.ones(n_nu, dtype=np.float64)
+            weights[valid] = np.power(nu_abs[valid] / deslope_ref, float(deslope))
+            arr = arr * weights[:, np.newaxis, np.newaxis].astype(np.float32)
+
+    sort_idx = np.argsort(nu_coords)
+    nu_sorted = nu_coords[sort_idx]
+    axis_scale_applied = axis_scale
+    if axis_scale == "log":
+        if np.any(nu_sorted <= 0):
+            axis_scale_applied = "linear"
+            axis_sorted = nu_sorted
+        else:
+            axis_sorted = np.log10(nu_sorted)
+    else:
+        axis_sorted = nu_sorted
+
+    axis_min = float(axis_sorted[0])
+    axis_max = float(axis_sorted[-1])
+    edges_targets = np.linspace(axis_min, axis_max, 4, dtype=np.float64)
+    edge_1 = int(np.searchsorted(axis_sorted, edges_targets[1], side="right"))
+    edge_2 = int(np.searchsorted(axis_sorted, edges_targets[2], side="right"))
+    edge_1 = max(1, min(edge_1, n_nu - 2))
+    edge_2 = max(edge_1 + 1, min(edge_2, n_nu - 1))
+
+    band_indices = [sort_idx[:edge_1], sort_idx[edge_1:edge_2], sort_idx[edge_2:]]
+    band_chunks: list[dict[str, Any]] = []
+    for idx in band_indices:
+        band_data = arr[idx].mean(axis=0, dtype=np.float64)
+        band_nu = nu_coords[idx]
+        nu_lo = float(np.min(band_nu))
+        nu_hi = float(np.max(band_nu))
+        band_chunks.append(
+            {
+                "center": 0.5 * (nu_lo + nu_hi),
+                "lo": nu_lo,
+                "hi": nu_hi,
+                "data": band_data,
+            }
+        )
+
+    # Physical mapping: lower frequency -> red, higher frequency -> blue.
+    band_chunks.sort(key=lambda item: float(item["center"]))
+    red_band, green_band, blue_band = band_chunks
+    r = red_band["data"]
+    g = green_band["data"]
+    b = blue_band["data"]
     full_shape = [int(r.shape[0]), int(r.shape[1])]
     r, sampling_step = _downsample_2d(r, max_pixels)
     g = g[:: sampling_step[0], :: sampling_step[1]]
     b = b[:: sampling_step[0], :: sampling_step[1]]
 
-    nu_coords = np.asarray(ds.coords["nu"], dtype=np.float64).reshape(-1)[lo:hi]
     return {
         "data_id": ds.data_id,
         "plane_dims": [plane_x, plane_y],
@@ -459,10 +513,13 @@ def build_multispectral_response(
         "sample_mode": sample_mode,
         "selected_indices": selected_indices,
         "bands": {
-            "blue": [float(nu_coords[edges[0]]), float(nu_coords[max(edges[1] - 1, edges[0])])],
-            "green": [float(nu_coords[edges[1]]), float(nu_coords[max(edges[2] - 1, edges[1])])],
-            "red": [float(nu_coords[edges[2]]), float(nu_coords[max(edges[3] - 1, edges[2])])],
+            "red": [float(red_band["lo"]), float(red_band["hi"])],
+            "green": [float(green_band["lo"]), float(green_band["hi"])],
+            "blue": [float(blue_band["lo"]), float(blue_band["hi"])],
             "unit": ds.units.get("nu", "Hz"),
+            "axis_scale": axis_scale_applied,
+            "deslope": float(deslope),
+            "deslope_ref": deslope_ref,
         },
         "values": {"r": r.ravel().tolist(), "g": g.ravel().tolist(), "b": b.ravel().tolist()},
     }

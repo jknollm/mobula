@@ -916,6 +916,8 @@ def test_multispectral_success(client, base_dataset) -> None:
     assert len(body["values"]["g"]) == base_dataset.shape[4] * base_dataset.shape[5]
     assert len(body["values"]["b"]) == base_dataset.shape[4] * base_dataset.shape[5]
     assert body["bands"]["unit"] == base_dataset.units["nu"]
+    assert body["bands"]["axis_scale"] in {"linear", "log"}
+    assert body["bands"]["deslope"] == pytest.approx(0.0)
 
 
 def test_multispectral_downsamples(client, base_dataset) -> None:
@@ -938,6 +940,27 @@ def test_multispectral_windowed_nu_range(client, base_dataset) -> None:
     assert bands["blue"][0] <= bands["blue"][1]
     assert bands["green"][0] <= bands["green"][1]
     assert bands["red"][0] <= bands["red"][1]
+
+
+def test_multispectral_accepts_log_nu_axis_and_deslope(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"nu_axis_scale": "log", "deslope": 1.5},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["bands"]["axis_scale"] in {"linear", "log"}
+    assert body["bands"]["deslope"] == pytest.approx(1.5)
+    assert len(body["values"]["r"]) == body["shape"][0] * body["shape"][1]
+
+
+def test_multispectral_rejects_invalid_nu_axis_scale(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"nu_axis_scale": "weird"},
+    )
+    assert res.status_code == 400
+    assert "nu_axis_scale" in res.json()["detail"]
 
 
 def test_multispectral_rejects_too_narrow_nu_window(client, base_dataset) -> None:

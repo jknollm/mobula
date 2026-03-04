@@ -542,6 +542,22 @@ button:focus-visible {
   color: var(--muted);
 }
 
+.spectralMapControls {
+  display: none;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.spectralMapAxisRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .miniGroup {
   display: flex;
   gap: 6px;
@@ -1055,12 +1071,19 @@ canvas {
   flex-wrap: nowrap;
   gap: 6px;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   position: sticky;
   bottom: 0;
   background: linear-gradient(180deg, rgba(16, 23, 33, 0), rgba(16, 23, 33, 0.95) 45%);
   padding-top: 3px;
   z-index: 2;
+}
+
+.viewerToolbarLeft,
+.viewerToolbarRight {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .viewerToolbar button {
@@ -1092,7 +1115,6 @@ canvas {
 }
 
 .toolbarReset {
-  margin-left: 8px;
   width: auto;
   min-width: 90px;
   font-size: 0.76rem;
@@ -1120,18 +1142,9 @@ canvas {
   cursor: not-allowed;
 }
 
-.coordSystemControl {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: #9fb0c4;
-  font-size: 0.76rem;
-}
-
-.coordSystemControl select {
+.toolbarSaveImages {
   width: auto;
-  min-width: 104px;
-  padding: 4px 7px;
+  min-width: 108px;
   font-size: 0.76rem;
 }
 
