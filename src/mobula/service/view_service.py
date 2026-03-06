@@ -21,6 +21,80 @@ from mobula.service.api_utils import (
     _project_dims_by_mean,
     _uses_sample_reduction,
 )
+from mobula.service.spectral_rgb import build_visible_wavelength_axis, convert_mf_to_rgb_new
+
+_MULTISPECTRAL_GPU_AUTO_MIN_ELEMENTS = 128 * 128 * 12
+
+
+def _cupy_module_or_none() -> Any | None:
+    try:
+        import cupy as cp
+    except Exception:
+        return None
+    try:
+        if int(cp.cuda.runtime.getDeviceCount()) < 1:
+            return None
+    except Exception:
+        return None
+    return cp
+
+
+def _normalize_total_flux_brightness_xp(
+    total_flux: Any,
+    *,
+    intensity_mode: str,
+    clip_min: float,
+    clip_max: float,
+    xp: Any,
+    dynamic_range: float = 2.5e3,
+) -> Any:
+    arr = xp.asarray(total_flux, dtype=xp.float64)
+    finite = xp.isfinite(arr)
+    if not bool(xp.any(finite)):
+        return xp.zeros_like(arr, dtype=xp.float64)
+
+    maxval = float(xp.max(arr[finite]).item())
+    if not np.isfinite(maxval) or maxval <= 0:
+        return xp.zeros_like(arr, dtype=xp.float64)
+
+    hi = maxval * clip_max
+    if intensity_mode == "log":
+        if clip_min > 0.0:
+            lo = maxval * clip_min
+        else:
+            lo = hi / max(dynamic_range, 1.0 + 1e-12)
+        lo = max(lo, np.finfo(np.float64).tiny)
+        hi = max(hi, lo * (1.0 + 1e-12))
+        clipped = xp.clip(arr, lo, hi)
+        return xp.log(clipped / lo) / xp.log(hi / lo)
+
+    lo = max(maxval * clip_min, 0.0)
+    hi = max(hi, lo + 1.0e-12)
+    norm = xp.clip((arr - lo) / (hi - lo), 0.0, 1.0)
+    if intensity_mode == "sqrt":
+        norm = xp.sqrt(norm)
+    return norm
+
+
+def _normalize_total_flux_brightness(
+    total_flux: np.ndarray,
+    *,
+    intensity_mode: str,
+    clip_min: float,
+    clip_max: float,
+    dynamic_range: float = 2.5e3,
+) -> np.ndarray:
+    return np.asarray(
+        _normalize_total_flux_brightness_xp(
+            total_flux,
+            intensity_mode=intensity_mode,
+            clip_min=clip_min,
+            clip_max=clip_max,
+            xp=np,
+            dynamic_range=dynamic_range,
+        ),
+        dtype=np.float64,
+    )
 
 
 def build_slice_response(
@@ -377,6 +451,12 @@ def build_multispectral_response(
     plane_y: str,
     nu_axis_scale: str = "linear",
     deslope: float = 0.0,
+    normalize_spectrum: bool = False,
+    normalize_spectrum_boost: float = 1.0,
+    intensity_scale: str = "linear",
+    range_min: float = 0.0,
+    range_max: float = 100.0,
+    compute_backend: str = "auto",
     project_dims: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Build an RGB multispectral projection from a spectral cube."""
@@ -446,59 +526,228 @@ def build_multispectral_response(
 
     if not np.isfinite(deslope):
         raise HTTPException(status_code=400, detail="deslope must be finite")
+    if not np.isfinite(normalize_spectrum_boost):
+        raise HTTPException(status_code=400, detail="normalize_spectrum_boost must be finite")
+    normalize_boost = float(normalize_spectrum_boost)
+    if normalize_boost < 0.25 or normalize_boost > 8.0:
+        raise HTTPException(status_code=400, detail="normalize_spectrum_boost must be in [0.25, 8.0]")
+    intensity_mode = str(intensity_scale or "linear").strip().lower()
+    if intensity_mode not in {"linear", "sqrt", "log"}:
+        raise HTTPException(status_code=400, detail="intensity_scale must be 'linear', 'sqrt', or 'log'")
+    if not np.isfinite(range_min) or not np.isfinite(range_max):
+        raise HTTPException(status_code=400, detail="range_min/range_max must be finite")
+    if range_max <= range_min:
+        raise HTTPException(status_code=400, detail="range_max must be larger than range_min")
+    compute_backend_mode = str(compute_backend or "auto").strip().lower()
+    if compute_backend_mode not in {"auto", "cpu", "gpu"}:
+        raise HTTPException(status_code=400, detail="compute_backend must be 'auto', 'cpu', or 'gpu'")
+    clip_min = float(np.clip(range_min / 100.0, 0.0, 1.0))
+    clip_max = float(np.clip(range_max / 100.0, 0.0, 1.0))
+
+    cp = None
+    pipeline_backend = "cpu"
+    if compute_backend_mode == "gpu":
+        cp = _cupy_module_or_none()
+        if cp is None:
+            raise HTTPException(status_code=400, detail="multispectral GPU backend unavailable: CuPy/CUDA not available")
+        pipeline_backend = "gpu"
+    elif compute_backend_mode == "auto" and arr.size >= _MULTISPECTRAL_GPU_AUTO_MIN_ELEMENTS:
+        cp = _cupy_module_or_none()
+        if cp is not None:
+            pipeline_backend = "gpu"
 
     deslope_ref: float | None = None
-    if float(deslope) != 0.0:
-        nu_abs = np.abs(np.asarray(nu_coords, dtype=np.float64))
-        valid = np.isfinite(nu_abs) & (nu_abs > 0)
-        if np.any(valid):
-            deslope_ref = float(np.median(nu_abs[valid]))
-            weights = np.ones(n_nu, dtype=np.float64)
-            weights[valid] = np.power(nu_abs[valid] / deslope_ref, float(deslope))
-            arr = arr * weights[:, np.newaxis, np.newaxis].astype(np.float32)
+    wavelength_axis_nm, axis_scale_applied = build_visible_wavelength_axis(
+        nu_coords,
+        axis_scale=axis_scale,
+    )
+    rgb_backend_used = "cpu"
+
+    if pipeline_backend == "gpu" and cp is not None:
+        arr_gpu = cp.asarray(arr, dtype=cp.float32)
+        arr_for_brightness_gpu = cp.asarray(arr_gpu, dtype=cp.float64)
+
+        if normalize_spectrum:
+            arr64 = cp.asarray(arr_gpu, dtype=cp.float64)
+            mean_spectrum = cp.mean(arr64, axis=(1, 2), dtype=cp.float64)
+            finite = cp.isfinite(mean_spectrum)
+            if bool(cp.any(finite)):
+                median_abs = float(cp.median(cp.abs(mean_spectrum[finite])).item())
+            else:
+                median_abs = 1.0
+            if not np.isfinite(median_abs) or median_abs <= 0.0:
+                median_abs = 1.0
+            floor = max(np.finfo(np.float64).tiny, median_abs * 1.0e-12)
+            scale = cp.where(finite & (cp.abs(mean_spectrum) >= floor), mean_spectrum, 1.0)
+            normalized = arr64 / scale[:, cp.newaxis, cp.newaxis]
+            if normalize_boost != 1.0:
+                positive = normalized > 0.0
+                boosted = cp.empty_like(normalized, dtype=cp.float64)
+                boosted[positive] = cp.float_power(cp.maximum(normalized[positive], floor), normalize_boost)
+                boosted[~positive] = normalized[~positive] * normalize_boost
+                arr_gpu = boosted.astype(cp.float32)
+            else:
+                arr_gpu = normalized.astype(cp.float32)
+
+        if float(deslope) != 0.0:
+            nu_abs = cp.abs(cp.asarray(nu_coords, dtype=cp.float64))
+            valid = cp.isfinite(nu_abs) & (nu_abs > 0)
+            if bool(cp.any(valid)):
+                deslope_ref = float(cp.median(nu_abs[valid]).item())
+                weights = cp.ones(n_nu, dtype=cp.float64)
+                weights[valid] = cp.power(nu_abs[valid] / deslope_ref, float(deslope))
+                arr_gpu = arr_gpu * weights[:, cp.newaxis, cp.newaxis].astype(cp.float32)
+
+        arr_rgb = cp.moveaxis(arr_gpu, 0, -1).astype(cp.float64)
+        arr_chroma = cp.maximum(arr_rgb, 0.0)
+        denom = cp.sum(arr_chroma, axis=-1, keepdims=True, dtype=cp.float64)
+        denom = cp.maximum(denom, np.finfo(np.float64).tiny)
+        arr_chroma = arr_chroma / denom
+        try:
+            rgb_cube_gpu, _ = convert_mf_to_rgb_new(
+                arr_chroma,
+                wavelength_axis_nm=wavelength_axis_nm,
+                intensity_scale="linear",
+                clip_min=0.0,
+                clip_max=1.0,
+                channel_relative_clip=False,
+                backend="gpu",
+                return_device_array=True,
+            )
+        except RuntimeError as exc:
+            if compute_backend_mode == "gpu":
+                raise HTTPException(status_code=400, detail=f"multispectral GPU backend unavailable: {exc}") from exc
+            rgb_cube_gpu = None
+
+        if rgb_cube_gpu is None:
+            pipeline_backend = "cpu"
+        else:
+            total_flux = cp.sum(cp.maximum(arr_for_brightness_gpu, 0.0), axis=0, dtype=cp.float64)
+            brightness = _normalize_total_flux_brightness_xp(
+                total_flux,
+                intensity_mode=intensity_mode,
+                clip_min=clip_min,
+                clip_max=clip_max,
+                xp=cp,
+            )
+            luma = (
+                0.2126 * rgb_cube_gpu[:, :, 0]
+                + 0.7152 * rgb_cube_gpu[:, :, 1]
+                + 0.0722 * rgb_cube_gpu[:, :, 2]
+            )
+            scale = brightness / cp.maximum(luma, 1.0e-6)
+            rgb_cube_gpu = cp.clip(rgb_cube_gpu * scale[:, :, cp.newaxis], 0.0, 1.0)
+            r = cp.asnumpy(rgb_cube_gpu[:, :, 0])
+            g = cp.asnumpy(rgb_cube_gpu[:, :, 1])
+            b = cp.asnumpy(rgb_cube_gpu[:, :, 2])
+            rgb_backend_used = "gpu"
+
+    if pipeline_backend == "cpu":
+        arr_for_brightness = np.asarray(arr, dtype=np.float64).copy()
+        if normalize_spectrum:
+            arr64 = np.asarray(arr, dtype=np.float64)
+            # Divide by the mean spectrum (per nu channel, averaged over the visible plane)
+            # so spectral color channels are flattened before eye-response integration.
+            mean_spectrum = np.mean(arr64, axis=(1, 2), dtype=np.float64)
+            finite = np.isfinite(mean_spectrum)
+            if np.any(finite):
+                median_abs = float(np.median(np.abs(mean_spectrum[finite])))
+            else:
+                median_abs = 1.0
+            if not np.isfinite(median_abs) or median_abs <= 0.0:
+                median_abs = 1.0
+            floor = max(np.finfo(np.float64).tiny, median_abs * 1.0e-12)
+            scale = np.where(finite & (np.abs(mean_spectrum) >= floor), mean_spectrum, 1.0)
+            normalized = arr64 / scale[:, np.newaxis, np.newaxis]
+            if normalize_boost != 1.0:
+                # Amplify deviations from the flattened mean spectrum before eye-response mapping.
+                positive = normalized > 0.0
+                boosted = np.empty_like(normalized, dtype=np.float64)
+                boosted[positive] = np.float_power(np.maximum(normalized[positive], floor), normalize_boost)
+                boosted[~positive] = normalized[~positive] * normalize_boost
+                arr = boosted.astype(np.float32)
+            else:
+                arr = normalized.astype(np.float32)
+
+        if float(deslope) != 0.0:
+            nu_abs = np.abs(np.asarray(nu_coords, dtype=np.float64))
+            valid = np.isfinite(nu_abs) & (nu_abs > 0)
+            if np.any(valid):
+                deslope_ref = float(np.median(nu_abs[valid]))
+                weights = np.ones(n_nu, dtype=np.float64)
+                weights[valid] = np.power(nu_abs[valid] / deslope_ref, float(deslope))
+                arr = arr * weights[:, np.newaxis, np.newaxis].astype(np.float32)
+
+        arr_rgb = np.moveaxis(arr, 0, -1).astype(np.float64)
+        arr_chroma = np.maximum(arr_rgb, 0.0)
+        denom = np.sum(arr_chroma, axis=-1, keepdims=True, dtype=np.float64)
+        denom = np.maximum(denom, np.finfo(np.float64).tiny)
+        arr_chroma = arr_chroma / denom
+        rgb_cube, _ = convert_mf_to_rgb_new(
+            arr_chroma,
+            wavelength_axis_nm=wavelength_axis_nm,
+            intensity_scale="linear",
+            clip_min=0.0,
+            clip_max=1.0,
+            channel_relative_clip=False,
+            backend="cpu",
+        )
+        # Use positive flux for brightness so signed noise does not cancel to dark holes.
+        total_flux = np.sum(np.maximum(arr_for_brightness, 0.0), axis=0, dtype=np.float64)
+        brightness = _normalize_total_flux_brightness(
+            total_flux,
+            intensity_mode=intensity_mode,
+            clip_min=clip_min,
+            clip_max=clip_max,
+        )
+        luma = (
+            0.2126 * rgb_cube[:, :, 0]
+            + 0.7152 * rgb_cube[:, :, 1]
+            + 0.0722 * rgb_cube[:, :, 2]
+        )
+        scale = brightness / np.maximum(luma, 1.0e-6)
+        rgb_cube = np.clip(rgb_cube * scale[:, :, np.newaxis], 0.0, 1.0)
+        r = rgb_cube[:, :, 0]
+        g = rgb_cube[:, :, 1]
+        b = rgb_cube[:, :, 2]
 
     sort_idx = np.argsort(nu_coords)
     nu_sorted = nu_coords[sort_idx]
-    axis_scale_applied = axis_scale
-    if axis_scale == "log":
-        if np.any(nu_sorted <= 0):
-            axis_scale_applied = "linear"
-            axis_sorted = nu_sorted
-        else:
-            axis_sorted = np.log10(nu_sorted)
+    if axis_scale_applied == "log":
+        axis_sorted = np.log10(np.maximum(nu_sorted, np.finfo(np.float64).tiny))
     else:
         axis_sorted = nu_sorted
+    finite_axis = np.isfinite(axis_sorted)
+    if np.any(finite_axis):
+        axis_min = float(np.min(axis_sorted[finite_axis]))
+        axis_max = float(np.max(axis_sorted[finite_axis]))
+    else:
+        axis_min = 0.0
+        axis_max = float(n_nu - 1)
+        axis_sorted = np.linspace(axis_min, axis_max, n_nu, dtype=np.float64)
 
-    axis_min = float(axis_sorted[0])
-    axis_max = float(axis_sorted[-1])
-    edges_targets = np.linspace(axis_min, axis_max, 4, dtype=np.float64)
-    edge_1 = int(np.searchsorted(axis_sorted, edges_targets[1], side="right"))
-    edge_2 = int(np.searchsorted(axis_sorted, edges_targets[2], side="right"))
-    edge_1 = max(1, min(edge_1, n_nu - 2))
-    edge_2 = max(edge_1 + 1, min(edge_2, n_nu - 1))
+    if axis_max <= axis_min:
+        edge_1 = max(1, n_nu // 3)
+        edge_2 = max(edge_1 + 1, (2 * n_nu) // 3)
+        edge_2 = min(edge_2, n_nu - 1)
+    else:
+        edges_targets = np.linspace(axis_min, axis_max, 4, dtype=np.float64)
+        edge_1 = int(np.searchsorted(axis_sorted, edges_targets[1], side="right"))
+        edge_2 = int(np.searchsorted(axis_sorted, edges_targets[2], side="right"))
+        edge_1 = max(1, min(edge_1, n_nu - 2))
+        edge_2 = max(edge_1 + 1, min(edge_2, n_nu - 1))
 
     band_indices = [sort_idx[:edge_1], sort_idx[edge_1:edge_2], sort_idx[edge_2:]]
     band_chunks: list[dict[str, Any]] = []
     for idx in band_indices:
-        band_data = arr[idx].mean(axis=0, dtype=np.float64)
         band_nu = nu_coords[idx]
         nu_lo = float(np.min(band_nu))
         nu_hi = float(np.max(band_nu))
-        band_chunks.append(
-            {
-                "center": 0.5 * (nu_lo + nu_hi),
-                "lo": nu_lo,
-                "hi": nu_hi,
-                "data": band_data,
-            }
-        )
+        band_chunks.append({"center": 0.5 * (nu_lo + nu_hi), "lo": nu_lo, "hi": nu_hi})
 
     # Physical mapping: lower frequency -> red, higher frequency -> blue.
     band_chunks.sort(key=lambda item: float(item["center"]))
     red_band, green_band, blue_band = band_chunks
-    r = red_band["data"]
-    g = green_band["data"]
-    b = blue_band["data"]
     full_shape = [int(r.shape[0]), int(r.shape[1])]
     r, sampling_step = _downsample_2d(r, max_pixels)
     g = g[:: sampling_step[0], :: sampling_step[1]]
@@ -520,6 +769,15 @@ def build_multispectral_response(
             "axis_scale": axis_scale_applied,
             "deslope": float(deslope),
             "deslope_ref": deslope_ref,
+            "normalize_spectrum": bool(normalize_spectrum),
+            "normalize_spectrum_boost": float(normalize_boost),
+            "brightness_mode": "total_flux",
+            "clip_mode": "brightness_only",
+            "intensity_scale": intensity_mode,
+            "range_min": float(range_min),
+            "range_max": float(range_max),
+            "compute_backend_requested": compute_backend_mode,
+            "compute_backend": rgb_backend_used,
         },
         "values": {"r": r.ravel().tolist(), "g": g.ravel().tolist(), "b": b.ravel().tolist()},
     }

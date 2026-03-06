@@ -25,6 +25,8 @@ mobula is a single-process FastAPI app serving both API endpoints and static bro
   - optional seeded-manifest lazy datasets
 - `src/mobula/service/api_routes_core.py`
   - health, dataset listing, local file picker, local loader, dataset metadata
+- `src/mobula/service/api_routes_ingest.py`
+  - inspect, plan, commit ingest endpoints
 - `src/mobula/service/api_routes_views.py`
   - slice, volume, intensity-range, multispectral, EVPA
   - cutout export/save and PNG snapshot save endpoints
@@ -34,6 +36,10 @@ mobula is a single-process FastAPI app serving both API endpoints and static bro
   - view payload construction and statistical summaries
 - `src/mobula/service/profile_service.py`
   - ROI and profile computations
+- `src/mobula/service/ingest_service.py`
+  - input inspection, axis inference, HDF5 key selection, multi-file plan validation, preset reuse
+- `src/mobula/service/spectral_rgb.py`
+  - spectral-to-visible RGB conversion helpers
 
 ## Frontend Structure
 
@@ -43,17 +49,29 @@ mobula is a single-process FastAPI app serving both API endpoints and static bro
 - `src/mobula/static/app_interactions.js`: pointer/drag/zoom interaction handlers
 - `src/mobula/static/app_requests.js`: API query parameter builders
 
+### View-Fit and Zoom Contract (Frontend)
+
+The main canvas fit/zoom behavior is implemented in `src/mobula/static/app.js` (`getViewRect`, `getDrawRect`, `shouldUseCoverView`, `getRenderGeometry`).
+
+- Full-view: preserve source aspect, centered in canvas.
+- Zoom-in: use cover behavior so the canvas is fully occupied.
+- Zoom-out: restore full-view centered aspect behavior.
+- Sphere view geometry is projection-stable and not panel-shaped:
+  - `Mollweide` keeps map-native aspect.
+  - `Inside`/`Outside` keep fixed circular/square basis.
+
 ## Data Flow
 
-1. Dataset enters via built-in demo registry entry or `/api/load-local`.
-2. Loader parses source, reorders dims into canonical order, and validates.
+1. Dataset enters via a built-in demo registry entry, the `/api/ingest/*` flow, or legacy `/api/load-local`.
+2. Loader/ingest parses the source, applies inferred or user-selected mappings, reorders to the internal axis order, and validates.
 3. Registry stores dataset summary; data is fetched by endpoint handlers.
 4. View/profile services compute requested slice/volume/profile payloads.
 5. Frontend requests JSON payloads and renders via CPU or GPU path.
 
 ## Canonical Contracts
 
-- Canonical axis order: `sample,pol,t,nu,x,y,z`
+- Internal axis model: `sample,pol,t,nu,x,y,z`
+- User-provided `dims` do not need to be in that order; loaders normalize them after mapping
 - Coordinates: one 1D coordinate array per present dim
 - Units: one unit label per present dim + one intensity unit
 - Responses return selected indices and corresponding coordinate values

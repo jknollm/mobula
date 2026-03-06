@@ -15,7 +15,7 @@ The app has three main columns:
 Controls:
 
 - **Dataset**: choose currently loaded dataset
-- **Load Data**: open native host picker and load local files/folders
+- **Load Data**: open the ingest flow from the native host picker
 - **Color Map**: `Viridis`, `Plasma`, `Inferno`, `Gray`, `Diverging`, `Circular`
 - **Color Range**: global min/max policy (`None`, `Time`, `Spectral`, `Time+Spectral`, `Space`, `Full`)
 - **Slice Backend**: `Auto`, `GPU`, `CPU`
@@ -91,6 +91,22 @@ Mouse interactions:
 - Drag in volume mode: rotate view
 - Drag in sphere mode: rotate view (hold `Shift` while dragging to make ROI selections)
 
+### Expected Zoom and Aspect Behavior
+
+These rules are intentional and should be treated as rendering contracts:
+
+- Full-view (not zoomed) keeps the dataset's native view aspect ratio and centers it in the canvas.
+- In full-view, empty margins (letterbox/pillarbox) are expected when panel and data aspect ratios differ.
+- Zoom-in uses **cover** behavior: the visible data is cropped to the panel aspect so the canvas is fully used.
+- Zoom-out returns to the original centered full-view aspect behavior.
+- Sphere projections do not re-shape to panel size:
+  - `Mollweide` keeps map-native aspect.
+  - `Inside` and `Outside` keep a fixed circular/square basis.
+- In `Inside` sphere projection specifically:
+  - default (zoomed-out) view uses fixed aspect and may show margins,
+  - zoom-in fills the full canvas,
+  - zooming back out restores the original centered fixed-aspect view.
+
 ## Selection and Profiles
 
 Selection updates profiles in the right panel:
@@ -107,21 +123,34 @@ Supported local formats:
 
 - HDF5: `.h5`, `.hdf5`
 - FITS: `.fits`, `.fit`, `.fts`
-- Zarr: `.zarr` directory
+- Zarr: `.zarr` directory (path-based loading / direct API)
 
-If automatic dimension parsing fails, the UI prompts for manual mapping in file order.
+Current UI flow:
 
-Accepted dim names:
+- **Load Data** opens ingest inspection instead of loading directly.
+- Multi-file imports first ask whether to combine files into one dataset or create separate tabs.
+- HDF5 imports can open a key-selection dialog before axis mapping.
+- Datasets are not materialized until **Commit Import** succeeds.
 
-- `sample`, `pol`, `t`, `nu`, `x`, `y`, `z`
+Axis mapping:
 
-Example mapping input:
+- Assign axes in source-file order by dragging axis chips onto the source slots.
+- Accepted labels are `sample`, `pol`, `t`, `nu`, `x`, `y`, `z`.
+- The mapper also supports `sphere` as a HEALPix alias; it is validated and then stored as canonical `x`.
+- Use **Apply To All Tabs** to copy the current mapping across compatible files in a multi-file import.
+
+Example source-axis assignment:
 
 ```text
 t,nu,x,y
 ```
 
-The loader can pad missing canonical axes as singleton dimensions when requested.
+Behavior notes:
+
+- mobula reorders mapped axes internally; you do not need to rewrite them into the internal axis order yourself.
+- A `pol` axis with 3 channels is treated as `I,Q,U` and padded to `I,Q,U,V` with `V=0`.
+- Ingest commit pads missing axes to singleton size in the full internal 7D model.
+- Drag-and-drop import is file-only; `.zarr` folders are not supported through browser drag-and-drop.
 
 ## Performance Behavior
 

@@ -16,6 +16,7 @@ dependencies = [
   "astropy>=6.0,<7.0",
   "zarr>=2.18,<3.0",
   "python-multipart>=0.0.9,<1.0",
+  "imageio-ffmpeg>=0.5.1,<1.0",
 ]
 
 [project.optional-dependencies]

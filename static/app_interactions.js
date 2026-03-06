@@ -44,8 +44,10 @@ export function bindCanvasInteractions(ctx) {
   let volumeDragTimer = 0;
   let volumeDragLastRenderAt = 0;
   let sphereDragRaf = 0;
-  let sphereSelectionRefreshTimer = 0;
+  let sphereDragTimer = 0;
+  let sphereDragLastRenderAt = 0;
   const VOLUME_DRAG_MIN_RENDER_INTERVAL_MS = 72;
+  const SPHERE_DRAG_MIN_RENDER_INTERVAL_MS = 28;
   const runVolumeDragRender = () => {
     volumeDragRaf = 0;
     volumeDragTimer = 0;
@@ -70,19 +72,39 @@ export function bindCanvasInteractions(ctx) {
     }, waitMs);
   };
   const scheduleSphereDragRender = () => {
-    if (sphereDragRaf) return;
-    sphereDragRaf = window.requestAnimationFrame(() => {
-      sphereDragRaf = 0;
-      if (state.sphereDrag) rerenderSphereFrame();
-    });
+    if (sphereDragRaf || !state.sphereDrag) return;
+    const now = performance.now();
+    const elapsed = now - sphereDragLastRenderAt;
+    if (elapsed >= SPHERE_DRAG_MIN_RENDER_INTERVAL_MS) {
+      sphereDragRaf = window.requestAnimationFrame(() => {
+        sphereDragRaf = 0;
+        sphereDragTimer = 0;
+        if (!state.sphereDrag) return;
+        sphereDragLastRenderAt = performance.now();
+        rerenderSphereFrame();
+      });
+      return;
+    }
+    if (sphereDragTimer) return;
+    const waitMs = Math.max(0, SPHERE_DRAG_MIN_RENDER_INTERVAL_MS - elapsed);
+    sphereDragTimer = window.setTimeout(() => {
+      sphereDragTimer = 0;
+      if (sphereDragRaf || !state.sphereDrag) return;
+      sphereDragRaf = window.requestAnimationFrame(() => {
+        sphereDragRaf = 0;
+        if (!state.sphereDrag) return;
+        sphereDragLastRenderAt = performance.now();
+        rerenderSphereFrame();
+      });
+    }, waitMs);
   };
-  const scheduleSphereSelectionRefresh = () => {
+  const refreshSphereSelectionNow = async () => {
     if (!isSphereMode() || !state.selection) return;
-    if (sphereSelectionRefreshTimer) return;
-    sphereSelectionRefreshTimer = window.setTimeout(async () => {
-      sphereSelectionRefreshTimer = 0;
+    try {
       await refreshSelectionAnalytics();
-    }, 140);
+    } catch (_err) {
+      // Selection analytics are best-effort during interaction transitions.
+    }
   };
   const updateHoverPointer = (ev) => {
     if (!ev) return;
@@ -231,6 +253,7 @@ export function bindCanvasInteractions(ctx) {
           startPitch: state.spherePitch,
           speed: sphereDragSpeedForView(viewRect),
         };
+        sphereDragLastRenderAt = 0;
         return;
       }
       if (ev.button === 2 || ev.altKey) {
@@ -241,6 +264,7 @@ export function bindCanvasInteractions(ctx) {
           startPitch: state.spherePitch,
           speed: sphereDragSpeedForView(viewRect),
         };
+        sphereDragLastRenderAt = 0;
       }
       return;
     }
@@ -316,8 +340,6 @@ export function bindCanvasInteractions(ctx) {
       state.sphereYaw = state.sphereDrag.startYaw + dx * speed;
       state.spherePitch = clamp(state.sphereDrag.startPitch + dy * speed, -1.45, 1.45);
       scheduleSphereDragRender();
-      scheduleSphereSelectionRefresh();
-      updateHoverProbeFromEvent(ev);
       return;
     }
 
@@ -440,14 +462,12 @@ export function bindCanvasInteractions(ctx) {
         window.cancelAnimationFrame(sphereDragRaf);
         sphereDragRaf = 0;
       }
-      if (sphereSelectionRefreshTimer) {
-        window.clearTimeout(sphereSelectionRefreshTimer);
-        sphereSelectionRefreshTimer = 0;
+      if (sphereDragTimer) {
+        window.clearTimeout(sphereDragTimer);
+        sphereDragTimer = 0;
       }
       rerenderSphereFrame();
-      if (state.selection) {
-        await refreshSelectionAnalytics();
-      }
+      await refreshSphereSelectionNow();
       updateHoverProbeFromEvent(ev);
       return;
     }

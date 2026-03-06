@@ -58,6 +58,31 @@ def test_load_hdf5_accepts_explicit_dims_argument(tmp_path: Path) -> None:
     assert out.shape == (3, 2)
 
 
+def test_load_hdf5_expands_pol_size_three_with_zero_v(tmp_path: Path) -> None:
+    h5py = pytest.importorskip("h5py")
+    p = tmp_path / "iqu_only.h5"
+    values = np.array(
+        [
+            [1.0, 2.0, 3.0],
+            [10.0, 20.0, 30.0],
+            [100.0, 200.0, 300.0],
+        ],
+        dtype=np.float32,
+    )
+    with h5py.File(p, "w") as f:
+        ds = f.create_dataset("values", data=values)
+        ds.attrs["dims"] = "pol,x"
+
+    out = load_hdf5(p)
+    assert out.dims == ("pol", "x")
+    assert out.shape == (4, 3)
+    np.testing.assert_allclose(out.values[:3], values)
+    np.testing.assert_allclose(out.values[3], 0.0)
+    np.testing.assert_allclose(out.coords["pol"], np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float32))
+    assert out.provenance["stokes_assumed_v_zero"] is True
+    assert out.provenance["pol_labels"] == ["I", "Q", "U", "V"]
+
+
 def test_load_fits_with_explicit_dims(tmp_path: Path) -> None:
     fits = pytest.importorskip("astropy.io.fits")
     p = tmp_path / "explicit.fits"
@@ -92,6 +117,27 @@ def test_load_fits_infers_dims_from_header_ctype(tmp_path: Path) -> None:
     assert out.dims == ("sample", "t", "x")
     assert out.units["x"] == "deg"
     assert out.units["t"] == "s"
+
+
+def test_load_fits_expands_pol_size_three_with_zero_v(tmp_path: Path) -> None:
+    fits = pytest.importorskip("astropy.io.fits")
+    p = tmp_path / "iqu_only.fits"
+    values = np.array(
+        [
+            [4.0, 5.0],
+            [6.0, 7.0],
+            [8.0, 9.0],
+        ],
+        dtype=np.float32,
+    )
+    fits.PrimaryHDU(data=values).writeto(p)
+
+    out = load_fits(p, dims=("pol", "x"))
+    assert out.dims == ("pol", "x")
+    assert out.shape == (4, 2)
+    np.testing.assert_allclose(out.values[:3], values)
+    np.testing.assert_allclose(out.values[3], 0.0)
+    assert out.provenance["stokes_assumed_v_zero"] is True
 
 
 def test_load_fits_rejects_scalar_hdu(tmp_path: Path) -> None:

@@ -1,13 +1,14 @@
-import { createGpuRenderers } from "./app_gpu.js";
-import { bindCanvasInteractions } from "./app_interactions.js";
-import { fetchJson as fetchJsonBase, createRequestBuilders } from "./app_requests.js";
-import { resetForDatasetChange, resetForPlaneChange } from "./app_state_transitions.js";
+import { createGpuRenderers } from "./app_gpu.js?v=20260306a";
+import { bindCanvasInteractions } from "./app_interactions.js?v=20260306a";
+import { fetchJson as fetchJsonBase, createRequestBuilders } from "./app_requests.js?v=20260306a";
+import { resetForDatasetChange, resetForPlaneChange } from "./app_state_transitions.js?v=20260306a";
 
 const PLANE_OPTIONS = {
   xy: { planeX: "x", planeY: "y", hidden: "z", label: "XY" },
   yz: { planeX: "y", planeY: "z", hidden: "x", label: "YZ" },
   zx: { planeX: "z", planeY: "x", hidden: "y", label: "ZX" },
 };
+const PLANE_KEYS = Object.freeze(["xy", "yz", "zx"]);
 
 const COLOR_RAMPS = {
   viridis: [
@@ -31,26 +32,26 @@ const COLOR_RAMPS = {
     [0.75, 249, 142, 9],
     [1.0, 252, 255, 164],
   ],
-  // Sampled from ehtplot `ehtorange.ctab` (GPL-3.0 project):
+  // Sampled from ehtplot `afmhot_us.ctab` (GPL-3.0 project):
   // https://github.com/liamedeiros/ehtplot
-  ehtplot: [
-    [0.0, 9, 9, 9],
-    [0.0625, 31, 20, 17],
-    [0.125, 53, 30, 21],
-    [0.1875, 75, 37, 23],
-    [0.25, 99, 43, 22],
-    [0.3125, 123, 47, 18],
-    [0.375, 148, 48, 9],
-    [0.4375, 169, 57, 0],
-    [0.5, 178, 79, 0],
-    [0.5625, 185, 99, 0],
-    [0.625, 192, 120, 0],
-    [0.6875, 198, 141, 0],
-    [0.75, 202, 162, 0],
-    [0.8125, 214, 180, 0],
-    [0.875, 232, 196, 0],
-    [0.9375, 252, 212, 0],
-    [1.0, 255, 233, 126],
+  afmhot_us: [
+    [0.0, 0, 0, 0],
+    [0.0625, 27, 0, 0],
+    [0.125, 56, 0, 0],
+    [0.1875, 82, 0, 0],
+    [0.25, 108, 0, 0],
+    [0.3125, 132, 5, 0],
+    [0.375, 153, 27, 1],
+    [0.4375, 172, 45, 1],
+    [0.5, 190, 63, 0],
+    [0.5625, 208, 81, 0],
+    [0.625, 226, 99, 0],
+    [0.6875, 244, 118, 8],
+    [0.75, 251, 146, 34],
+    [0.8125, 250, 178, 65],
+    [0.875, 247, 208, 109],
+    [0.9375, 246, 235, 166],
+    [1.0, 255, 254, 253],
   ],
   gray: [
     [0.0, 0, 0, 0],
@@ -74,6 +75,17 @@ const COLOR_RAMPS = {
   ],
 };
 
+// Backward compatibility for older saved states that used older afmhot aliases.
+COLOR_RAMPS.afmhot_u = COLOR_RAMPS.afmhot_us;
+COLOR_RAMPS.ehtplot = COLOR_RAMPS.afmhot_us;
+
+function normalizeColorMapKey(raw) {
+  const key = String(raw || "").trim();
+  if (key === "afmhot_u" || key === "ehtplot") return "afmhot_us";
+  if (Object.prototype.hasOwnProperty.call(COLOR_RAMPS, key)) return key;
+  return "viridis";
+}
+
 const PROFILE_THEME = {
   dragFill: "rgba(245, 250, 255, 0.08)",
   dragStroke: "rgba(245, 250, 255, 0.92)",
@@ -83,9 +95,71 @@ const PROFILE_THEME = {
   spatial: "#52efbc",
 };
 const SUPPORTED_DROP_UPLOAD_EXTS = new Set([".h5", ".hdf5", ".fits", ".fit", ".fts"]);
+const INGEST_CANONICAL_DIMS = ["sample", "pol", "t", "nu", "x", "y", "z"];
+const INGEST_SPHERE_ALIAS_DIM = "sphere";
+const INGEST_UI_DIMS = [...INGEST_CANONICAL_DIMS, INGEST_SPHERE_ALIAS_DIM];
+const INGEST_HDF5_STACK_TOKEN_PREFIX = "__stokes_stack__:";
+const INGEST_AXIS_LABEL = {
+  sample: "Samples",
+  pol: "Polarisation",
+  t: "Time",
+  nu: "Frequency",
+  x: "X-Axis",
+  y: "Y-Axis",
+  z: "Z-Axis",
+  sphere: "Sphere",
+};
+const AXIS_DISPLAY_LABEL = {
+  sample: "Sample",
+  pol: "Polarisation",
+  t: "Time",
+  nu: "Frequency",
+  x: "X-Axis",
+  y: "Y-Axis",
+  z: "Z-Axis",
+};
+const INGEST_AXIS_THEME = {
+  sample: { rgb: "56, 180, 119", border: "#38b477", text: "#eafff3" },
+  pol: { rgb: "213, 155, 53", border: "#d59b35", text: "#fff7e6" },
+  t: { rgb: "75, 166, 255", border: "#4ba6ff", text: "#eef6ff" },
+  nu: { rgb: "238, 106, 79", border: "#ee6a4f", text: "#fff2ed" },
+  x: { rgb: "68, 192, 200", border: "#44c0c8", text: "#ebfeff" },
+  y: { rgb: "122, 201, 93", border: "#7ac95d", text: "#f0ffea" },
+  z: { rgb: "186, 119, 214", border: "#ba77d6", text: "#fdf0ff" },
+};
 const DEFAULT_MOSAIC_SAMPLE_COUNT = 4;
 const DEFAULT_MOSAIC_GRID_SIZE = Math.round(Math.sqrt(DEFAULT_MOSAIC_SAMPLE_COUNT));
 const DEFAULT_EXPORT_OUTPUT_DIR = "~/Downloads";
+const DEFAULT_RECORD_FPS = 12;
+const DEFAULT_RECORD_BITRATE = 3_500_000;
+const DEFAULT_RECORD_MAX_PIXELS = 640_000;
+const RECORD_STOP_TIMEOUT_MS = 3000;
+const WHEEL_ZOOM_STEP_FACTOR = 1.05;
+const GLOBAL_ZOOM_OUT_FACTOR = 25.0;
+const VOLUME_ZOOM_MIN = 0.2;
+const VOLUME_ZOOM_MAX = 8.0;
+const VIEW_SOURCE_RECT_MAX_MULTIPLIER = 64.0;
+const RECORD_QUALITY_PRESETS = {
+  low: { key: "low", label: "Low", shortLabel: "Low", fps: 8, bitrate: 2_000_000, maxPixels: 360_000 },
+  balanced: {
+    key: "balanced",
+    label: "Medium",
+    shortLabel: "Med",
+    fps: DEFAULT_RECORD_FPS,
+    bitrate: DEFAULT_RECORD_BITRATE,
+    maxPixels: DEFAULT_RECORD_MAX_PIXELS,
+  },
+  high: { key: "high", label: "High", shortLabel: "High", fps: 18, bitrate: 5_000_000, maxPixels: 1_000_000 },
+};
+const RENDER_RESOLUTION_HEIGHT = {
+  "720p": 720,
+  "1080p": 1080,
+  "1440p": 1440,
+  "2160p": 2160,
+};
+const RENDER_AXIS_HIDDEN = "hidden";
+const RENDER_AXIS_ROTATE = "__rotate__";
+const AXIS_CONTROL_DIMS = ["sample", "pol", "t", "nu", "x", "y", "z"];
 
 const els = {
   layout: document.querySelector(".layout"),
@@ -106,6 +180,60 @@ const els = {
   datasetSelect: document.getElementById("datasetSelect"),
   systemPickerBtn: document.getElementById("systemPickerBtn"),
   systemPickerStatus: document.getElementById("systemPickerStatus"),
+  ingestDialog: document.getElementById("ingestDialog"),
+  ingestStatus: document.getElementById("ingestStatus"),
+  ingestStepInspect: document.getElementById("ingestStepInspect"),
+  ingestStepMap: document.getElementById("ingestStepMap"),
+  ingestStepPreview: document.getElementById("ingestStepPreview"),
+  ingestStepPills: document.getElementById("ingestStepPills"),
+  ingestStepPillMap: document.getElementById("ingestStepPillMap"),
+  ingestInspectSummary: document.getElementById("ingestInspectSummary"),
+  ingestInspectWarnings: document.getElementById("ingestInspectWarnings"),
+  ingestInspectFiles: document.getElementById("ingestInspectFiles"),
+  ingestPresetRow: document.getElementById("ingestPresetRow"),
+  ingestPresetLabel: document.getElementById("ingestPresetLabel"),
+  ingestApplyPresetBtn: document.getElementById("ingestApplyPresetBtn"),
+  ingestActiveFileLabel: document.getElementById("ingestActiveFileLabel"),
+  ingestActiveFileSelect: document.getElementById("ingestActiveFileSelect"),
+  ingestPrevFileBtn: document.getElementById("ingestPrevFileBtn"),
+  ingestNextFileBtn: document.getElementById("ingestNextFileBtn"),
+  ingestApplyToAllBtn: document.getElementById("ingestApplyToAllBtn"),
+  ingestSlotStrip: document.getElementById("ingestSlotStrip"),
+  ingestPalette: document.getElementById("ingestPalette"),
+  ingestMapperLegend: document.getElementById("ingestMapperLegend"),
+  ingestPreviewSummary: document.getElementById("ingestPreviewSummary"),
+  ingestPreviewDatasets: document.getElementById("ingestPreviewDatasets"),
+  ingestPreviewWarnings: document.getElementById("ingestPreviewWarnings"),
+  ingestPreviewErrors: document.getElementById("ingestPreviewErrors"),
+  ingestCancelBtn: document.getElementById("ingestCancelBtn"),
+  ingestBackBtn: document.getElementById("ingestBackBtn"),
+  ingestPreviewBtn: document.getElementById("ingestPreviewBtn"),
+  ingestCommitBtn: document.getElementById("ingestCommitBtn"),
+  ingestIntentDialog: document.getElementById("ingestIntentDialog"),
+  ingestIntentAxisBtn: document.getElementById("ingestIntentAxisBtn"),
+  ingestIntentTabsBtn: document.getElementById("ingestIntentTabsBtn"),
+  ingestIntentFileAxisFieldset: document.getElementById("ingestIntentFileAxisFieldset"),
+  ingestIntentFileAxisSampleBtn: document.getElementById("ingestIntentFileAxisSampleBtn"),
+  ingestIntentFileAxisPolBtn: document.getElementById("ingestIntentFileAxisPolBtn"),
+  ingestIntentFileAxisTimeBtn: document.getElementById("ingestIntentFileAxisTimeBtn"),
+  ingestIntentFileAxisFreqBtn: document.getElementById("ingestIntentFileAxisFreqBtn"),
+  ingestIntentFileAxisHint: document.getElementById("ingestIntentFileAxisHint"),
+  ingestIntentCancelBtn: document.getElementById("ingestIntentCancelBtn"),
+  ingestIntentContinueBtn: document.getElementById("ingestIntentContinueBtn"),
+  ingestKeysDialog: document.getElementById("ingestKeysDialog"),
+  ingestKeysStepPills: document.getElementById("ingestKeysStepPills"),
+  ingestKeysStatus: document.getElementById("ingestKeysStatus"),
+  ingestKeysFileLabel: document.getElementById("ingestKeysFileLabel"),
+  ingestKeysFileSelect: document.getElementById("ingestKeysFileSelect"),
+  ingestKeysStackAxisLabel: document.getElementById("ingestKeysStackAxisLabel"),
+  ingestKeysStackAxisButtons: document.getElementById("ingestKeysStackAxisButtons"),
+  ingestStokesQuickList: document.getElementById("ingestStokesQuickList"),
+  ingestKeyGroupList: document.getElementById("ingestKeyGroupList"),
+  ingestKeyCandidatesList: document.getElementById("ingestKeyCandidatesList"),
+  ingestSelectedKeysList: document.getElementById("ingestSelectedKeysList"),
+  ingestKeysCancelBtn: document.getElementById("ingestKeysCancelBtn"),
+  ingestKeysBackBtn: document.getElementById("ingestKeysBackBtn"),
+  ingestKeysContinueBtn: document.getElementById("ingestKeysContinueBtn"),
   colorMapSelect: document.getElementById("colorMapSelect"),
   colorRangeModeSelect: document.getElementById("colorRangeModeSelect"),
   colorNormRangeBlock: document.getElementById("colorNormRangeBlock"),
@@ -117,6 +245,14 @@ const els = {
   colorNormBoundMin: document.getElementById("colorNormBoundMin"),
   colorNormBoundMax: document.getElementById("colorNormBoundMax"),
   sliceBackendSelect: document.getElementById("sliceBackendSelect"),
+  axisSettingsBtn: document.getElementById("axisSettingsBtn"),
+  axisSettingsDialog: document.getElementById("axisSettingsDialog"),
+  axisSettingsSummary: document.getElementById("axisSettingsSummary"),
+  axisSwapRows: document.getElementById("axisSwapRows"),
+  axisSettingsRows: document.getElementById("axisSettingsRows"),
+  axisSettingsResetBtn: document.getElementById("axisSettingsResetBtn"),
+  axisSettingsCloseBtn: document.getElementById("axisSettingsCloseBtn"),
+  spatialResolutionSelect: document.getElementById("spatialResolutionSelect"),
   fluxScaleLinearBtn: document.getElementById("fluxScaleLinearBtn"),
   fluxScaleSqrtBtn: document.getElementById("fluxScaleSqrtBtn"),
   fluxScaleLogBtn: document.getElementById("fluxScaleLogBtn"),
@@ -136,6 +272,8 @@ const els = {
   resampleSamplesBtn: document.getElementById("resampleSamplesBtn"),
   playbackTimingControls: document.getElementById("playbackTimingControls"),
   playSpeedSelect: document.getElementById("playSpeedSelect"),
+  temporalResolutionSelect: document.getElementById("temporalResolutionSelect"),
+  spectralResolutionSelect: document.getElementById("spectralResolutionSelect"),
 
   planeSelect: document.getElementById("planeSelect"),
   planeLabel: document.getElementById("planeLabel"),
@@ -147,6 +285,12 @@ const els = {
   sphereProjMollweideBtn: document.getElementById("sphereProjMollweideBtn"),
   sphereProjInsideBtn: document.getElementById("sphereProjInsideBtn"),
   sphereProjOutsideBtn: document.getElementById("sphereProjOutsideBtn"),
+  viewRotateControls: document.getElementById("viewRotateControls"),
+  viewRotateRateControl: document.getElementById("viewRotateRateControl"),
+  viewRotateNegBtn: document.getElementById("viewRotateNegBtn"),
+  viewRotateSpeedValue: document.getElementById("viewRotateSpeedValue"),
+  viewRotatePosBtn: document.getElementById("viewRotatePosBtn"),
+  viewRotateRebaseBtn: document.getElementById("viewRotateRebaseBtn"),
   sphereMetaLabel: document.getElementById("sphereMetaLabel"),
   hiddenAxisTitle: document.getElementById("hiddenAxisTitle"),
   hiddenNavValue: document.getElementById("hiddenNavValue"),
@@ -190,6 +334,18 @@ const els = {
   msNuAxisLogBtn: document.getElementById("msNuAxisLogBtn"),
   msDeslopeRange: document.getElementById("msDeslopeRange"),
   msDeslopeValue: document.getElementById("msDeslopeValue"),
+  msNormalizeBtn: document.getElementById("msNormalizeBtn"),
+  msNormalizeBoostLabel: document.getElementById("msNormalizeBoostLabel"),
+  msNormalizeBoostRange: document.getElementById("msNormalizeBoostRange"),
+  msNormalizeBoostValue: document.getElementById("msNormalizeBoostValue"),
+  msChannelRangeBlock: document.getElementById("msChannelRangeBlock"),
+  msChannelRangeTrack: document.getElementById("msChannelRangeTrack"),
+  msChannelRangeMinRange: document.getElementById("msChannelRangeMinRange"),
+  msChannelRangeMaxRange: document.getElementById("msChannelRangeMaxRange"),
+  msChannelRangeMinValue: document.getElementById("msChannelRangeMinValue"),
+  msChannelRangeMaxValue: document.getElementById("msChannelRangeMaxValue"),
+  msChannelRangeBoundMin: document.getElementById("msChannelRangeBoundMin"),
+  msChannelRangeBoundMax: document.getElementById("msChannelRangeBoundMax"),
   spectralNavPanel: document.getElementById("spectralNavPanel"),
   tValue: document.getElementById("tValue"),
   nuValue: document.getElementById("nuValue"),
@@ -230,6 +386,36 @@ const els = {
   coordSystemSelect: document.getElementById("coordSystemSelect"),
   exportZoomBtn: document.getElementById("exportZoomBtn"),
   saveImagesBtn: document.getElementById("saveImagesBtn"),
+  mediaQualitySelect: document.getElementById("mediaQualitySelect"),
+  renderMovieBtn: document.getElementById("renderMovieBtn"),
+  renderAxisTimeBtn: document.getElementById("renderAxisTimeBtn"),
+  renderAxisFreqBtn: document.getElementById("renderAxisFreqBtn"),
+  renderAxisHiddenBtn: document.getElementById("renderAxisHiddenBtn"),
+  renderAxisSampleMorphBtn: document.getElementById("renderAxisSampleMorphBtn"),
+  renderAxisRotateBtn: document.getElementById("renderAxisRotateBtn"),
+  renderFormatMp4Btn: document.getElementById("renderFormatMp4Btn"),
+  renderFormatWebmBtn: document.getElementById("renderFormatWebmBtn"),
+  renderFormatGifBtn: document.getElementById("renderFormatGifBtn"),
+  renderQualityLowBtn: document.getElementById("renderQualityLowBtn"),
+  renderQualityMedBtn: document.getElementById("renderQualityMedBtn"),
+  renderQualityHighBtn: document.getElementById("renderQualityHighBtn"),
+  renderResCanvasBtn: document.getElementById("renderResCanvasBtn"),
+  renderRes720Btn: document.getElementById("renderRes720Btn"),
+  renderRes1080Btn: document.getElementById("renderRes1080Btn"),
+  renderRes1440Btn: document.getElementById("renderRes1440Btn"),
+  renderRes2160Btn: document.getElementById("renderRes2160Btn"),
+  renderFpsInput: document.getElementById("renderFpsInput"),
+  renderLoopInput: document.getElementById("renderLoopInput"),
+  renderIncludeColorbarBtn: document.getElementById("renderIncludeColorbarBtn"),
+  renderIncludeSkyDirectionsBtn: document.getElementById("renderIncludeSkyDirectionsBtn"),
+  renderIncludeLengthScaleBtn: document.getElementById("renderIncludeLengthScaleBtn"),
+  renderIncludeSampleLabelsBtn: document.getElementById("renderIncludeSampleLabelsBtn"),
+  renderProgressOverlay: document.getElementById("renderProgressOverlay"),
+  renderProgressPrimary: document.getElementById("renderProgressPrimary"),
+  renderProgressSecondary: document.getElementById("renderProgressSecondary"),
+  renderProgressEta: document.getElementById("renderProgressEta"),
+  renderProgressCancelBtn: document.getElementById("renderProgressCancelBtn"),
+  recordMovieBtn: document.getElementById("recordMovieBtn"),
   resetZoomBtn: document.getElementById("resetZoomBtn"),
   hoverReadout: document.getElementById("hoverReadout"),
   exportDialog: document.getElementById("exportDialog"),
@@ -243,13 +429,41 @@ const els = {
   exportCancelBtn: document.getElementById("exportCancelBtn"),
   exportConfirmBtn: document.getElementById("exportConfirmBtn"),
   saveImagesDialog: document.getElementById("saveImagesDialog"),
+  saveImagesSummary: document.getElementById("saveImagesSummary"),
+  saveImagesIncludeViewerBtn: document.getElementById("saveImagesIncludeViewerBtn"),
+  saveImagesIncludeColorbarBtn: document.getElementById("saveImagesIncludeColorbarBtn"),
+  saveImagesIncludeSampleLabelsBtn: document.getElementById("saveImagesIncludeSampleLabelsBtn"),
+  saveImagesIncludeTimeProfileBtn: document.getElementById("saveImagesIncludeTimeProfileBtn"),
+  saveImagesIncludeSpectralProfileBtn: document.getElementById("saveImagesIncludeSpectralProfileBtn"),
+  saveImagesIncludeSpatialProfileBtn: document.getElementById("saveImagesIncludeSpatialProfileBtn"),
   saveImagesLocationInput: document.getElementById("saveImagesLocationInput"),
   saveImagesBrowseBtn: document.getElementById("saveImagesBrowseBtn"),
   saveImagesPrefixInput: document.getElementById("saveImagesPrefixInput"),
   saveImagesOverwriteChk: document.getElementById("saveImagesOverwriteChk"),
+  saveImagesTransparentBgChk: document.getElementById("saveImagesTransparentBgChk"),
   saveImagesStatus: document.getElementById("saveImagesStatus"),
   saveImagesCancelBtn: document.getElementById("saveImagesCancelBtn"),
   saveImagesConfirmBtn: document.getElementById("saveImagesConfirmBtn"),
+  recordMovieDialog: document.getElementById("recordMovieDialog"),
+  recordMovieFormatWebmBtn: document.getElementById("recordMovieFormatWebmBtn"),
+  recordMovieFormatMp4Btn: document.getElementById("recordMovieFormatMp4Btn"),
+  recordMovieFormatGifBtn: document.getElementById("recordMovieFormatGifBtn"),
+  recordMovieLocationInput: document.getElementById("recordMovieLocationInput"),
+  recordMovieBrowseBtn: document.getElementById("recordMovieBrowseBtn"),
+  recordMovieFilenameInput: document.getElementById("recordMovieFilenameInput"),
+  recordMovieOverwriteChk: document.getElementById("recordMovieOverwriteChk"),
+  recordMovieStatus: document.getElementById("recordMovieStatus"),
+  recordMovieCancelBtn: document.getElementById("recordMovieCancelBtn"),
+  recordMovieConfirmBtn: document.getElementById("recordMovieConfirmBtn"),
+  renderMovieDialog: document.getElementById("renderMovieDialog"),
+  renderMovieSummary: document.getElementById("renderMovieSummary"),
+  renderMovieLocationInput: document.getElementById("renderMovieLocationInput"),
+  renderMovieBrowseBtn: document.getElementById("renderMovieBrowseBtn"),
+  renderMovieFilenameInput: document.getElementById("renderMovieFilenameInput"),
+  renderMovieOverwriteChk: document.getElementById("renderMovieOverwriteChk"),
+  renderMovieStatus: document.getElementById("renderMovieStatus"),
+  renderMovieCancelBtn: document.getElementById("renderMovieCancelBtn"),
+  renderMovieConfirmBtn: document.getElementById("renderMovieConfirmBtn"),
 
   metricsPanel: document.getElementById("metricsPanel"),
   metricsTitle: document.getElementById("metricsTitle"),
@@ -263,6 +477,282 @@ const els = {
   spatialProfileCanvas: document.getElementById("spatialProfileCanvas"),
 };
 
+function normalizeAxisSettingEntry(entry) {
+  const flip = Boolean(entry && entry.flip === true);
+  const rawUnit = entry && entry.unit !== undefined && entry.unit !== null ? String(entry.unit).trim() : "";
+  const unit = rawUnit || "";
+  const rawLength = Number.parseFloat(entry && entry.length);
+  const length = Number.isFinite(rawLength) && rawLength > 0 ? rawLength : null;
+  const rawStart = Number.parseFloat(entry && entry.start);
+  const rawEnd = Number.parseFloat(entry && entry.end);
+  const start = Number.isFinite(rawStart) ? rawStart : null;
+  const end = Number.isFinite(rawEnd) ? rawEnd : null;
+  return { flip, length, unit, start, end };
+}
+
+function createDefaultAxisSettings() {
+  const out = {};
+  for (const dim of AXIS_CONTROL_DIMS) out[dim] = { flip: false, length: null, unit: "", start: null, end: null };
+  return out;
+}
+
+function createDefaultAxisPlaneSwap() {
+  const out = {};
+  for (const key of PLANE_KEYS) out[key] = false;
+  return out;
+}
+
+function normalizeAxisSettingsState(raw) {
+  const base = createDefaultAxisSettings();
+  if (!raw || typeof raw !== "object") return base;
+  for (const dim of AXIS_CONTROL_DIMS) {
+    if (!Object.prototype.hasOwnProperty.call(raw, dim)) continue;
+    base[dim] = normalizeAxisSettingEntry(raw[dim]);
+  }
+  return base;
+}
+
+function normalizeAxisPlaneSwapState(raw) {
+  const base = createDefaultAxisPlaneSwap();
+  if (!raw || typeof raw !== "object") return base;
+  for (const key of PLANE_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue;
+    base[key] = raw[key] === true;
+  }
+  return base;
+}
+
+const VIEW_ROTATE_SPEED_LEVELS = Object.freeze([0.5, 1, 2, 4]);
+const VIEW_ROTATE_RATE_LEVELS = Object.freeze([0, 0.5, 1, 2, 4, -4, -2, -1, -0.5]);
+const VIEW_ROTATE_RATE_STEP_LEVELS = Object.freeze([...VIEW_ROTATE_RATE_LEVELS].sort((a, b) => a - b));
+
+function normalizeViewRotateDirection(raw) {
+  return raw === -1 ? -1 : 1;
+}
+
+function normalizeViewRotateSpeed(raw) {
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 1;
+  let best = VIEW_ROTATE_SPEED_LEVELS[0];
+  let bestErr = Math.abs(parsed - best);
+  for (let i = 1; i < VIEW_ROTATE_SPEED_LEVELS.length; i += 1) {
+    const candidate = VIEW_ROTATE_SPEED_LEVELS[i];
+    const err = Math.abs(parsed - candidate);
+    if (err < bestErr) {
+      best = candidate;
+      bestErr = err;
+    }
+  }
+  return best;
+}
+
+function normalizeViewRotateRate(raw) {
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed)) return 0;
+  let best = VIEW_ROTATE_RATE_LEVELS[0];
+  let bestErr = Math.abs(parsed - best);
+  for (let i = 1; i < VIEW_ROTATE_RATE_LEVELS.length; i += 1) {
+    const candidate = VIEW_ROTATE_RATE_LEVELS[i];
+    const err = Math.abs(parsed - candidate);
+    if (err < bestErr) {
+      best = candidate;
+      bestErr = err;
+    }
+  }
+  return best;
+}
+
+function vec3Dot(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function vec3Cross(a, b) {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+
+function normalizeVec3(raw, fallback = [0, 0, 1]) {
+  if (!(Array.isArray(raw) || ArrayBuffer.isView(raw)) || raw.length < 3) {
+    return [...fallback];
+  }
+  const x = Number(raw[0]);
+  const y = Number(raw[1]);
+  const z = Number(raw[2]);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+    return [...fallback];
+  }
+  const mag = Math.hypot(x, y, z);
+  if (!(mag > 1.0e-12)) return [...fallback];
+  return [x / mag, y / mag, z / mag];
+}
+
+function mat3Mul(a, b) {
+  return [
+    a[0] * b[0] + a[1] * b[3] + a[2] * b[6],
+    a[0] * b[1] + a[1] * b[4] + a[2] * b[7],
+    a[0] * b[2] + a[1] * b[5] + a[2] * b[8],
+    a[3] * b[0] + a[4] * b[3] + a[5] * b[6],
+    a[3] * b[1] + a[4] * b[4] + a[5] * b[7],
+    a[3] * b[2] + a[4] * b[5] + a[5] * b[8],
+    a[6] * b[0] + a[7] * b[3] + a[8] * b[6],
+    a[6] * b[1] + a[7] * b[4] + a[8] * b[7],
+    a[6] * b[2] + a[7] * b[5] + a[8] * b[8],
+  ];
+}
+
+function mat3MulVec3(m, v) {
+  return [
+    m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
+    m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
+    m[6] * v[0] + m[7] * v[1] + m[8] * v[2],
+  ];
+}
+
+function mat3Transpose(m) {
+  return [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]];
+}
+
+function mat3RotationY(angle) {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  return [c, 0, s, 0, 1, 0, -s, 0, c];
+}
+
+function mat3RotationZ(angle) {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  return [c, -s, 0, s, c, 0, 0, 0, 1];
+}
+
+function mat3RotationAxis(axisRaw, angle) {
+  const axis = normalizeVec3(axisRaw, [0, 0, 1]);
+  const [x, y, z] = axis;
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const t = 1 - c;
+  return [
+    t * x * x + c,
+    t * x * y - s * z,
+    t * x * z + s * y,
+    t * x * y + s * z,
+    t * y * y + c,
+    t * y * z - s * x,
+    t * x * z - s * y,
+    t * y * z + s * x,
+    t * z * z + c,
+  ];
+}
+
+function orthonormalizeRotationMatrix(mRaw) {
+  if (!(Array.isArray(mRaw) || ArrayBuffer.isView(mRaw)) || mRaw.length < 9) {
+    return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  }
+  const m = new Array(9);
+  for (let i = 0; i < 9; i += 1) {
+    const v = Number(mRaw[i]);
+    if (!Number.isFinite(v)) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    m[i] = v;
+  }
+  let c0 = normalizeVec3([m[0], m[3], m[6]], [1, 0, 0]);
+  let c1 = [m[1], m[4], m[7]];
+  const proj = vec3Dot(c1, c0);
+  c1 = [c1[0] - proj * c0[0], c1[1] - proj * c0[1], c1[2] - proj * c0[2]];
+  c1 = normalizeVec3(c1, [0, 1, 0]);
+  let c2 = vec3Cross(c0, c1);
+  c2 = normalizeVec3(c2, [0, 0, 1]);
+  c1 = vec3Cross(c2, c0);
+  c1 = normalizeVec3(c1, [0, 1, 0]);
+  c0 = normalizeVec3(c0, [1, 0, 0]);
+  return [
+    c0[0],
+    c1[0],
+    c2[0],
+    c0[1],
+    c1[1],
+    c2[1],
+    c0[2],
+    c1[2],
+    c2[2],
+  ];
+}
+
+function sphereRotationMatrixFromYawPitch(yawRaw, pitchRaw) {
+  const yaw = Number.isFinite(yawRaw) ? yawRaw : 0;
+  const pitch = Number.isFinite(pitchRaw) ? pitchRaw : 0;
+  return mat3Mul(mat3RotationY(pitch), mat3RotationZ(yaw));
+}
+
+function normalizeSphereRotationMatrix(raw, yawRaw = 0, pitchRaw = 0) {
+  if (!(Array.isArray(raw) || ArrayBuffer.isView(raw)) || raw.length < 9) {
+    return sphereRotationMatrixFromYawPitch(yawRaw, pitchRaw);
+  }
+  const out = new Array(9);
+  for (let i = 0; i < 9; i += 1) {
+    const v = Number(raw[i]);
+    if (!Number.isFinite(v)) return sphereRotationMatrixFromYawPitch(yawRaw, pitchRaw);
+    out[i] = v;
+  }
+  return out;
+}
+
+function normalizeSphereRotateAxisObject(raw) {
+  return normalizeVec3(raw, [0, 0, 1]);
+}
+
+function ensureSphereRotationState() {
+  state.sphereRotationMatrix = normalizeSphereRotationMatrix(state.sphereRotationMatrix, state.sphereYaw, state.spherePitch);
+  state.sphereRotateAxisObject = normalizeSphereRotateAxisObject(state.sphereRotateAxisObject);
+}
+
+function activeSphereRotationMatrix() {
+  const m = state.sphereRotationMatrix;
+  if ((Array.isArray(m) || ArrayBuffer.isView(m)) && m.length >= 9) {
+    return m;
+  }
+  state.sphereRotationMatrix = sphereRotationMatrixFromYawPitch(state.sphereYaw, state.spherePitch);
+  return state.sphereRotationMatrix;
+}
+
+function setSphereOrientationFromYawPitch(yaw, pitch, options = {}) {
+  state.sphereYaw = Number.isFinite(yaw) ? yaw : 0;
+  state.spherePitch = Number.isFinite(pitch) ? pitch : 0;
+  state.sphereRotationMatrix = sphereRotationMatrixFromYawPitch(state.sphereYaw, state.spherePitch);
+  if (options.resetAxis === true) {
+    state.sphereRotateAxisObject = [0, 0, 1];
+  } else {
+    state.sphereRotateAxisObject = normalizeSphereRotateAxisObject(state.sphereRotateAxisObject);
+  }
+}
+
+function applySphereDragRotation(startMatrixRaw, dxRaw, dyRaw, speedRaw) {
+  ensureSphereRotationState();
+  const startMatrix = normalizeSphereRotationMatrix(startMatrixRaw, state.sphereYaw, state.spherePitch);
+  const dx = Number.isFinite(dxRaw) ? dxRaw : 0;
+  const dy = Number.isFinite(dyRaw) ? dyRaw : 0;
+  const speed = Number.isFinite(speedRaw) ? speedRaw : 0.0095;
+  const viewerPitch = mat3RotationY(dy * speed);
+  const objectYaw = mat3RotationZ(dx * speed);
+  state.sphereRotationMatrix = orthonormalizeRotationMatrix(mat3Mul(mat3Mul(viewerPitch, startMatrix), objectYaw));
+}
+
+function applySphereAutoRotateDelta(deltaRaw) {
+  const delta = Number.isFinite(deltaRaw) ? deltaRaw : 0;
+  if (delta === 0) return;
+  ensureSphereRotationState();
+  const axisObj = normalizeSphereRotateAxisObject(state.sphereRotateAxisObject);
+  const rot = mat3RotationAxis(axisObj, delta);
+  state.sphereRotationMatrix = orthonormalizeRotationMatrix(mat3Mul(state.sphereRotationMatrix, rot));
+}
+
+function resetSphereRotateAxisToViewerZ() {
+  ensureSphereRotationState();
+  const inv = mat3Transpose(state.sphereRotationMatrix);
+  state.sphereRotateAxisObject = normalizeSphereRotateAxisObject(mat3MulVec3(inv, [0, 0, 1]));
+}
+
 function createViewerState() {
   return {
   dataId: null,
@@ -271,6 +761,8 @@ function createViewerState() {
   meta: null,
   plane: "xy",
   values: { sample: 0, pol: 0, t: 0, nu: 0, x: 0, y: 0, z: 0 },
+  axisSettings: createDefaultAxisSettings(),
+  axisPlaneSwap: createDefaultAxisPlaneSwap(),
 
   sampleMode: "mean",
   sampleSingleView: "mosaic",
@@ -299,12 +791,19 @@ function createViewerState() {
   colorMap: "viridis",
   colorRangeMode: "full",
   colorNormValueWindow: { min: null, max: null },
+  colorNormWindowsByQuantity: {},
   spatialMode: "slice",
   sphereMeta: null,
   sphereProjection: "mollweide",
   sphereInsideScale: 0.2,
   sphereYaw: 0,
   spherePitch: 0,
+  sphereRotationMatrix: sphereRotationMatrixFromYawPitch(0, 0),
+  sphereRotateAxisObject: [0, 0, 1],
+  viewRotateRate: 0,
+  viewRotateEnabled: false,
+  viewRotateDirection: 1,
+  viewRotateSpeed: 1,
   sphereVectorKey: "",
   sphereVectors: null,
   sphereSimplexKey: "",
@@ -322,8 +821,16 @@ function createViewerState() {
   multiSpectral: false,
   multiSpectralNuAxisScale: "linear",
   multiSpectralDeslope: 0,
+  multiSpectralNormalizeSpectrum: false,
+  multiSpectralNormalizeBoost: 1.0,
+  multiSpectralChannelRange: { min: 0, max: 100 },
   dragMode: null,
   dragModeModifier: null,
+  renderScale: {
+    spatial: 1,
+    temporal: 1,
+    spectral: 1,
+  },
   sliceRender: {
     backend: "auto",
   },
@@ -361,6 +868,35 @@ function createViewerState() {
   saveImagesPrefs: {
     outputDir: DEFAULT_EXPORT_OUTPUT_DIR,
     prefix: "",
+    overwrite: true,
+    transparentBackground: false,
+    includeViewer: true,
+    includeColorbar: true,
+    includeSampleLabels: true,
+    includeTimeProfile: true,
+    includeSpectralProfile: true,
+    includeSpatialProfile: true,
+  },
+  recordMoviePrefs: {
+    format: "mp4",
+    quality: "balanced",
+    outputDir: DEFAULT_EXPORT_OUTPUT_DIR,
+    filename: "",
+    overwrite: true,
+  },
+  renderMoviePrefs: {
+    axis: "t",
+    format: "mp4",
+    quality: "balanced",
+    fps: 30,
+    loops: 1,
+    resolution: "canvas",
+    includeColorbar: true,
+    includeSkyDirections: true,
+    includeLengthScale: true,
+    includeSampleLabels: true,
+    outputDir: DEFAULT_EXPORT_OUTPUT_DIR,
+    filename: "",
     overwrite: true,
   },
 
@@ -458,15 +994,28 @@ const COLOR_RANGE_MODE_OPTIONS = [
 ];
 const COLOR_NORM_SLIDER_STEPS = 1000;
 const COLOR_NORM_SLIDER_MIN_GAP = 1 / COLOR_NORM_SLIDER_STEPS;
+const MULTISPECTRAL_RANGE_STEPS = 1000;
+const MULTISPECTRAL_RANGE_MIN_GAP = 1 / MULTISPECTRAL_RANGE_STEPS;
 const VOLUME_CLIP_RANGE_STEPS = 1000;
 const VOLUME_CLIP_MIN_GAP = 0.01;
 const VOLUME_SPHERE_RANGE_STEPS = 1000;
 const VOLUME_SPHERE_MIN_GAP = 1 / VOLUME_SPHERE_RANGE_STEPS;
 const VOLUME_SPHERE_NSITE_MIN = 1;
 const VOLUME_SPHERE_NSITE_MAX = 512;
+const SPHERE_RENDER_NSIDE_MIN = 1;
+const SPHERE_RENDER_NSIDE_MAX = 512;
+const SPHERE_UPSAMPLE_KERNEL_CACHE_MAX = 8;
+const VIEW_ROTATE_BASE_RATE_RAD_PER_SEC = Math.PI / 6;
+const VIEW_ROTATE_MAX_DT_SEC = 0.12;
+const VIEW_ROTATE_MIN_RENDER_VOLUME_MS = 72;
+const VIEW_ROTATE_MIN_RENDER_SPHERE_MS = 48;
+const VIEW_ROTATE_SPHERE_REFRESH_MS = 220;
 const PLAYBACK_PREVIEW_BASE_MAX_PIXELS = 220000;
 const PLAYBACK_PREVIEW_MIN_PIXELS = 90000;
 const PLAYBACK_PREVIEW_MAX_PIXELS = 520000;
+const DOMAIN_SCALE_FACTORS = [0.25, 0.5, 1, 2, 4, 8, 16, 32];
+const SPATIAL_SCALE_MAX_PIXELS = 64_000_000;
+const VOLUME_FRAME_RES_MAX = 1024;
 const SAMPLE_MORPH_AXIS = "__sample_morph__";
 const DERIVED_POL_MODES = {
   none: { label: "None" },
@@ -489,12 +1038,73 @@ const DATASET_TAB_LABEL_MAX = 42;
 let viewerDropDragDepth = 0;
 let stateEpoch = 0;
 let activeRequestController = new AbortController();
+const spatialSliceResampleCache = new WeakMap();
+const spatialRgbResampleCache = new WeakMap();
+const sphereUpsampleKernelCache = new Map();
+const sphereScalarColorTableCache = new WeakMap();
+const sphereRgbColorTableCache = new WeakMap();
 const datasetTabs = [];
 let activeDatasetTabId = null;
 let nextDatasetTabId = 1;
+const movieRecording = {
+  recorder: null,
+  stream: null,
+  stopDrawing: null,
+  stopCompositor: null,
+  chunks: [],
+  mimeType: "video/webm",
+  dataId: null,
+  startedAtMs: 0,
+  pendingBlob: null,
+  pendingMimeType: "",
+  pendingDataId: null,
+  stopping: false,
+  saving: false,
+  stopPromise: null,
+};
+const renderJob = {
+  running: false,
+  cancelRequested: false,
+  startedAtMs: 0,
+  totalFrames: 0,
+  completedFrames: 0,
+  encoding: false,
+  dataId: null,
+  fetchAbortController: null,
+};
+let renderOverlayDrawOverride = null;
+const ingestWizard = {
+  step: "intent",
+  inspection: null,
+  plan: null,
+  selectedPresetId: null,
+  mappings: [],
+  intent: "tabs",
+  fileAxis: "sample",
+  activeFileIndex: 0,
+};
+const ingestAxisDrag = {
+  activeBlock: null,
+  payload: null,
+  pointerId: null,
+  pointerDx: 0,
+  pointerDy: 0,
+  sourceZone: null,
+  vacancyBlock: null,
+  vacancyCollapsed: false,
+};
+let viewRotateRaf = 0;
+let viewRotateLastTs = 0;
+let viewRotateLastRenderTs = 0;
+let viewRotateSphereRefreshTimer = 0;
 
 function isAbortError(err) {
   return Boolean(err && (err.name === "AbortError" || /aborted/i.test(String(err.message || ""))));
+}
+
+function isNotFoundError(err) {
+  const message = err && err.message ? String(err.message) : String(err || "");
+  return /404/.test(message) && /not found/i.test(message);
 }
 
 function makeAbortError(message = "aborted") {
@@ -550,6 +1160,52 @@ function restoreState(snapshot) {
   const base = createViewerState();
   const source = snapshot && typeof snapshot === "object" ? snapshot : base;
   const merged = { ...base, ...source };
+  const legacyUpscale =
+    merged &&
+    merged.sliceRender &&
+    typeof merged.sliceRender === "object" &&
+    Number.isFinite(Number.parseFloat(merged.sliceRender.upscaleFactor))
+      ? Number.parseFloat(merged.sliceRender.upscaleFactor)
+      : null;
+  if (!merged.renderScale || typeof merged.renderScale !== "object") {
+    merged.renderScale = { ...base.renderScale };
+  }
+  if (legacyUpscale !== null && !Number.isFinite(Number.parseFloat(source?.renderScale?.spatial))) {
+    merged.renderScale.spatial = normalizeDomainScaleFactor(legacyUpscale);
+  }
+  merged.renderScale.spatial = normalizeDomainScaleFactor(merged.renderScale.spatial);
+  merged.renderScale.temporal = normalizeDomainScaleFactor(merged.renderScale.temporal);
+  merged.renderScale.spectral = normalizeDomainScaleFactor(merged.renderScale.spectral);
+  merged.colorMap = normalizeColorMapKey(merged.colorMap);
+  merged.axisSettings = normalizeAxisSettingsState(merged.axisSettings);
+  merged.axisPlaneSwap = normalizeAxisPlaneSwapState(merged.axisPlaneSwap);
+  merged.colorNormValueWindow = normalizeColorNormWindowValue(merged.colorNormValueWindow);
+  merged.multiSpectralChannelRange = normalizeMultispectralChannelRange(merged.multiSpectralChannelRange);
+  merged.multiSpectralNormalizeSpectrum = Boolean(merged.multiSpectralNormalizeSpectrum);
+  merged.multiSpectralNormalizeBoost = normalizeMultispectralNormalizeBoost(merged.multiSpectralNormalizeBoost);
+  const sourceHasViewRotateRate = Object.prototype.hasOwnProperty.call(source, "viewRotateRate");
+  const legacyViewRotateDirection = normalizeViewRotateDirection(merged.viewRotateDirection);
+  const legacyViewRotateSpeed = normalizeViewRotateSpeed(merged.viewRotateSpeed);
+  const legacyViewRotateRate = merged.viewRotateEnabled ? legacyViewRotateDirection * legacyViewRotateSpeed : 0;
+  merged.viewRotateRate = normalizeViewRotateRate(sourceHasViewRotateRate ? merged.viewRotateRate : legacyViewRotateRate);
+  merged.viewRotateEnabled = merged.viewRotateRate !== 0;
+  merged.viewRotateDirection = merged.viewRotateRate < 0 ? -1 : 1;
+  merged.viewRotateSpeed = normalizeViewRotateSpeed(Math.abs(merged.viewRotateRate) || legacyViewRotateSpeed);
+  const sourceHasSphereRotation = Object.prototype.hasOwnProperty.call(source, "sphereRotationMatrix");
+  const sourceHasSphereAxis = Object.prototype.hasOwnProperty.call(source, "sphereRotateAxisObject");
+  merged.sphereRotationMatrix = orthonormalizeRotationMatrix(
+    normalizeSphereRotationMatrix(
+      sourceHasSphereRotation ? merged.sphereRotationMatrix : null,
+      merged.sphereYaw,
+      merged.spherePitch
+    )
+  );
+  merged.sphereRotateAxisObject = normalizeSphereRotateAxisObject(
+    sourceHasSphereAxis ? merged.sphereRotateAxisObject : null
+  );
+  if (!merged.colorNormWindowsByQuantity || typeof merged.colorNormWindowsByQuantity !== "object") {
+    merged.colorNormWindowsByQuantity = {};
+  }
 
   for (const key of Object.keys(state)) {
     if (!(key in merged)) delete state[key];
@@ -557,6 +1213,7 @@ function restoreState(snapshot) {
   for (const [key, value] of Object.entries(merged)) {
     state[key] = cloneSessionValue(value);
   }
+  rememberCurrentQuantityColorNormWindow();
 }
 
 async function fetchJson(url, options = null) {
@@ -566,7 +1223,15 @@ async function fetchJson(url, options = null) {
 }
 
 function planeDims() {
-  return PLANE_OPTIONS[state.plane] || PLANE_OPTIONS.xy;
+  const key = Object.prototype.hasOwnProperty.call(PLANE_OPTIONS, state.plane) ? state.plane : "xy";
+  const base = PLANE_OPTIONS[key] || PLANE_OPTIONS.xy;
+  if (!axisPlaneSwapEnabled(key)) return base;
+  return {
+    planeX: base.planeY,
+    planeY: base.planeX,
+    hidden: base.hidden,
+    label: `${base.planeY.toUpperCase()}${base.planeX.toUpperCase()}`,
+  };
 }
 
 function hiddenDim() {
@@ -601,6 +1266,17 @@ function dimUnit(dim) {
   return state.meta.coords[dim].unit || "";
 }
 
+function axisDisplayUnit(dim) {
+  const cfg = axisSetting(dim);
+  if (cfg.unit) return cfg.unit;
+  return dimUnit(dim);
+}
+
+function axisHasCustomUnit(dim) {
+  const cfg = axisSetting(dim);
+  return Boolean(cfg.unit);
+}
+
 function dimCoord(dim, idx) {
   if (!state.meta || !state.meta.coords[dim]) return null;
   const cmin = state.meta.coords[dim].min;
@@ -609,6 +1285,134 @@ function dimCoord(dim, idx) {
   if (n <= 1 || cmin === null || cmax === null) return idx;
   const f = idx / (n - 1);
   return cmin + f * (cmax - cmin);
+}
+
+function axisPlaneSwapState() {
+  if (!state.axisPlaneSwap || typeof state.axisPlaneSwap !== "object") {
+    state.axisPlaneSwap = createDefaultAxisPlaneSwap();
+  }
+  for (const key of PLANE_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(state.axisPlaneSwap, key)) {
+      state.axisPlaneSwap[key] = false;
+    }
+    state.axisPlaneSwap[key] = state.axisPlaneSwap[key] === true;
+  }
+  return state.axisPlaneSwap;
+}
+
+function axisPlaneSwapEnabled(planeKey = state.plane) {
+  if (!PLANE_KEYS.includes(planeKey)) return false;
+  return axisPlaneSwapState()[planeKey] === true;
+}
+
+function axisPlaneSwapSet(planeKey, enabled) {
+  if (!PLANE_KEYS.includes(planeKey)) return;
+  axisPlaneSwapState()[planeKey] = enabled === true;
+}
+
+function axisSetting(dim) {
+  if (!state.axisSettings || typeof state.axisSettings !== "object") {
+    state.axisSettings = createDefaultAxisSettings();
+  }
+  if (!Object.prototype.hasOwnProperty.call(state.axisSettings, dim)) {
+    state.axisSettings[dim] = { flip: false, length: null, unit: "", start: null, end: null };
+  }
+  state.axisSettings[dim] = normalizeAxisSettingEntry(state.axisSettings[dim]);
+  return state.axisSettings[dim];
+}
+
+function axisIsFlipped(dim) {
+  return axisSetting(dim).flip === true;
+}
+
+function axisRawEndpoints(dim) {
+  const n = axisSize(dim);
+  if (n <= 1) return null;
+  const start = dimCoord(dim, 0);
+  const end = dimCoord(dim, n - 1);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  if (Math.abs(end - start) <= 1.0e-15) return null;
+  return { start, end };
+}
+
+function axisMappedEndpoints(dim) {
+  const raw = axisRawEndpoints(dim);
+  if (!raw) return null;
+  const cfg = axisSetting(dim);
+  const length = Number.isFinite(cfg.length) && cfg.length > 0 ? cfg.length : null;
+  let start = Number.isFinite(cfg.start) ? cfg.start : null;
+  let end = Number.isFinite(cfg.end) ? cfg.end : null;
+
+  if (start === null && end === null && length !== null) {
+    start = 0;
+    end = length;
+  } else if (start !== null && end === null && length !== null) {
+    end = start + length;
+  } else if (end !== null && start === null && length !== null) {
+    start = end - length;
+  }
+
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  if (Math.abs(end - start) <= 1.0e-15) return null;
+  return { rawStart: raw.start, rawEnd: raw.end, start, end };
+}
+
+function axisValueCoord(dim, coord) {
+  if (!Number.isFinite(coord)) return coord;
+  const endpoints = axisMappedEndpoints(dim);
+  if (!endpoints) return coord;
+  const t = (coord - endpoints.rawStart) / (endpoints.rawEnd - endpoints.rawStart);
+  return endpoints.start + t * (endpoints.end - endpoints.start);
+}
+
+function axisDisplayLabel(dim, fallback = null) {
+  if (Object.prototype.hasOwnProperty.call(AXIS_DISPLAY_LABEL, dim)) {
+    return AXIS_DISPLAY_LABEL[dim];
+  }
+  if (fallback !== null && fallback !== undefined) return String(fallback);
+  if (!dim) return "Axis";
+  return String(dim).toUpperCase();
+}
+
+function axisMapCoord(dim, coord) {
+  const valueCoord = axisValueCoord(dim, coord);
+  if (!Number.isFinite(valueCoord)) return valueCoord;
+  return axisIsFlipped(dim) ? -valueCoord : valueCoord;
+}
+
+function axisMapCoords(dim, coords) {
+  if (!Array.isArray(coords)) return [];
+  const mappedValueCoords = coords.map((coord) => axisValueCoord(dim, coord));
+  const useLogFrequencyAxis =
+    dim === "nu"
+    && state.multiSpectralNuAxisScale === "log"
+    && mappedValueCoords.length > 1
+    && mappedValueCoords.every((v) => Number.isFinite(v) && v > 0);
+  return mappedValueCoords.map((coord) => {
+    if (!Number.isFinite(coord)) return coord;
+    const plotted = useLogFrequencyAxis ? Math.log10(coord) : coord;
+    return axisIsFlipped(dim) ? -plotted : plotted;
+  });
+}
+
+function axisSettingsCustomizedCount() {
+  let count = 0;
+  for (const dim of AXIS_CONTROL_DIMS) {
+    const cfg = axisSetting(dim);
+    if (
+      cfg.flip
+      || Number.isFinite(cfg.length)
+      || Number.isFinite(cfg.start)
+      || Number.isFinite(cfg.end)
+      || Boolean(cfg.unit)
+    ) count += 1;
+  }
+  return count;
+}
+
+function axisPlaneSwapCustomizedCount() {
+  const activePlane = PLANE_KEYS.includes(state.plane) ? state.plane : "xy";
+  return axisPlaneSwapEnabled(activePlane) ? 1 : 0;
 }
 
 function isPowerOfTwo(v) {
@@ -799,7 +1603,7 @@ function volumeSphereNsiteValue() {
 }
 
 function volumeSphereInsideScale() {
-  const zoom = clamp(state.volumeZoom, 0.5, 8.0);
+  const zoom = clamp(state.volumeZoom, VOLUME_ZOOM_MIN, VOLUME_ZOOM_MAX);
   return clamp(0.45 * zoom, 0.1, 3.6);
 }
 
@@ -854,6 +1658,112 @@ function sliceBackendMode(width = 0, height = 0) {
   if (requested === "gpu") return "gpu";
   const pixels = Math.max(1, width) * Math.max(1, height);
   return pixels >= 320 * 320 ? "gpu" : "cpu";
+}
+
+function normalizeDomainScaleFactor(raw) {
+  const value = Number.parseFloat(raw);
+  for (const candidate of DOMAIN_SCALE_FACTORS) {
+    if (Math.abs(value - candidate) <= 1.0e-6) return candidate;
+  }
+  return 1;
+}
+
+function domainScaleFactor(domain) {
+  const cfg = state.renderScale && typeof state.renderScale === "object" ? state.renderScale : null;
+  const raw = cfg && Object.prototype.hasOwnProperty.call(cfg, domain) ? cfg[domain] : 1;
+  return normalizeDomainScaleFactor(raw);
+}
+
+function spatialScaleFactor() {
+  return domainScaleFactor("spatial");
+}
+
+function temporalScaleFactor() {
+  return domainScaleFactor("temporal");
+}
+
+function spectralScaleFactor() {
+  return domainScaleFactor("spectral");
+}
+
+function axisDomainScaleFactor(axis) {
+  if (axis === "t") return temporalScaleFactor();
+  if (axis === "nu") return spectralScaleFactor();
+  if (axis === "x" || axis === "y" || axis === "z") return spatialScaleFactor();
+  return 1;
+}
+
+function finiteLerp(v0, v1, a) {
+  const has0 = Number.isFinite(v0);
+  const has1 = Number.isFinite(v1);
+  if (has0 && has1) return v0 * (1 - a) + v1 * a;
+  if (has0) return v0;
+  if (has1) return v1;
+  return Number.NaN;
+}
+
+function catmullRomFinite(p0, p1, p2, p3, t) {
+  const has0 = Number.isFinite(p0);
+  const has1 = Number.isFinite(p1);
+  const has2 = Number.isFinite(p2);
+  const has3 = Number.isFinite(p3);
+  if (!has1 && !has2) return Number.NaN;
+  if (!has0 || !has1 || !has2 || !has3) {
+    return finiteLerp(p1, p2, t);
+  }
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return 0.5 * (
+    (2 * p1) +
+    (-p0 + p2) * t +
+    (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+    (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+  );
+}
+
+function resampledDomainLength(n, factor) {
+  if (!Number.isFinite(factor) || factor <= 0) return n;
+  if (n <= 1) return n;
+  return clamp(Math.round((n - 1) * factor) + 1, 2, 16384);
+}
+
+function resampleSeriesWithCoords(series, coords, factor) {
+  const n = Array.isArray(series) ? series.length : 0;
+  if (!Array.isArray(coords) || coords.length !== n || n < 2) {
+    return { series, coords, sourceLength: n };
+  }
+  const targetN = resampledDomainLength(n, factor);
+  if (targetN === n) {
+    return { series, coords, sourceLength: n };
+  }
+
+  const outSeries = new Array(targetN);
+  const outCoords = new Array(targetN);
+  const srcSpan = n - 1;
+  const dstSpan = targetN - 1;
+  for (let i = 0; i < targetN; i += 1) {
+    const srcPos = (i * srcSpan) / dstSpan;
+    const i1 = clamp(Math.floor(srcPos), 0, n - 1);
+    const i2 = clamp(i1 + 1, 0, n - 1);
+    const t = srcPos - i1;
+    const i0 = clamp(i1 - 1, 0, n - 1);
+    const i3 = clamp(i2 + 1, 0, n - 1);
+    outCoords[i] = finiteLerp(coords[i1], coords[i2], t);
+    outSeries[i] = catmullRomFinite(series[i0], series[i1], series[i2], series[i3], t);
+  }
+  return {
+    series: outSeries,
+    coords: outCoords,
+    sourceLength: n,
+  };
+}
+
+function mappedIndicatorIndex(baseIdx, sourceLength, targetLength) {
+  if (!Number.isFinite(baseIdx)) return null;
+  if (!Number.isFinite(sourceLength) || !Number.isFinite(targetLength) || sourceLength < 2 || targetLength < 2) {
+    return clamp(Math.round(baseIdx), 0, Math.max(0, targetLength - 1));
+  }
+  return clamp(Math.round((baseIdx * (targetLength - 1)) / Math.max(1, sourceLength - 1)), 0, targetLength - 1);
 }
 
 function rgbGpuAvailableKnown() {
@@ -1021,6 +1931,38 @@ function updateVolumeSphereRangeUi() {
   setDualRangeLabelPosition(els.volumeSphereRangeTrack, els.volumeSphereRangeMaxValue, rightPct);
 }
 
+function setMultispectralRangeActiveHandle(bound = null) {
+  if (!els.msChannelRangeMinRange || !els.msChannelRangeMaxRange) return;
+  els.msChannelRangeMinRange.classList.toggle("isActive", bound === "min");
+  els.msChannelRangeMaxRange.classList.toggle("isActive", bound === "max");
+}
+
+function syncMultispectralRangeUi() {
+  if (
+    !els.msChannelRangeTrack ||
+    !els.msChannelRangeMinRange ||
+    !els.msChannelRangeMaxRange ||
+    !els.msChannelRangeMinValue ||
+    !els.msChannelRangeMaxValue
+  ) {
+    return;
+  }
+  const normalized = normalizeMultispectralChannelRange(state.multiSpectralChannelRange);
+  state.multiSpectralChannelRange = normalized;
+  const minStep = Math.round((normalized.min / 100) * MULTISPECTRAL_RANGE_STEPS);
+  const maxStep = Math.round((normalized.max / 100) * MULTISPECTRAL_RANGE_STEPS);
+  els.msChannelRangeMinRange.value = String(minStep);
+  els.msChannelRangeMaxRange.value = String(maxStep);
+  const leftPct = (100 * minStep) / MULTISPECTRAL_RANGE_STEPS;
+  const rightPct = (100 * maxStep) / MULTISPECTRAL_RANGE_STEPS;
+  els.msChannelRangeTrack.style.setProperty("--range-left", `${leftPct.toFixed(3)}%`);
+  els.msChannelRangeTrack.style.setProperty("--range-right", `${rightPct.toFixed(3)}%`);
+  els.msChannelRangeMinValue.textContent = `${normalized.min.toFixed(1)}%`;
+  els.msChannelRangeMaxValue.textContent = `${normalized.max.toFixed(1)}%`;
+  setDualRangeLabelPosition(els.msChannelRangeTrack, els.msChannelRangeMinValue, leftPct);
+  setDualRangeLabelPosition(els.msChannelRangeTrack, els.msChannelRangeMaxValue, rightPct);
+}
+
 function updateVolumeControlReadouts() {
   state.volumeRender.sphereNsite = volumeSphereNsiteValue();
   state.volumeRender.sphereProjection = volumeSphereProjectionMode();
@@ -1054,6 +1996,154 @@ function updateVolumeControlReadouts() {
   }
 }
 
+function normalizeAngleRad(angle) {
+  if (!Number.isFinite(angle)) return 0;
+  const tau = Math.PI * 2;
+  let out = angle % tau;
+  if (out > Math.PI) out -= tau;
+  if (out < -Math.PI) out += tau;
+  return out;
+}
+
+function viewRotateModeActive() {
+  return isVolumeMode() || isSphereMode();
+}
+
+function viewRotateLoopCanAdvance() {
+  if (normalizeViewRotateRate(state.viewRotateRate) === 0) return false;
+  if (!state.dataId || !viewRotateModeActive()) return false;
+  if (state.volumeDrag || state.sphereDrag) return false;
+  return true;
+}
+
+function syncLegacyViewRotateState() {
+  const rate = normalizeViewRotateRate(state.viewRotateRate);
+  state.viewRotateRate = rate;
+  state.viewRotateEnabled = rate !== 0;
+  state.viewRotateDirection = rate < 0 ? -1 : 1;
+  state.viewRotateSpeed = normalizeViewRotateSpeed(Math.abs(rate) || 1);
+  return rate;
+}
+
+function viewRotateRateLabel(rawRate) {
+  const rate = normalizeViewRotateRate(rawRate);
+  if (rate === 0) return "0x";
+  const magnitude = Math.abs(rate);
+  const speedLabel = Number.isInteger(magnitude) ? `${magnitude}x` : `${magnitude.toFixed(1)}x`;
+  return `${rate > 0 ? "+" : "-"}${speedLabel}`;
+}
+
+function stopViewRotateLoop() {
+  if (viewRotateRaf) {
+    window.cancelAnimationFrame(viewRotateRaf);
+    viewRotateRaf = 0;
+  }
+  viewRotateLastTs = 0;
+  viewRotateLastRenderTs = 0;
+  if (viewRotateSphereRefreshTimer) {
+    window.clearTimeout(viewRotateSphereRefreshTimer);
+    viewRotateSphereRefreshTimer = 0;
+  }
+}
+
+function scheduleViewRotateSphereRefresh() {
+  if (!isSphereMode() || !state.selection) return;
+  if (viewRotateSphereRefreshTimer) return;
+  viewRotateSphereRefreshTimer = window.setTimeout(async () => {
+    viewRotateSphereRefreshTimer = 0;
+    if (!isSphereMode() || !state.selection) return;
+    try {
+      await refreshSelectionAnalytics();
+    } catch (err) {
+      if (!isAbortError(err)) console.warn("sphere selection refresh failed:", err);
+    }
+  }, VIEW_ROTATE_SPHERE_REFRESH_MS);
+}
+
+function stepViewRotate(ts) {
+  viewRotateRaf = 0;
+  const rate = normalizeViewRotateRate(state.viewRotateRate);
+  if (rate === 0) {
+    stopViewRotateLoop();
+    return;
+  }
+  if (!viewRotateLoopCanAdvance()) {
+    const waitingForDrag =
+      rate !== 0 && state.dataId && viewRotateModeActive() && (state.volumeDrag || state.sphereDrag);
+    if (!waitingForDrag) {
+      stopViewRotateLoop();
+      return;
+    }
+    viewRotateLastTs = ts;
+    if (!viewRotateRaf) viewRotateRaf = window.requestAnimationFrame(stepViewRotate);
+    return;
+  }
+
+  const prevTs = viewRotateLastTs || ts;
+  const dtSec = clamp((ts - prevTs) / 1000, 0, VIEW_ROTATE_MAX_DT_SEC);
+  viewRotateLastTs = ts;
+  const delta = VIEW_ROTATE_BASE_RATE_RAD_PER_SEC * rate * dtSec;
+  if (delta !== 0) {
+    if (isVolumeMode()) {
+      state.volumeYaw = normalizeAngleRad((state.volumeYaw || 0) + delta);
+    } else if (isSphereMode()) {
+      applySphereAutoRotateDelta(delta);
+    }
+  }
+
+  const minRenderMs = isVolumeMode() ? VIEW_ROTATE_MIN_RENDER_VOLUME_MS : VIEW_ROTATE_MIN_RENDER_SPHERE_MS;
+  if (ts - viewRotateLastRenderTs >= minRenderMs) {
+    viewRotateLastRenderTs = ts;
+    if (isVolumeMode()) {
+      rerenderVolumeFrame();
+    } else if (isSphereMode()) {
+      rerenderSphereFrame();
+      scheduleViewRotateSphereRefresh();
+    }
+  }
+  if (!viewRotateRaf) viewRotateRaf = window.requestAnimationFrame(stepViewRotate);
+}
+
+function ensureViewRotateLoop() {
+  if (normalizeViewRotateRate(state.viewRotateRate) === 0) {
+    stopViewRotateLoop();
+    return;
+  }
+  if (!viewRotateRaf) viewRotateRaf = window.requestAnimationFrame(stepViewRotate);
+}
+
+function stepViewRotateRate(directionRaw) {
+  const direction = directionRaw < 0 ? -1 : 1;
+  const current = normalizeViewRotateRate(state.viewRotateRate);
+  const idx = VIEW_ROTATE_RATE_STEP_LEVELS.indexOf(current);
+  const safeIdx = idx >= 0 ? idx : VIEW_ROTATE_RATE_STEP_LEVELS.indexOf(0);
+  const nextIdx = clamp(safeIdx + direction, 0, VIEW_ROTATE_RATE_STEP_LEVELS.length - 1);
+  state.viewRotateRate = VIEW_ROTATE_RATE_STEP_LEVELS[nextIdx];
+}
+
+function updateViewRotateControls() {
+  const rate = syncLegacyViewRotateState();
+  const modeActive = viewRotateModeActive();
+  const sphereMode = isSphereMode();
+  if (els.viewRotateNegBtn) {
+    els.viewRotateNegBtn.disabled = !modeActive;
+  }
+  if (els.viewRotatePosBtn) {
+    els.viewRotatePosBtn.disabled = !modeActive;
+  }
+  if (els.viewRotateSpeedValue) {
+    els.viewRotateSpeedValue.textContent = viewRotateRateLabel(rate);
+  }
+  if (els.viewRotateRateControl) {
+    els.viewRotateRateControl.classList.toggle("isActive", modeActive && rate !== 0);
+  }
+  if (els.viewRotateRebaseBtn) {
+    setVisible(els.viewRotateRebaseBtn, sphereMode);
+    els.viewRotateRebaseBtn.disabled = !modeActive || !sphereMode;
+  }
+  ensureViewRotateLoop();
+}
+
 function isPlaying() {
   return state.playbackTimer !== null;
 }
@@ -1063,7 +2153,15 @@ function isSampleMorphPlaybackActive() {
 }
 
 function shouldAutoPlaySampleMorph() {
-  return Boolean(state.dataId) && isSampleMorphMode() && sampleCount() > 1 && !isPlaying() && !state.sampleMorph.initializing;
+  return (
+    Boolean(state.dataId)
+    && isSampleMorphMode()
+    && sampleCount() > 1
+    && !isPlaying()
+    && !renderJob.running
+    && !renderJob.encoding
+    && !state.sampleMorph.initializing
+  );
 }
 
 function stopSampleMorphPlayback() {
@@ -1148,6 +2246,17 @@ function playbackMaxPixelsForFrame() {
   const tileCount = isSamplesMode() ? Math.max(1, state.sampleGridIndices.length || 1) : 1;
   const budget = Math.max(40000, state.playbackPreviewMaxPixels);
   return Math.max(20000, Math.floor(budget / tileCount));
+}
+
+function spatialLodMaxPixels(baseMaxPixels = null) {
+  let maxPixels = Number.isFinite(baseMaxPixels) && baseMaxPixels > 0 ? Math.floor(baseMaxPixels) : null;
+  const factor = spatialScaleFactor();
+  if (!(factor < 1)) return maxPixels;
+  const p = planeDims();
+  const est = Math.max(1, axisSize(p.planeX)) * Math.max(1, axisSize(p.planeY));
+  const scaled = Math.max(4096, Math.floor(est * factor * factor));
+  if (maxPixels === null) return scaled;
+  return Math.min(maxPixels, scaled);
 }
 
 function sampleCount() {
@@ -1242,6 +2351,95 @@ function multispectralFrameActive() {
 function multispectralDeslopeLabel() {
   const alpha = Number.isFinite(state.multiSpectralDeslope) ? state.multiSpectralDeslope : 0;
   return alpha.toFixed(1);
+}
+
+function normalizeMultispectralNormalizeBoost(raw) {
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed)) return 1.0;
+  return clamp(parsed, 0.25, 8.0);
+}
+
+function multispectralNormalizeBoostLabel() {
+  return `${normalizeMultispectralNormalizeBoost(state.multiSpectralNormalizeBoost).toFixed(2)}x`;
+}
+
+function normalizeMultispectralChannelRange(raw) {
+  const out = { min: 0, max: 100 };
+  if (raw && typeof raw === "object") {
+    const minIn = Number.parseFloat(raw.min);
+    const maxIn = Number.parseFloat(raw.max);
+    if (Number.isFinite(minIn)) out.min = clamp(minIn, 0, 100);
+    if (Number.isFinite(maxIn)) out.max = clamp(maxIn, 0, 100);
+  }
+  const minGapPct = 100 * MULTISPECTRAL_RANGE_MIN_GAP;
+  if (out.max <= out.min + minGapPct) {
+    out.max = clamp(out.min + minGapPct, minGapPct, 100);
+    out.min = clamp(out.max - minGapPct, 0, 100 - minGapPct);
+  }
+  out.min = clamp(out.min, 0, 100 - minGapPct);
+  out.max = clamp(out.max, out.min + minGapPct, 100);
+  return out;
+}
+
+function multispectralChannelRangeFractionWindow() {
+  let source = normalizeMultispectralChannelRange(state.multiSpectralChannelRange);
+  if (multispectralFrameActive()) {
+    const resolved = resolveColorNormWindow({ min: 0, max: 100 });
+    if (resolved) {
+      source = normalizeMultispectralChannelRange({ min: resolved.min, max: resolved.max });
+    }
+  }
+  const normalized = source;
+  state.multiSpectralChannelRange = normalized;
+  return {
+    min: normalized.min / 100,
+    max: normalized.max / 100,
+  };
+}
+
+function maxPositiveInArray(values, count = values?.length ?? 0) {
+  if (!values || !Number.isFinite(count) || count < 1) return 0;
+  let maxPositive = 0;
+  const n = Math.min(values.length, Math.max(0, Math.floor(count)));
+  for (let i = 0; i < n; i += 1) {
+    const v = values[i];
+    if (v > maxPositive) maxPositive = v;
+  }
+  return maxPositive;
+}
+
+function applyMultispectralChannelRange(mm, rawMaxPositive) {
+  const minBase = Number.isFinite(mm?.min) ? mm.min : 0;
+  const maxBase = Number.isFinite(mm?.max) ? mm.max : 1;
+  const baseHi = Math.max(0, Number.isFinite(rawMaxPositive) ? rawMaxPositive : maxBase);
+  const fallbackLo = Math.min(minBase, maxBase);
+  const fallbackHi = Math.max(minBase, maxBase);
+  if (!(baseHi > 0)) {
+    const spanFallback = Math.max(1.0e-9, fallbackHi - fallbackLo || 1);
+    return {
+      min: fallbackLo,
+      max: fallbackHi,
+      span: spanFallback,
+      minPositive: Math.max(0, fallbackLo),
+      maxPositive: Math.max(0, fallbackHi),
+    };
+  }
+  const window = multispectralChannelRangeFractionWindow();
+  let minV = baseHi * clamp(window.min, 0, 1);
+  let maxV = baseHi * clamp(window.max, 0, 1);
+  if (maxV <= minV) {
+    const minGap = baseHi * MULTISPECTRAL_RANGE_MIN_GAP;
+    maxV = Math.min(baseHi, minV + minGap);
+    minV = Math.max(0, maxV - minGap);
+  }
+  const span = Math.max(1.0e-9, maxV - minV);
+  return {
+    min: minV,
+    max: maxV,
+    span,
+    minPositive: Math.max(0, minV),
+    maxPositive: Math.max(0, maxV),
+  };
 }
 
 function multispectralBandCenterHz(band) {
@@ -1375,14 +2573,22 @@ function requestResizeRedraw(interactive = false) {
   });
 }
 
+function canvasDomainScaleFactor(canvasEl) {
+  if (!canvasEl) return 1;
+  if (canvasEl === els.timeNavCanvas || canvasEl === els.timeProfileCanvas) return temporalScaleFactor();
+  if (canvasEl === els.freqNavCanvas || canvasEl === els.spectrumProfileCanvas) return spectralScaleFactor();
+  return spatialScaleFactor();
+}
+
 function syncCanvasToDisplaySize(canvasEl) {
   if (!canvasEl) return;
   const rect = canvasEl.getBoundingClientRect();
   const cssW = Math.max(1, Math.round(canvasEl.clientWidth || rect.width || canvasEl.width || 1));
   const cssH = Math.max(1, Math.round(canvasEl.clientHeight || rect.height || canvasEl.height || 1));
   const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
-  const pixelW = Math.max(1, Math.round(cssW * dpr));
-  const pixelH = Math.max(1, Math.round(cssH * dpr));
+  const domainScale = clamp(canvasDomainScaleFactor(canvasEl), 0.25, 8);
+  const pixelW = Math.max(1, Math.round(cssW * dpr * domainScale));
+  const pixelH = Math.max(1, Math.round(cssH * dpr * domainScale));
   if (canvasEl.width !== pixelW || canvasEl.height !== pixelH) {
     canvasEl.width = pixelW;
     canvasEl.height = pixelH;
@@ -1662,6 +2868,9 @@ function equatorialToGalactic(raDeg, decDeg) {
 
 function fmtPhysical(dim, coord, unit) {
   if (coord === null || coord === undefined || Number.isNaN(coord)) return "n/a";
+  const displayCoord = axisValueCoord(dim, coord);
+  if (!Number.isFinite(displayCoord)) return "n/a";
+  const hasCustomUnit = axisHasCustomUnit(dim);
   const formatScaled = (value, scale, scaledUnit) => {
     const scaled = value / scale;
     const absScaled = Math.abs(scaled);
@@ -1670,26 +2879,26 @@ function fmtPhysical(dim, coord, unit) {
     else if (absScaled >= 10) decimals = 1;
     return `${scaled.toFixed(decimals)} ${scaledUnit}`.trim();
   };
-  if (dim === "nu" || unit === "Hz") {
-    const abs = Math.abs(coord);
-    if (abs >= 1.0e12) return formatScaled(coord, 1.0e12, "THz");
-    if (abs >= 1.0e9) return formatScaled(coord, 1.0e9, "GHz");
-    if (abs >= 1.0e6) return formatScaled(coord, 1.0e6, "MHz");
-    if (abs >= 1.0e3) return formatScaled(coord, 1.0e3, "kHz");
-    return formatScaled(coord, 1.0, "Hz");
+  if (!hasCustomUnit && (dim === "nu" || unit === "Hz")) {
+    const abs = Math.abs(displayCoord);
+    if (abs >= 1.0e12) return formatScaled(displayCoord, 1.0e12, "THz");
+    if (abs >= 1.0e9) return formatScaled(displayCoord, 1.0e9, "GHz");
+    if (abs >= 1.0e6) return formatScaled(displayCoord, 1.0e6, "MHz");
+    if (abs >= 1.0e3) return formatScaled(displayCoord, 1.0e3, "kHz");
+    return formatScaled(displayCoord, 1.0, "Hz");
   }
-  if (dim === "t" || unit === "s") {
-    const abs = Math.abs(coord);
-    if (abs >= 3600) return formatScaled(coord, 3600, "h");
-    if (abs >= 60) return formatScaled(coord, 60, "min");
-    if (abs >= 1) return formatScaled(coord, 1, "s");
-    if (abs >= 1.0e-3) return formatScaled(coord, 1.0e-3, "ms");
-    if (abs >= 1.0e-6) return formatScaled(coord, 1.0e-6, "us");
-    return formatScaled(coord, 1.0e-9, "ns");
+  if (!hasCustomUnit && (dim === "t" || unit === "s")) {
+    const abs = Math.abs(displayCoord);
+    if (abs >= 3600) return formatScaled(displayCoord, 3600, "h");
+    if (abs >= 60) return formatScaled(displayCoord, 60, "min");
+    if (abs >= 1) return formatScaled(displayCoord, 1, "s");
+    if (abs >= 1.0e-3) return formatScaled(displayCoord, 1.0e-3, "ms");
+    if (abs >= 1.0e-6) return formatScaled(displayCoord, 1.0e-6, "us");
+    return formatScaled(displayCoord, 1.0e-9, "ns");
   }
-  const abs = Math.abs(coord);
-  if (abs >= 10000 || (abs > 0 && abs < 0.01)) return `${coord.toExponential(2)} ${unit}`.trim();
-  return `${coord.toFixed(2)} ${unit}`.trim();
+  const abs = Math.abs(displayCoord);
+  if (abs >= 10000 || (abs > 0 && abs < 0.01)) return `${displayCoord.toExponential(2)} ${unit}`.trim();
+  return `${displayCoord.toFixed(2)} ${unit}`.trim();
 }
 
 function fmtIntensity(v) {
@@ -1713,10 +2922,12 @@ function fluxFromPlotValue(v) {
 
 function fmtAxisTick(axis, unit, v) {
   if (!Number.isFinite(v)) return "";
-  if (axis === "nu" || unit === "Hz") return (v / 1.0e9).toFixed(3);
-  const abs = Math.abs(v);
-  if (abs >= 10000 || (abs > 0 && abs < 0.01)) return v.toExponential(1);
-  return v.toFixed(2);
+  const displayV = axisValueCoord(axis, v);
+  if (!Number.isFinite(displayV)) return "";
+  if (!axisHasCustomUnit(axis) && (axis === "nu" || unit === "Hz")) return (displayV / 1.0e9).toFixed(3);
+  const abs = Math.abs(displayV);
+  if (abs >= 10000 || (abs > 0 && abs < 0.01)) return displayV.toExponential(1);
+  return displayV.toFixed(2);
 }
 
 function buildAxisXMapper(coords) {
@@ -1799,7 +3010,7 @@ function finiteMinMax(values) {
 }
 
 function normalizeForColormap(v, mm) {
-  if (!isFiniteNumber(v)) return null;
+  if (!isFiniteNumber(v)) return 0;
   if (state.colorMap === "circular" && isDerivedPolModeActive() && state.derivedPolMode === "bfield") {
     let a = v % 180;
     if (a < 0) a += 180;
@@ -1876,6 +3087,63 @@ function colorNormFromScale(v) {
   return v;
 }
 
+function normalizeColorNormWindowValue(window) {
+  if (!window || typeof window !== "object") return { min: null, max: null };
+  const min = Number.isFinite(window.min) ? window.min : null;
+  const max = Number.isFinite(window.max) ? window.max : null;
+  return { min, max };
+}
+
+function colorNormWindowsByQuantityState() {
+  if (!state.colorNormWindowsByQuantity || typeof state.colorNormWindowsByQuantity !== "object") {
+    state.colorNormWindowsByQuantity = {};
+  }
+  return state.colorNormWindowsByQuantity;
+}
+
+function intensityQuantityKey(
+  options = {
+    sampleMode: state.sampleMode,
+    derivedPolMode: state.derivedPolMode,
+    multiSpectral: state.multiSpectral || multispectralFrameActive(),
+    spatialMode: state.spatialMode,
+  }
+) {
+  const sampleMode = options.sampleMode ?? state.sampleMode;
+  const derivedPolMode = options.derivedPolMode ?? state.derivedPolMode;
+  const multiSpectral = options.multiSpectral ?? state.multiSpectral;
+  const spatialMode = options.spatialMode ?? state.spatialMode;
+  if (multiSpectral && spatialMode !== "volume") return "multispectral";
+  if (derivedPolMode && derivedPolMode !== "none") return `derived:${derivedPolMode}`;
+  if (sampleMode === "std") return "sample:std";
+  if (sampleMode === "rel_uncert") return "sample:rel_uncert";
+  return "flux";
+}
+
+function saveColorNormWindowForQuantity(key) {
+  if (!key) return;
+  const map = colorNormWindowsByQuantityState();
+  map[key] = normalizeColorNormWindowValue(state.colorNormValueWindow);
+}
+
+function restoreColorNormWindowForQuantity(key) {
+  const map = colorNormWindowsByQuantityState();
+  const restored = map[key];
+  state.colorNormValueWindow = normalizeColorNormWindowValue(restored);
+}
+
+function rememberCurrentQuantityColorNormWindow() {
+  saveColorNormWindowForQuantity(intensityQuantityKey());
+}
+
+function applyIntensityQuantityTransition(previousKey, nextKey) {
+  if (!previousKey || !nextKey || previousKey === nextKey) return false;
+  saveColorNormWindowForQuantity(previousKey);
+  restoreColorNormWindowForQuantity(nextKey);
+  updateColorNormalizationControls();
+  return true;
+}
+
 function resolveColorNormWindow(stats) {
   const domain = colorNormDomainForScale(stats);
   if (!domain) return null;
@@ -1937,6 +3205,9 @@ function resolveColorNormStats(stats) {
 }
 
 function activeIntensityBaseStats() {
+  if (multispectralFrameActive()) {
+    return { min: 0, max: 100 };
+  }
   if (isValidRangeStats(state.fixedColorRange)) return state.fixedColorRange;
   if (isValidRangeStats(state.currentIntensityStats)) return state.currentIntensityStats;
   return null;
@@ -1946,7 +3217,8 @@ function updateColorNormalizationControls() {
   if (!els.colorNormMinRange || !els.colorNormMaxRange || !els.colorNormTrack) return;
   const base = activeIntensityBaseStats();
   const resolved = resolveColorNormWindow(base);
-  const enabled = Boolean(resolved) && !state.multiSpectral;
+  const multispectral = multispectralFrameActive();
+  const enabled = Boolean(resolved);
 
   const lowStep = resolved
     ? Math.round(
@@ -1996,54 +3268,159 @@ function updateColorNormalizationControls() {
   }
 
   const unit = state.currentIntensityUnit || (state.meta ? state.meta.intensity_unit || "" : "");
-  if (els.colorNormBoundMin) els.colorNormBoundMin.textContent = `${fmtIntensity(base.min)} ${unit}`.trim();
-  if (els.colorNormBoundMax) els.colorNormBoundMax.textContent = `${fmtIntensity(base.max)} ${unit}`.trim();
+  const fmtPct = (v) => `${v.toFixed(v < 1 ? 3 : v < 10 ? 2 : 1)}%`;
+  if (els.colorNormBoundMin) {
+    els.colorNormBoundMin.textContent = multispectral ? "0%" : `${fmtIntensity(base.min)} ${unit}`.trim();
+  }
+  if (els.colorNormBoundMax) {
+    els.colorNormBoundMax.textContent = multispectral ? "100%" : `${fmtIntensity(base.max)} ${unit}`.trim();
+  }
   if (resolved) {
-    setRangeValueLabel(els.colorNormMinValue, `${fmtIntensity(resolved.min)} ${unit}`.trim(), leftPct);
-    setRangeValueLabel(els.colorNormMaxValue, `${fmtIntensity(resolved.max)} ${unit}`.trim(), rightPct);
+    if (multispectral) {
+      state.multiSpectralChannelRange = normalizeMultispectralChannelRange({ min: resolved.min, max: resolved.max });
+      setRangeValueLabel(els.colorNormMinValue, fmtPct(resolved.min), leftPct);
+      setRangeValueLabel(els.colorNormMaxValue, fmtPct(resolved.max), rightPct);
+    } else {
+      setRangeValueLabel(els.colorNormMinValue, `${fmtIntensity(resolved.min)} ${unit}`.trim(), leftPct);
+      setRangeValueLabel(els.colorNormMaxValue, `${fmtIntensity(resolved.max)} ${unit}`.trim(), rightPct);
+    }
     return;
   }
   setRangeValueLabel(els.colorNormMinValue, "n/a", 25);
   setRangeValueLabel(els.colorNormMaxValue, "n/a", 75);
 }
 
-function colorForSpectralNu(freqHz, bands) {
-  if (!bands) return [255, 255, 255];
-  const b = bands.blue || [0, 1];
-  const g = bands.green || [0, 1];
-  const r = bands.red || [0, 1];
-  const cB = 0.5 * (b[0] + b[1]);
-  const cG = 0.5 * (g[0] + g[1]);
-  const cR = 0.5 * (r[0] + r[1]);
+const SPECTRAL_CMF_START_NM = 380.0;
+const SPECTRAL_CMF_END_NM = 780.0;
+const SPECTRAL_CMF_STEP_NM = 5.0;
+const SPECTRAL_VISIBLE_MIN_NM = 400.0;
+const SPECTRAL_VISIBLE_MAX_NM = 700.0;
+const SPECTRAL_XYZ_CMF_X = [
+  0.000160, 0.000662, 0.002362, 0.007242, 0.019110, 0.043400, 0.084736, 0.140638, 0.204492, 0.264737, 0.314679,
+  0.357719, 0.383734, 0.386726, 0.370702, 0.342957, 0.302273, 0.254085, 0.195618, 0.132349, 0.080507, 0.041072,
+  0.016172, 0.005132, 0.003816, 0.015444, 0.037465, 0.071358, 0.117749, 0.172953, 0.236491, 0.304213, 0.376772,
+  0.451584, 0.529826, 0.616053, 0.705224, 0.793832, 0.878655, 0.951162, 1.014160, 1.074300, 1.118520, 1.134300,
+  1.123990, 1.089100, 1.030480, 0.950740, 0.856297, 0.754930, 0.647467, 0.535110, 0.431567, 0.343690, 0.268329,
+  0.204300, 0.152568, 0.112210, 0.081261, 0.057930, 0.040851, 0.028623, 0.019941, 0.013842, 0.009577, 0.006605,
+  0.004553, 0.003145, 0.002175, 0.001506, 0.001045, 0.000727, 0.000508, 0.000356, 0.000251, 0.000178, 0.000126,
+  0.000090, 0.000065, 0.000046, 0.000033,
+];
+const SPECTRAL_XYZ_CMF_Y = [
+  0.000017, 0.000072, 0.000253, 0.000769, 0.002004, 0.004509, 0.008756, 0.014456, 0.021391, 0.029497, 0.038676,
+  0.049602, 0.062077, 0.074704, 0.089456, 0.106256, 0.128201, 0.152761, 0.185190, 0.219940, 0.253589, 0.297665,
+  0.339133, 0.395379, 0.460777, 0.531360, 0.606741, 0.685660, 0.761757, 0.823330, 0.875211, 0.923810, 0.961988,
+  0.982200, 0.991761, 0.999110, 0.997340, 0.982380, 0.955552, 0.915175, 0.868934, 0.825623, 0.777405, 0.720353,
+  0.658341, 0.593878, 0.527963, 0.461834, 0.398057, 0.339554, 0.283493, 0.228254, 0.179828, 0.140211, 0.107633,
+  0.081187, 0.060281, 0.044096, 0.031800, 0.022602, 0.015905, 0.011130, 0.007749, 0.005375, 0.003718, 0.002565,
+  0.001768, 0.001222, 0.000846, 0.000586, 0.000407, 0.000284, 0.000199, 0.000140, 0.000098, 0.000070, 0.000050,
+  0.000036, 0.000025, 0.000018, 0.000013,
+];
+const SPECTRAL_XYZ_CMF_Z = [
+  0.000705, 0.002928, 0.010482, 0.032344, 0.086011, 0.197120, 0.389366, 0.656760, 0.972542, 1.282500, 1.553480,
+  1.798500, 1.967280, 2.027300, 1.994800, 1.900700, 1.745370, 1.554900, 1.317560, 1.030200, 0.772125, 0.570060,
+  0.415254, 0.302356, 0.218502, 0.159249, 0.112044, 0.082248, 0.060709, 0.043050, 0.030451, 0.020584, 0.013676,
+  0.007918, 0.003988, 0.001091, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
+  0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
+  0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
+  0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
+  0.000000, 0.000000, 0.000000, 0.000000,
+];
+const SPECTRAL_XYZ_TO_SRGB_D65 = [
+  [3.2404542, -1.5371385, -0.4985314],
+  [-0.9692660, 1.8760108, 0.0415560],
+  [0.0556434, -0.2040259, 1.0572252],
+];
 
-  if (!Number.isFinite(cB) || !Number.isFinite(cG) || !Number.isFinite(cR) || cR >= cG || cG >= cB) {
-    return [255, 255, 255];
+function multispectralNuMapper(bands) {
+  if (!bands) return null;
+  let nuMin = Number.POSITIVE_INFINITY;
+  let nuMax = Number.NEGATIVE_INFINITY;
+  for (const band of [bands.red, bands.green, bands.blue]) {
+    if (!Array.isArray(band) || band.length < 2) continue;
+    const a = Number.parseFloat(band[0]);
+    const b = Number.parseFloat(band[1]);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+    nuMin = Math.min(nuMin, a, b);
+    nuMax = Math.max(nuMax, a, b);
   }
-
-  if (freqHz <= cG) {
-    const t = clamp((freqHz - cR) / Math.max(1e-9, cG - cR), 0, 1);
-    return [Math.round(255 * (1 - t)), Math.round(255 * t), 0];
-  }
-
-  const t = clamp((freqHz - cG) / Math.max(1e-9, cB - cG), 0, 1);
-  return [0, Math.round(255 * (1 - t)), Math.round(255 * t)];
+  if (!Number.isFinite(nuMin) || !Number.isFinite(nuMax) || !(nuMax > nuMin)) return null;
+  const requestedAxisScale = bands.axis_scale === "log" ? "log" : "linear";
+  const axisScale = requestedAxisScale === "log" && nuMin > 0 ? "log" : "linear";
+  const axisFromNu = (nu) => (axisScale === "log" ? Math.log10(Math.max(nu, 1.0e-30)) : nu);
+  const nuFromAxis = (axisCoord) => (axisScale === "log" ? 10 ** axisCoord : axisCoord);
+  const axisMin = axisFromNu(nuMin);
+  const axisMax = axisFromNu(nuMax);
+  const axisSpan = Math.max(1.0e-9, axisMax - axisMin);
+  return {
+    nuMin,
+    nuMax,
+    axisScale,
+    axisFromNu,
+    nuFromAxis,
+    axisMin,
+    axisMax,
+    axisSpan,
+  };
 }
 
+function wavelengthFromMappedNu(freqHz, mapper) {
+  const t = clamp((mapper.axisFromNu(freqHz) - mapper.axisMin) / mapper.axisSpan, 0, 1);
+  return SPECTRAL_VISIBLE_MAX_NM - t * (SPECTRAL_VISIBLE_MAX_NM - SPECTRAL_VISIBLE_MIN_NM);
+}
+
+function interpolateCmfChannel(channel, wavelengthNm) {
+  const lambdaNm = clamp(wavelengthNm, SPECTRAL_CMF_START_NM, SPECTRAL_CMF_END_NM);
+  const f = (lambdaNm - SPECTRAL_CMF_START_NM) / SPECTRAL_CMF_STEP_NM;
+  const i0 = clamp(Math.floor(f), 0, channel.length - 1);
+  const i1 = clamp(i0 + 1, 0, channel.length - 1);
+  const t = clamp(f - i0, 0, 1);
+  return channel[i0] * (1 - t) + channel[i1] * t;
+}
+
+function gammaEncodeSrgb(linearValue) {
+  if (linearValue <= 0.0031308) return 12.92 * linearValue;
+  return 1.055 * Math.max(linearValue, 0.0031308) ** (1 / 2.4) - 0.055;
+}
+
+function colorForWavelengthDelta(wavelengthNm) {
+  const x = interpolateCmfChannel(SPECTRAL_XYZ_CMF_X, wavelengthNm);
+  const y = interpolateCmfChannel(SPECTRAL_XYZ_CMF_Y, wavelengthNm);
+  const z = interpolateCmfChannel(SPECTRAL_XYZ_CMF_Z, wavelengthNm);
+  const rLinear = x * SPECTRAL_XYZ_TO_SRGB_D65[0][0] + y * SPECTRAL_XYZ_TO_SRGB_D65[0][1] + z * SPECTRAL_XYZ_TO_SRGB_D65[0][2];
+  const gLinear = x * SPECTRAL_XYZ_TO_SRGB_D65[1][0] + y * SPECTRAL_XYZ_TO_SRGB_D65[1][1] + z * SPECTRAL_XYZ_TO_SRGB_D65[1][2];
+  const bLinear = x * SPECTRAL_XYZ_TO_SRGB_D65[2][0] + y * SPECTRAL_XYZ_TO_SRGB_D65[2][1] + z * SPECTRAL_XYZ_TO_SRGB_D65[2][2];
+  const r = clamp(gammaEncodeSrgb(rLinear), 0, 1);
+  const g = clamp(gammaEncodeSrgb(gLinear), 0, 1);
+  const b = clamp(gammaEncodeSrgb(bLinear), 0, 1);
+  return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+}
+
+function colorForSpectralNu(freqHz, bands, mapper = null) {
+  const map = mapper || multispectralNuMapper(bands);
+  if (!map) return [255, 255, 255];
+  return colorForWavelengthDelta(wavelengthFromMappedNu(freqHz, map));
+}
+
+const LOG_SCALE_FLOOR_RATIO = 1.0e-6;
+
 function normalizeFluxLog(v, maxPositive, minPositive = 0) {
+  if (!isFiniteNumber(v)) return 0;
   const lo = Math.max(0, minPositive);
-  if (v < 0 && lo <= 0) return null;
+  if (v < 0 && lo <= 0) return 0;
   const hi = Math.max(lo, maxPositive);
-  if (!(hi > lo)) return 0;
-  const sample = Math.max(v, lo);
-  const loLog = Math.log10(1 + lo);
-  const hiLog = Math.log10(1 + hi);
+  if (!(hi > 0)) return 0;
+  const loEff = lo > 0 ? Math.min(lo, hi) : Math.max(hi * LOG_SCALE_FLOOR_RATIO, 1.0e-30);
+  if (!(hi > loEff)) return 0;
+  const sample = clamp(v, loEff, hi);
+  const loLog = Math.log10(loEff);
+  const hiLog = Math.log10(hi);
   const span = hiLog - loLog;
   if (!(span > 0)) return 0;
-  return (Math.log10(1 + sample) - loLog) / span;
+  return (Math.log10(sample) - loLog) / span;
 }
 
 function normalizeFluxSqrt(v, mm) {
-  if (!isFiniteNumber(v)) return null;
+  if (!isFiniteNumber(v)) return 0;
   if (state.colorMap === "circular" && isDerivedPolModeActive() && state.derivedPolMode === "bfield") {
     return normalizeForColormap(v, mm);
   }
@@ -2087,10 +3464,10 @@ function resetView() {
 }
 
 function sphereZoomOutLimit() {
-  if (!isSphereMode()) return 1.0;
-  if (state.sphereProjection === "outside") return 1.6;
+  if (!isSphereMode()) return GLOBAL_ZOOM_OUT_FACTOR;
+  if (state.sphereProjection === "outside") return GLOBAL_ZOOM_OUT_FACTOR;
   if (state.sphereProjection === "inside") return 1.0;
-  return 1.05;
+  return GLOBAL_ZOOM_OUT_FACTOR;
 }
 
 function sphereInsideRenderScale() {
@@ -2098,20 +3475,20 @@ function sphereInsideRenderScale() {
   return clamp(s, SPHERE_INSIDE_SCALE_MIN, SPHERE_INSIDE_SCALE_MAX);
 }
 
-function mollweideViewAspect() {
-  const w = Number.isFinite(els?.canvas?.width) ? els.canvas.width : 1;
-  const h = Number.isFinite(els?.canvas?.height) ? els.canvas.height : 1;
+function mollweideViewAspect(imgW = null, imgH = null) {
+  const w = Number.isFinite(imgW) && imgW > 0 ? imgW : Number.isFinite(els?.canvas?.width) ? els.canvas.width : 1;
+  const h = Number.isFinite(imgH) && imgH > 0 ? imgH : Number.isFinite(els?.canvas?.height) ? els.canvas.height : 1;
   return Math.max(1.0e-6, w / Math.max(1.0e-6, h));
 }
 
-function sliceViewAspect() {
-  const w = Number.isFinite(els?.canvas?.width) ? els.canvas.width : 1;
-  const h = Number.isFinite(els?.canvas?.height) ? els.canvas.height : 1;
+function sliceViewAspect(imgW = null, imgH = null) {
+  const w = Number.isFinite(imgW) && imgW > 0 ? imgW : Number.isFinite(els?.canvas?.width) ? els.canvas.width : 1;
+  const h = Number.isFinite(imgH) && imgH > 0 ? imgH : Number.isFinite(els?.canvas?.height) ? els.canvas.height : 1;
   return Math.max(1.0e-6, w / Math.max(1.0e-6, h));
 }
 
 function sliceFullViewWindow(imgW, imgH) {
-  const a = sliceViewAspect();
+  const a = sliceViewAspect(imgW, imgH);
   const imgAspect = imgW / Math.max(1.0e-6, imgH);
   if (imgAspect >= a) {
     const w = imgW;
@@ -2122,7 +3499,7 @@ function sliceFullViewWindow(imgW, imgH) {
 }
 
 function mollweideFullViewWindow(imgW, imgH) {
-  const a = mollweideViewAspect();
+  const a = mollweideViewAspect(imgW, imgH);
   const imgAspect = imgW / Math.max(1.0e-6, imgH);
   if (imgAspect >= a) {
     const w = imgW;
@@ -2149,8 +3526,16 @@ function mollweideZoomBounds(imgW, imgH) {
 function getViewRect() {
   const p = planeDims();
   const tileRef = state.frameTiles && state.frameTiles.length ? state.frameTiles[0] : null;
-  const imgW = tileRef ? tileRef.width : state.frameCanvas ? state.frameCanvas.width : axisSize(p.planeX);
-  const imgH = tileRef ? tileRef.height : state.frameCanvas ? state.frameCanvas.height : axisSize(p.planeY);
+  const imgW = tileRef
+    ? canvasLogicalWidth(tileRef)
+    : state.frameCanvas
+    ? canvasLogicalWidth(state.frameCanvas)
+    : axisSize(p.planeX);
+  const imgH = tileRef
+    ? canvasLogicalHeight(tileRef)
+    : state.frameCanvas
+    ? canvasLogicalHeight(state.frameCanvas)
+    : axisSize(p.planeY);
 
   if (isVolumeMode()) {
     state.view.u = 0;
@@ -2240,8 +3625,8 @@ function getViewRect() {
     const targetAspect = base.w / Math.max(1.0e-6, base.h);
     const minW = Math.min(2, base.w);
     const minH = Math.min(2, base.h);
-    const maxW = base.w;
-    const maxH = base.h;
+    const maxW = base.w * GLOBAL_ZOOM_OUT_FACTOR;
+    const maxH = base.h * GLOBAL_ZOOM_OUT_FACTOR;
 
     let w = state.view.w;
     let h = state.view.h;
@@ -2343,9 +3728,14 @@ function getDrawRect(viewRect) {
 }
 
 function shouldUseCoverView(viewRect) {
-  if (isSphereMode() && state.sphereProjection === "inside") return true;
-  const eps = 1.0e-6;
-  return viewRect.srcW < viewRect.imgW - eps || viewRect.srcH < viewRect.imgH - eps;
+  const eps = 2.5e-3;
+  const zoomedIn =
+    viewRect.srcW < viewRect.imgW * (1 - eps) || viewRect.srcH < viewRect.imgH * (1 - eps);
+  if (!isSphereMode()) return zoomedIn;
+  if (state.sphereProjection === "inside") {
+    return true;
+  }
+  return zoomedIn;
 }
 
 function cropViewRectToAspect(viewRect, targetAspect) {
@@ -2420,6 +3810,41 @@ function getRenderGeometry(baseViewRect = null) {
     viewRect: adjusted,
     drawRect: { x: 0, y: 0, w: cw, h: ch },
   };
+}
+
+function planeAxisFlipState() {
+  if (isVolumeMode() || isSphereMode()) {
+    return { flipU: false, flipV: false };
+  }
+  const p = planeDims();
+  return {
+    flipU: axisIsFlipped(p.planeX),
+    flipV: axisIsFlipped(p.planeY),
+  };
+}
+
+function drawImageWithPlaneFlip(ctx, image, srcRect, drawRect) {
+  const { flipU, flipV } = planeAxisFlipState();
+  if (!flipU && !flipV) {
+    ctx.drawImage(
+      image,
+      srcRect.srcX,
+      srcRect.srcY,
+      srcRect.srcW,
+      srcRect.srcH,
+      drawRect.x,
+      drawRect.y,
+      drawRect.w,
+      drawRect.h
+    );
+    return;
+  }
+
+  ctx.save();
+  ctx.translate(drawRect.x + (flipU ? drawRect.w : 0), drawRect.y + (flipV ? drawRect.h : 0));
+  ctx.scale(flipU ? -1 : 1, flipV ? -1 : 1);
+  ctx.drawImage(image, srcRect.srcX, srcRect.srcY, srcRect.srcW, srcRect.srcH, 0, 0, drawRect.w, drawRect.h);
+  ctx.restore();
 }
 
 function getGridDrawRects(viewRect) {
@@ -2497,24 +3922,20 @@ function fullImageViewRect(baseViewRect) {
   return { srcX: 0, srcY: 0, srcW: imgW, srcH: imgH, imgW, imgH };
 }
 
-function colorbarReferenceCssWidth(baseViewRect, scale) {
-  if (isSphereMode() && state.sphereProjection === "outside") {
-    const cssCanvasW = Math.max(1, Math.round(els.canvas.width / Math.max(1, scale)));
-    return cssCanvasW;
-  }
-  if (state.frameTiles && state.frameTiles.length) {
-    const layout = sampleGridLayoutMetrics();
-    return Math.max(1, Math.round(layout.gridW / Math.max(1, scale)));
-  }
-  const fullView = fullImageViewRect(baseViewRect);
-  const fullDrawRect = getDrawRect(fullView);
-  return Math.max(1, Math.round(fullDrawRect.w / Math.max(1, scale)));
+function colorbarReferenceCssWidth(_baseViewRect, scale) {
+  const cssCanvasW = Math.max(1, Math.round(els.canvas.width / Math.max(1, scale)));
+  return cssCanvasW;
 }
 
 function dataToScreen(u, v, viewRect, drawRect) {
+  const { flipU, flipV } = planeAxisFlipState();
+  const ux = (u - viewRect.srcX) / viewRect.srcW;
+  const uy = (v - viewRect.srcY) / viewRect.srcH;
+  const mx = flipU ? 1 - ux : ux;
+  const my = flipV ? 1 - uy : uy;
   return {
-    x: drawRect.x + ((u - viewRect.srcX) / viewRect.srcW) * drawRect.w,
-    y: drawRect.y + ((v - viewRect.srcY) / viewRect.srcH) * drawRect.h,
+    x: drawRect.x + mx * drawRect.w,
+    y: drawRect.y + my * drawRect.h,
   };
 }
 
@@ -2556,8 +3977,11 @@ function screenToData(ev, viewRect, drawRect, forcedTile = null) {
   const xClamped = clamp(cx, usedRect.x, usedRect.x + usedRect.w);
   const yClamped = clamp(cy, usedRect.y, usedRect.y + usedRect.h);
 
-  const ux = (xClamped - usedRect.x) / Math.max(1e-6, usedRect.w);
-  const uy = (yClamped - usedRect.y) / Math.max(1e-6, usedRect.h);
+  const { flipU, flipV } = planeAxisFlipState();
+  const rawUx = (xClamped - usedRect.x) / Math.max(1e-6, usedRect.w);
+  const rawUy = (yClamped - usedRect.y) / Math.max(1e-6, usedRect.h);
+  const ux = flipU ? 1 - rawUx : rawUx;
+  const uy = flipV ? 1 - rawUy : rawUy;
   return {
     u: viewRect.srcX + ux * viewRect.srcW,
     v: viewRect.srcY + uy * viewRect.srcH,
@@ -2627,6 +4051,43 @@ function updateExportButtonState() {
   if (els.saveImagesBtn) {
     els.saveImagesBtn.disabled = !state.dataId;
   }
+  if (els.mediaQualitySelect) {
+    const quality = normalizeRecordQuality(state.recordMoviePrefs.quality);
+    state.recordMoviePrefs.quality = quality;
+    const busy = isMovieRecordingActive() || movieRecording.stopping || movieRecording.saving || renderJob.running;
+    els.mediaQualitySelect.disabled = !state.dataId || busy;
+    els.mediaQualitySelect.value = quality;
+    els.mediaQualitySelect.title = busy ? "Quality cannot be changed while recording, rendering, or saving." : "Quality preset";
+  }
+  if (els.renderMovieBtn) {
+    const recording = isMovieRecordingActive() || movieRecording.stopping || movieRecording.saving;
+    const playbackActive = isPlaying() || isSampleMorphPlaybackActive();
+    const hasAxis = hasAnyRenderableSweepAxis();
+    const disabled = !state.dataId || renderJob.running || recording || playbackActive || !hasAxis;
+    els.renderMovieBtn.disabled = disabled;
+    els.renderMovieBtn.classList.toggle("activeRecord", renderJob.running);
+    els.renderMovieBtn.textContent = renderJob.running ? "Rendering" : "Render";
+    els.renderMovieBtn.title = !hasAxis
+      ? "No sweepable axis is currently available for render"
+      : playbackActive
+      ? "Pause playback before starting offline render"
+      : recording
+      ? "Stop recording before starting offline render"
+      : (renderJob.running ? "Rendering movie frames..." : "Render a deterministic offline movie");
+  }
+  if (els.recordMovieBtn) {
+    const recording = isMovieRecordingActive() || movieRecording.stopping;
+    const supported = isMovieRecordingSupported();
+    els.recordMovieBtn.disabled = renderJob.running || movieRecording.saving || (recording ? false : (!state.dataId || !supported));
+    els.recordMovieBtn.classList.toggle("activeRecord", recording);
+    els.recordMovieBtn.textContent = recording ? "Recording" : "Record";
+    els.recordMovieBtn.title = supported
+      ? (recording ? "Click to stop and export recording" : "Record central viewer panel movie")
+      : "Recording is not supported in this browser";
+  }
+  updateRenderSettingsFields();
+  updateRenderMovieDialogActions();
+  updateRecordMovieDialogActions();
 }
 
 function hoverPayloadForTile(tile = 0) {
@@ -2816,16 +4277,17 @@ function updateHoverProbeFromEvent(ev) {
 }
 
 function formatNativeCoordinate(dim, coord, unit, axisType) {
-  if (!Number.isFinite(coord)) return `${dim.toUpperCase()}: n/a`;
+  const label = axisDisplayLabel(dim, dim);
+  if (!Number.isFinite(coord)) return `${label}: n/a`;
   if (axisType === "ra") {
     const deg = unitToDegrees(coord, unit);
-    return `${dim.toUpperCase()} ${formatAngleHms(deg)} (${deg.toFixed(6)} deg)`;
+    return `${label} ${formatAngleHms(deg)} (${deg.toFixed(6)} deg)`;
   }
   if (axisType === "dec") {
     const deg = unitToDegrees(coord, unit);
-    return `${dim.toUpperCase()} ${formatAngleSigned(deg)} (${deg.toFixed(6)} deg)`;
+    return `${label} ${formatAngleSigned(deg)} (${deg.toFixed(6)} deg)`;
   }
-  return `${dim.toUpperCase()} ${fmtPhysical(dim, coord, unit)}`;
+  return `${label} ${fmtPhysical(dim, coord, unit)}`;
 }
 
 function updateCoordSystemOptions() {
@@ -2908,15 +4370,17 @@ function updateHoverReadout() {
   }
 
   const { xType, yType } = planeAxisTypes();
-  const xUnit = dimUnit(probe.planeX);
-  const yUnit = dimUnit(probe.planeY);
+  const xUnitNative = dimUnit(probe.planeX);
+  const yUnitNative = dimUnit(probe.planeY);
+  const xUnitDisplay = axisDisplayUnit(probe.planeX);
+  const yUnitDisplay = axisDisplayUnit(probe.planeY);
 
   let lines;
   if (state.coordSystem === "pixel") {
     lines = [
       "Plane Inspect",
-      `X idx   : ${padLeft(probe.ix, 8)} (${probe.planeX.toUpperCase()})`,
-      `Y idx   : ${padLeft(probe.iy, 8)} (${probe.planeY.toUpperCase()})`,
+      `X idx   : ${padLeft(probe.ix, 8)} (${axisDisplayLabel(probe.planeX)})`,
+      `Y idx   : ${padLeft(probe.iy, 8)} (${axisDisplayLabel(probe.planeY)})`,
     ];
   } else if (state.coordSystem === "galactic" && canUseGalacticCoords()) {
     const celestial = celestialPlaneInfo();
@@ -2935,26 +4399,279 @@ function updateHoverReadout() {
   } else {
     let xValue = "n/a";
     let yValue = "n/a";
+    const xCoordDisplay = axisValueCoord(probe.planeX, probe.xCoord);
+    const yCoordDisplay = axisValueCoord(probe.planeY, probe.yCoord);
     if (xType === "ra") {
-      const deg = unitToDegrees(probe.xCoord, xUnit);
+      const deg = unitToDegrees(xCoordDisplay, xUnitNative);
       xValue = Number.isFinite(deg) ? fmtSignedFixed(deg, 6, 12) : "n/a";
-    } else if (Number.isFinite(probe.xCoord)) {
-      xValue = fmtSignedFixed(probe.xCoord, 6, 12);
+    } else if (Number.isFinite(xCoordDisplay)) {
+      xValue = fmtSignedFixed(xCoordDisplay, 6, 12);
     }
     if (yType === "dec") {
-      const deg = unitToDegrees(probe.yCoord, yUnit);
+      const deg = unitToDegrees(yCoordDisplay, yUnitNative);
       yValue = Number.isFinite(deg) ? fmtSignedFixed(deg, 6, 12) : "n/a";
-    } else if (Number.isFinite(probe.yCoord)) {
-      yValue = fmtSignedFixed(probe.yCoord, 6, 12);
+    } else if (Number.isFinite(yCoordDisplay)) {
+      yValue = fmtSignedFixed(yCoordDisplay, 6, 12);
     }
     lines = [
       "Plane Inspect",
-      `${probe.planeX.toUpperCase()}[${xUnit || "-"}]: ${xValue}`,
-      `${probe.planeY.toUpperCase()}[${yUnit || "-"}]: ${yValue}`,
+      `${axisDisplayLabel(probe.planeX)} [${xUnitDisplay || "-"}]: ${xValue}`,
+      `${axisDisplayLabel(probe.planeY)} [${yUnitDisplay || "-"}]: ${yValue}`,
     ];
   }
   lines.push(...fluxReadoutLines(probe.value));
   setHoverReadoutLines(lines);
+}
+
+function updateAxisSettingsButtonState() {
+  if (!els.axisSettingsBtn) return;
+  const count = axisSettingsCustomizedCount() + axisPlaneSwapCustomizedCount();
+  els.axisSettingsBtn.textContent = count > 0 ? `Axis Settings (${count})` : "Axis Settings";
+  els.axisSettingsBtn.classList.toggle("activeAux", count > 0);
+}
+
+function axisSettingsSummaryText() {
+  const axisCount = axisSettingsCustomizedCount();
+  const swapCount = axisPlaneSwapCustomizedCount();
+  const count = axisCount + swapCount;
+  if (count <= 0) return "Using dataset-native axis coordinates.";
+  const parts = [];
+  if (axisCount > 0) parts.push(`${axisCount} axis setting${axisCount === 1 ? "" : "s"}`);
+  if (swapCount > 0) parts.push(`${swapCount} plane swap${swapCount === 1 ? "" : "s"}`);
+  return `${parts.join(" + ")} customized.`;
+}
+
+function applyAxisSettingsChange() {
+  updateAxisSettingsButtonState();
+  if (els.axisSettingsSummary) els.axisSettingsSummary.textContent = axisSettingsSummaryText();
+  if (!state.dataId) return;
+  updateSliderReadouts(state.selectedCoords);
+  drawFrameAndOverlays();
+  drawNavigationGraphs();
+  drawSelectionGraphs();
+  drawColorbar();
+  updateHoverReadout();
+}
+
+async function applyAxisPlaneSwapChange(planeKey) {
+  updateAxisSettingsButtonState();
+  if (els.axisSettingsSummary) els.axisSettingsSummary.textContent = axisSettingsSummaryText();
+  if (!state.dataId) return;
+  const activePlane = PLANE_KEYS.includes(state.plane) ? state.plane : "xy";
+  if (planeKey !== activePlane) return;
+  await onPlaneChange();
+}
+
+function renderAxisSwapRows() {
+  if (!els.axisSwapRows) return;
+  els.axisSwapRows.innerHTML = "";
+  if (!state.meta || !state.meta.coords) return;
+
+  const activePlane = PLANE_KEYS.includes(state.plane) ? state.plane : "xy";
+  const base = PLANE_OPTIONS[activePlane];
+  if (!base) return;
+  const dimX = base.planeX.toUpperCase();
+  const dimY = base.planeY.toUpperCase();
+  const canSwap = axisSize(base.planeX) > 1 && axisSize(base.planeY) > 1;
+  const swapped = axisPlaneSwapEnabled(activePlane);
+
+  const row = document.createElement("div");
+  row.className = "axisSwapRow isCurrent";
+
+  const title = document.createElement("span");
+  title.className = "axisSwapTitle";
+  title.textContent = `Active plane: ${base.label}`;
+  row.appendChild(title);
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "axisToggleBtn axisSwapBtn";
+  btn.classList.toggle("isActive", swapped);
+  btn.setAttribute("aria-pressed", swapped ? "true" : "false");
+  btn.disabled = !canSwap;
+  btn.textContent = `Swap ${dimX}/${dimY}`;
+  btn.addEventListener("click", async () => {
+    axisPlaneSwapSet(activePlane, !axisPlaneSwapEnabled(activePlane));
+    await applyAxisPlaneSwapChange(activePlane);
+    renderAxisSettingsDialog();
+  });
+  row.appendChild(btn);
+
+  if (!canSwap) {
+    const hint = document.createElement("span");
+    hint.className = "axisSwapHint";
+    hint.textContent = "Not available for this plane.";
+    row.appendChild(hint);
+  }
+
+  els.axisSwapRows.appendChild(row);
+}
+
+function renderAxisSettingsDialog() {
+  renderAxisSwapRows();
+  if (!els.axisSettingsRows) return;
+  els.axisSettingsRows.innerHTML = "";
+  if (els.axisSettingsSummary) els.axisSettingsSummary.textContent = axisSettingsSummaryText();
+  if (!state.meta || !state.meta.coords) {
+    const empty = document.createElement("div");
+    empty.className = "axisSettingsEmpty";
+    empty.textContent = "Load a dataset to configure axis settings.";
+    els.axisSettingsRows.appendChild(empty);
+    return;
+  }
+
+  const dims = AXIS_CONTROL_DIMS.filter((dim) => axisSize(dim) > 1);
+  if (!dims.length) {
+    const empty = document.createElement("div");
+    empty.className = "axisSettingsEmpty";
+    empty.textContent = "No varying axis available.";
+    els.axisSettingsRows.appendChild(empty);
+    return;
+  }
+
+  for (const dim of dims) {
+    const cfg = axisSetting(dim);
+    const nativeUnit = dimUnit(dim) || "";
+    const displayUnit = axisDisplayUnit(dim) || "-";
+    const endpoints = axisRawEndpoints(dim);
+    const row = document.createElement("div");
+    row.className = "axisSettingsRow";
+
+    const headerWrap = document.createElement("div");
+    headerWrap.className = "axisSettingsHeader";
+    const header = document.createElement("div");
+    header.className = "axisSettingsAxis";
+    header.textContent = `${axisDisplayLabel(dim)} (${displayUnit})`;
+    headerWrap.appendChild(header);
+
+    const meta = document.createElement("div");
+    meta.className = "axisSettingsMeta";
+    meta.textContent = nativeUnit ? `N=${axisSize(dim)} native: ${nativeUnit}` : `N=${axisSize(dim)}`;
+    headerWrap.appendChild(meta);
+    row.appendChild(headerWrap);
+
+    const controls = document.createElement("div");
+    controls.className = "axisSettingsFields";
+
+    const unitLabel = document.createElement("label");
+    unitLabel.className = "axisSettingsLabel";
+    unitLabel.textContent = "Display unit";
+    const unitInput = document.createElement("input");
+    unitInput.type = "text";
+    unitInput.className = "axisSettingsUnit";
+    unitInput.placeholder = nativeUnit || "native";
+    unitInput.value = cfg.unit || "";
+    unitInput.maxLength = 24;
+    unitInput.addEventListener("change", () => {
+      axisSetting(dim).unit = String(unitInput.value || "").trim();
+      applyAxisSettingsChange();
+      renderAxisSettingsDialog();
+    });
+    unitLabel.appendChild(unitInput);
+    controls.appendChild(unitLabel);
+
+    const startLabel = document.createElement("label");
+    startLabel.className = "axisSettingsLabel";
+    startLabel.textContent = "Start value";
+    const startInput = document.createElement("input");
+    startInput.type = "number";
+    startInput.className = "axisSettingsStart";
+    startInput.step = "any";
+    startInput.placeholder = endpoints ? String(endpoints.start) : "auto";
+    startInput.value = Number.isFinite(cfg.start) ? String(cfg.start) : "";
+    startInput.addEventListener("change", () => {
+      const raw = Number.parseFloat(startInput.value);
+      axisSetting(dim).start = Number.isFinite(raw) ? raw : null;
+      if (!Number.isFinite(raw)) startInput.value = "";
+      applyAxisSettingsChange();
+    });
+    startLabel.appendChild(startInput);
+    controls.appendChild(startLabel);
+
+    const endLabel = document.createElement("label");
+    endLabel.className = "axisSettingsLabel";
+    endLabel.textContent = "End value";
+    const endInput = document.createElement("input");
+    endInput.type = "number";
+    endInput.className = "axisSettingsEnd";
+    endInput.step = "any";
+    endInput.placeholder = endpoints ? String(endpoints.end) : "auto";
+    endInput.value = Number.isFinite(cfg.end) ? String(cfg.end) : "";
+    endInput.addEventListener("change", () => {
+      const raw = Number.parseFloat(endInput.value);
+      axisSetting(dim).end = Number.isFinite(raw) ? raw : null;
+      if (!Number.isFinite(raw)) endInput.value = "";
+      applyAxisSettingsChange();
+    });
+    endLabel.appendChild(endInput);
+    controls.appendChild(endLabel);
+
+    const lengthLabel = document.createElement("label");
+    lengthLabel.className = "axisSettingsLabel";
+    lengthLabel.textContent = "Physical length";
+    const lengthInput = document.createElement("input");
+    lengthInput.type = "number";
+    lengthInput.className = "axisSettingsLength";
+    lengthInput.min = "0";
+    lengthInput.step = "any";
+    lengthInput.placeholder = "auto";
+    lengthInput.value = Number.isFinite(cfg.length) ? String(cfg.length) : "";
+    lengthInput.addEventListener("change", () => {
+      const raw = Number.parseFloat(lengthInput.value);
+      axisSetting(dim).length = Number.isFinite(raw) && raw > 0 ? raw : null;
+      if (!Number.isFinite(raw) || raw <= 0) lengthInput.value = "";
+      applyAxisSettingsChange();
+    });
+    lengthLabel.appendChild(lengthInput);
+    controls.appendChild(lengthLabel);
+    row.appendChild(controls);
+
+    const actions = document.createElement("div");
+    actions.className = "axisSettingsActions";
+    const flipBtn = document.createElement("button");
+    flipBtn.type = "button";
+    flipBtn.className = "axisToggleBtn axisRevertBtn";
+    flipBtn.classList.toggle("isActive", cfg.flip === true);
+    flipBtn.setAttribute("aria-pressed", cfg.flip === true ? "true" : "false");
+    flipBtn.textContent = "Revert axis";
+    flipBtn.addEventListener("click", () => {
+      axisSetting(dim).flip = !axisSetting(dim).flip;
+      applyAxisSettingsChange();
+      renderAxisSettingsDialog();
+    });
+    actions.appendChild(flipBtn);
+    row.appendChild(actions);
+
+    els.axisSettingsRows.appendChild(row);
+  }
+}
+
+function openAxisSettingsDialog() {
+  if (!els.axisSettingsDialog) return;
+  renderAxisSettingsDialog();
+  if (!els.axisSettingsDialog.open) {
+    els.axisSettingsDialog.showModal();
+  }
+}
+
+function closeAxisSettingsDialog() {
+  if (!els.axisSettingsDialog || !els.axisSettingsDialog.open) return;
+  els.axisSettingsDialog.close();
+}
+
+async function resetAxisSettings() {
+  const activePlane = PLANE_KEYS.includes(state.plane) ? state.plane : "xy";
+  const hadActivePlaneSwap = axisPlaneSwapEnabled(activePlane);
+  state.axisSettings = createDefaultAxisSettings();
+  state.axisPlaneSwap = createDefaultAxisPlaneSwap();
+  if (hadActivePlaneSwap) {
+    await applyAxisPlaneSwapChange(activePlane);
+    renderAxisSettingsDialog();
+    applyAxisSettingsChange();
+    return;
+  }
+  renderAxisSettingsDialog();
+  applyAxisSettingsChange();
 }
 
 function isValidExportFormat(format) {
@@ -3178,6 +4895,18 @@ function visibleCanvasForSnapshot(canvas, container = null) {
   return canvas;
 }
 
+function withRenderOverlayOverride(overrideOptions, fn) {
+  const prev = renderOverlayDrawOverride;
+  renderOverlayDrawOverride = { ...(prev || {}), ...(overrideOptions || {}) };
+  drawFrameAndOverlays();
+  try {
+    return fn();
+  } finally {
+    renderOverlayDrawOverride = prev;
+    drawFrameAndOverlays();
+  }
+}
+
 function drawSnapshotCardBackground(ctx, width, height) {
   ctx.fillStyle = "#0b1119";
   ctx.fillRect(0, 0, width, height);
@@ -3186,46 +4915,55 @@ function drawSnapshotCardBackground(ctx, width, height) {
   ctx.strokeRect(0.5, 0.5, width - 1, height - 1);
 }
 
-function buildViewerSnapshotCanvas() {
-  const source = visibleCanvasForSnapshot(els.canvas);
-  if (!source) throw new Error("Viewer canvas is not available.");
-  const colorbar = visibleCanvasForSnapshot(els.colorbarCanvas);
+function buildViewerSnapshotCanvas(options = null) {
+  const includeColorbar = !options || options.includeColorbar !== false;
+  const includeSampleLabels = !options || options.includeSampleLabels !== false;
+  const transparentBackground = Boolean(options && options.transparentBackground === true);
+  const capture = () => {
+    const source = visibleCanvasForSnapshot(els.canvas);
+    if (!source) throw new Error("Viewer canvas is not available.");
+    const colorbar = includeColorbar ? visibleCanvasForSnapshot(els.colorbarCanvas, els.colorbarPanel) : null;
 
-  const maxMainDim = 1200;
-  const sourceMax = Math.max(source.width, source.height, 1);
-  const scale = Math.min(1, maxMainDim / sourceMax);
-  const mainW = Math.max(320, Math.round(source.width * scale));
-  const mainH = Math.max(240, Math.round(source.height * scale));
+    const maxMainDim = 1200;
+    const sourceMax = Math.max(source.width, source.height, 1);
+    const scale = Math.min(1, maxMainDim / sourceMax);
+    const mainW = Math.max(320, Math.round(source.width * scale));
+    const mainH = Math.max(240, Math.round(source.height * scale));
 
-  const pad = 20;
-  const titleH = 26;
-  const blockGap = 12;
-  const colorbarH = colorbar
-    ? clamp(Math.round((colorbar.height / Math.max(1, colorbar.width)) * mainW), 18, 40)
-    : 0;
-  const outW = mainW + pad * 2;
-  const outH = pad * 2 + titleH + mainH + (colorbar ? blockGap + colorbarH : 0);
+    const pad = transparentBackground ? 0 : 20;
+    const titleH = transparentBackground ? 0 : 26;
+    const blockGap = transparentBackground ? 0 : 12;
+    const colorbarH = colorbar
+      ? clamp(Math.round((colorbar.height / Math.max(1, colorbar.width)) * mainW), 18, 40)
+      : 0;
+    const outW = mainW + pad * 2;
+    const outH = pad * 2 + titleH + mainH + (colorbar ? blockGap + colorbarH : 0);
 
-  const out = document.createElement("canvas");
-  out.width = outW;
-  out.height = outH;
-  const ctx = out.getContext("2d");
-  if (!ctx) throw new Error("Could not initialize viewer snapshot.");
+    const out = document.createElement("canvas");
+    out.width = outW;
+    out.height = outH;
+    const ctx = out.getContext("2d");
+    if (!ctx) throw new Error("Could not initialize viewer snapshot.");
 
-  drawSnapshotCardBackground(ctx, outW, outH);
-  ctx.fillStyle = "#e8f2ff";
-  ctx.font = "600 16px 'Source Sans 3', sans-serif";
-  ctx.fillText("Viewer", pad, pad + 17);
+    if (!transparentBackground) {
+      drawSnapshotCardBackground(ctx, outW, outH);
+      ctx.fillStyle = "#e8f2ff";
+      ctx.font = "600 16px 'Source Sans 3', sans-serif";
+      ctx.fillText("Viewer", pad, pad + 17);
+    }
 
-  let y = pad + titleH;
-  ctx.drawImage(source, pad, y, mainW, mainH);
-  y += mainH;
+    let y = pad + titleH;
+    ctx.drawImage(source, pad, y, mainW, mainH);
+    y += mainH;
 
-  if (colorbar) {
-    y += blockGap;
-    ctx.drawImage(colorbar, pad, y, mainW, colorbarH);
-  }
-  return out;
+    if (colorbar) {
+      y += blockGap;
+      ctx.drawImage(colorbar, pad, y, mainW, colorbarH);
+    }
+    return out;
+  };
+  if (includeSampleLabels || !isSamplesMode()) return capture();
+  return withRenderOverlayOverride({ includeSampleLabels: false }, capture);
 }
 
 function collectInspectSnapshotCharts() {
@@ -3246,11 +4984,20 @@ function collectInspectSnapshotCharts() {
   return charts;
 }
 
+function availableInspectSnapshotChartsByKey() {
+  const out = new Map();
+  for (const chart of collectInspectSnapshotCharts()) {
+    out.set(chart.key, chart);
+  }
+  return out;
+}
+
 function buildGraphSnapshotCanvas(entry) {
   if (!entry || !entry.canvas) throw new Error("Inspect graph is not available.");
   const source = entry.canvas;
-  const pad = 20;
-  const titleH = 26;
+  const transparentBackground = Boolean(entry && entry.transparentBackground === true);
+  const pad = transparentBackground ? 0 : 20;
+  const titleH = transparentBackground ? 0 : 26;
   const targetW = clamp(source.width, 360, 960);
   const scale = targetW / Math.max(1, source.width);
   const targetH = Math.max(150, Math.round(source.height * scale));
@@ -3263,10 +5010,12 @@ function buildGraphSnapshotCanvas(entry) {
   const ctx = out.getContext("2d");
   if (!ctx) throw new Error("Could not initialize graph snapshot.");
 
-  drawSnapshotCardBackground(ctx, outW, outH);
-  ctx.fillStyle = "#e8f2ff";
-  ctx.font = "600 16px 'Source Sans 3', sans-serif";
-  ctx.fillText(entry.title || "Profile Graph", pad, pad + 17);
+  if (!transparentBackground) {
+    drawSnapshotCardBackground(ctx, outW, outH);
+    ctx.fillStyle = "#e8f2ff";
+    ctx.font = "600 16px 'Source Sans 3', sans-serif";
+    ctx.fillText(entry.title || "Profile Graph", pad, pad + 17);
+  }
   ctx.drawImage(source, pad, pad + titleH, targetW, targetH);
   return out;
 }
@@ -3277,8 +5026,92 @@ function setSaveImagesStatus(message, error = false) {
   els.saveImagesStatus.classList.toggle("error", Boolean(error));
 }
 
+function normalizeSaveImagesPrefs() {
+  state.saveImagesPrefs.transparentBackground = Boolean(state.saveImagesPrefs.transparentBackground);
+  state.saveImagesPrefs.includeViewer = normalizeRenderOverlayOption(state.saveImagesPrefs.includeViewer);
+  state.saveImagesPrefs.includeColorbar = normalizeRenderOverlayOption(state.saveImagesPrefs.includeColorbar);
+  state.saveImagesPrefs.includeSampleLabels = normalizeRenderOverlayOption(state.saveImagesPrefs.includeSampleLabels);
+  state.saveImagesPrefs.includeTimeProfile = normalizeRenderOverlayOption(state.saveImagesPrefs.includeTimeProfile);
+  state.saveImagesPrefs.includeSpectralProfile = normalizeRenderOverlayOption(state.saveImagesPrefs.includeSpectralProfile);
+  state.saveImagesPrefs.includeSpatialProfile = normalizeRenderOverlayOption(state.saveImagesPrefs.includeSpatialProfile);
+}
+
+function saveImagesSummaryText(availableCharts) {
+  const includeViewer = normalizeRenderOverlayOption(state.saveImagesPrefs.includeViewer);
+  const includeColorbar = normalizeRenderOverlayOption(state.saveImagesPrefs.includeColorbar);
+  const includeSampleLabels = normalizeRenderOverlayOption(state.saveImagesPrefs.includeSampleLabels);
+  const selected = [];
+  if (includeViewer) {
+    const viewerItems = ["Viewer"];
+    if (includeColorbar) viewerItems.push("color bar");
+    if (includeSampleLabels) viewerItems.push("sample labels");
+    selected.push(viewerItems.join(" + "));
+  }
+  if (normalizeRenderOverlayOption(state.saveImagesPrefs.includeTimeProfile) && availableCharts.has("time_profile")) {
+    selected.push("Time profile");
+  }
+  if (normalizeRenderOverlayOption(state.saveImagesPrefs.includeSpectralProfile) && availableCharts.has("spectral_profile")) {
+    selected.push("Spectral profile");
+  }
+  if (normalizeRenderOverlayOption(state.saveImagesPrefs.includeSpatialProfile) && availableCharts.has("spatial_profile")) {
+    selected.push("Spatial profile");
+  }
+  if (!selected.length) return "No images selected.";
+  return `Saving: ${selected.join(" | ")}`;
+}
+
+function updateSaveImagesSelectionButtons() {
+  normalizeSaveImagesPrefs();
+  const hasViewer = Boolean(visibleCanvasForSnapshot(els.canvas));
+  const hasColorbar = hasViewer && Boolean(visibleCanvasForSnapshot(els.colorbarCanvas, els.colorbarPanel));
+  const availableCharts = availableInspectSnapshotChartsByKey();
+  const profileConfigs = [
+    [els.saveImagesIncludeTimeProfileBtn, "includeTimeProfile", "time_profile"],
+    [els.saveImagesIncludeSpectralProfileBtn, "includeSpectralProfile", "spectral_profile"],
+    [els.saveImagesIncludeSpatialProfileBtn, "includeSpatialProfile", "spatial_profile"],
+  ];
+
+  if (els.saveImagesIncludeViewerBtn) {
+    setRenderToggleButton(els.saveImagesIncludeViewerBtn, hasViewer && state.saveImagesPrefs.includeViewer);
+    els.saveImagesIncludeViewerBtn.disabled = !hasViewer;
+  }
+  if (els.saveImagesIncludeColorbarBtn) {
+    setRenderToggleButton(els.saveImagesIncludeColorbarBtn, hasColorbar && state.saveImagesPrefs.includeColorbar);
+    els.saveImagesIncludeColorbarBtn.disabled = !hasColorbar;
+  }
+  if (els.saveImagesIncludeSampleLabelsBtn) {
+    const samplesMode = isSamplesMode();
+    setRenderToggleButton(
+      els.saveImagesIncludeSampleLabelsBtn,
+      hasViewer && samplesMode && state.saveImagesPrefs.includeSampleLabels
+    );
+    els.saveImagesIncludeSampleLabelsBtn.disabled = !hasViewer || !samplesMode;
+  }
+  let visibleProfileCount = 0;
+  for (const [btn, prefKey, chartKey] of profileConfigs) {
+    if (!btn) continue;
+    const available = availableCharts.has(chartKey);
+    setRenderToggleButton(btn, available && state.saveImagesPrefs[prefKey]);
+    btn.hidden = !available;
+    btn.disabled = !available;
+    if (available) visibleProfileCount += 1;
+  }
+  const profileGroup =
+    els.saveImagesIncludeTimeProfileBtn?.closest(".renderChoiceGroup") ||
+    els.saveImagesIncludeSpectralProfileBtn?.closest(".renderChoiceGroup") ||
+    els.saveImagesIncludeSpatialProfileBtn?.closest(".renderChoiceGroup") ||
+    null;
+  if (profileGroup) {
+    profileGroup.hidden = visibleProfileCount === 0;
+  }
+  if (els.saveImagesSummary) {
+    els.saveImagesSummary.textContent = saveImagesSummaryText(availableCharts);
+  }
+}
+
 function updateSaveImagesDialogFields() {
   if (!els.saveImagesPrefixInput || !els.saveImagesLocationInput || !els.saveImagesOverwriteChk) return;
+  normalizeSaveImagesPrefs();
   if (!state.saveImagesPrefs.outputDir) {
     state.saveImagesPrefs.outputDir = DEFAULT_EXPORT_OUTPUT_DIR;
   }
@@ -3289,6 +5122,10 @@ function updateSaveImagesDialogFields() {
   els.saveImagesPrefixInput.value = state.saveImagesPrefs.prefix;
   els.saveImagesLocationInput.value = state.saveImagesPrefs.outputDir || "";
   els.saveImagesOverwriteChk.checked = state.saveImagesPrefs.overwrite !== false;
+  if (els.saveImagesTransparentBgChk) {
+    els.saveImagesTransparentBgChk.checked = state.saveImagesPrefs.transparentBackground === true;
+  }
+  updateSaveImagesSelectionButtons();
 }
 
 async function chooseSaveImagesFolder() {
@@ -3327,17 +5164,42 @@ function closeSaveImagesDialog() {
 }
 
 function buildSaveImagesRequestBody() {
+  normalizeSaveImagesPrefs();
   const prefix = normalizeSaveImagesPrefix(state.saveImagesPrefs.prefix);
   state.saveImagesPrefs.prefix = prefix;
 
-  const viewerCanvas = buildViewerSnapshotCanvas();
-  const images = [{ filename: `${prefix}_viewer.png`, data_url: viewerCanvas.toDataURL("image/png") }];
-  for (const chart of collectInspectSnapshotCharts()) {
-    const graphCanvas = buildGraphSnapshotCanvas(chart);
+  const images = [];
+  if (state.saveImagesPrefs.includeViewer) {
+    const viewerCanvas = buildViewerSnapshotCanvas({
+      includeColorbar: state.saveImagesPrefs.includeColorbar,
+      includeSampleLabels: state.saveImagesPrefs.includeSampleLabels,
+      transparentBackground: state.saveImagesPrefs.transparentBackground,
+    });
+    images.push({ filename: `${prefix}_viewer.png`, data_url: viewerCanvas.toDataURL("image/png") });
+  }
+
+  const charts = availableInspectSnapshotChartsByKey();
+  const profileConfigs = [
+    ["includeTimeProfile", "time_profile"],
+    ["includeSpectralProfile", "spectral_profile"],
+    ["includeSpatialProfile", "spatial_profile"],
+  ];
+  for (const [prefKey, chartKey] of profileConfigs) {
+    if (!state.saveImagesPrefs[prefKey]) continue;
+    const chart = charts.get(chartKey);
+    if (!chart) continue;
+    const graphCanvas = buildGraphSnapshotCanvas({
+      ...chart,
+      transparentBackground: state.saveImagesPrefs.transparentBackground,
+    });
     images.push({
       filename: `${prefix}_${chart.key}.png`,
       data_url: graphCanvas.toDataURL("image/png"),
     });
+  }
+
+  if (!images.length) {
+    throw new Error("Select at least one image to save.");
   }
   return {
     output_dir: state.saveImagesPrefs.outputDir,
@@ -3350,6 +5212,9 @@ async function saveCurrentImagesFromDialog() {
   if (!state.dataId || !els.saveImagesPrefixInput || !els.saveImagesOverwriteChk) return;
   state.saveImagesPrefs.prefix = normalizeSaveImagesPrefix(els.saveImagesPrefixInput.value);
   state.saveImagesPrefs.overwrite = Boolean(els.saveImagesOverwriteChk.checked);
+  if (els.saveImagesTransparentBgChk) {
+    state.saveImagesPrefs.transparentBackground = Boolean(els.saveImagesTransparentBgChk.checked);
+  }
 
   if (!state.saveImagesPrefs.outputDir) {
     setSaveImagesStatus("Choose a destination folder.", true);
@@ -3370,6 +5235,1424 @@ async function saveCurrentImagesFromDialog() {
   }
   setSystemPickerStatus("");
   closeSaveImagesDialog();
+}
+
+function isMovieRecordingActive() {
+  return Boolean(movieRecording.recorder && movieRecording.recorder.state === "recording");
+}
+
+function hasPendingMovieRecording() {
+  return Boolean(movieRecording.pendingBlob && movieRecording.pendingBlob.size > 0);
+}
+
+function preferredMovieMimeType() {
+  if (typeof MediaRecorder === "undefined") return null;
+  const candidates = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+  if (typeof MediaRecorder.isTypeSupported !== "function") return "video/webm";
+  for (const mime of candidates) {
+    if (MediaRecorder.isTypeSupported(mime)) return mime;
+  }
+  return null;
+}
+
+function isMovieRecordingSupported() {
+  if (!els.canvas || typeof els.canvas.captureStream !== "function") return false;
+  return Boolean(preferredMovieMimeType());
+}
+
+function isValidRecordMovieFormat(format) {
+  return format === "webm" || format === "mp4" || format === "gif";
+}
+
+function normalizeRecordMovieFormat(format) {
+  return isValidRecordMovieFormat(format) ? format : "mp4";
+}
+
+function isValidRecordQuality(quality) {
+  return quality === "low" || quality === "balanced" || quality === "high";
+}
+
+function normalizeRecordQuality(quality) {
+  return isValidRecordQuality(quality) ? quality : "balanced";
+}
+
+function recordQualityConfig(quality) {
+  const key = normalizeRecordQuality(quality);
+  return RECORD_QUALITY_PRESETS[key] || RECORD_QUALITY_PRESETS.balanced;
+}
+
+function recordMovieExtension(format) {
+  const fmt = normalizeRecordMovieFormat(format);
+  if (fmt === "mp4") return ".mp4";
+  if (fmt === "gif") return ".gif";
+  return ".webm";
+}
+
+function defaultRecordMovieFilename(format = "mp4") {
+  const base = state.dataId ? state.dataId : "mobula";
+  return `${base}_recording_${snapshotTimestamp()}${recordMovieExtension(format)}`;
+}
+
+function normalizeRecordMovieFilename(name, format = "mp4") {
+  const fmt = normalizeRecordMovieFormat(format);
+  let out = String(name || "").trim();
+  if (!out) out = defaultRecordMovieFilename(fmt);
+  out = out.split(/[\\/]/).pop() || defaultRecordMovieFilename(fmt);
+  const ext = recordMovieExtension(fmt);
+  if (!out.toLowerCase().endsWith(ext)) {
+    out = `${out.replace(/\.[^.]+$/, "")}${ext}`;
+  }
+  return out;
+}
+
+function setRecordMovieStatus(message, error = false) {
+  if (!els.recordMovieStatus) return;
+  els.recordMovieStatus.textContent = message || "";
+  els.recordMovieStatus.classList.toggle("error", Boolean(error));
+}
+
+function updateRecordMovieFormatButtons() {
+  const fmt = normalizeRecordMovieFormat(state.recordMoviePrefs.format);
+  const pairs = [
+    [els.recordMovieFormatWebmBtn, "webm"],
+    [els.recordMovieFormatMp4Btn, "mp4"],
+    [els.recordMovieFormatGifBtn, "gif"],
+  ];
+  for (const [btn, value] of pairs) {
+    if (!btn) continue;
+    const active = value === fmt;
+    btn.classList.toggle("activeRecordFormat", active);
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+}
+
+function updateRecordMovieDialogFields() {
+  if (!els.recordMovieFilenameInput || !els.recordMovieLocationInput || !els.recordMovieOverwriteChk) return;
+  state.recordMoviePrefs.format = normalizeRecordMovieFormat(state.recordMoviePrefs.format);
+  if (!state.recordMoviePrefs.outputDir) {
+    state.recordMoviePrefs.outputDir = DEFAULT_EXPORT_OUTPUT_DIR;
+  }
+  if (!state.recordMoviePrefs.filename) {
+    state.recordMoviePrefs.filename = defaultRecordMovieFilename(state.recordMoviePrefs.format);
+  }
+  state.recordMoviePrefs.filename = normalizeRecordMovieFilename(state.recordMoviePrefs.filename, state.recordMoviePrefs.format);
+  updateRecordMovieFormatButtons();
+  els.recordMovieFilenameInput.value = state.recordMoviePrefs.filename;
+  els.recordMovieLocationInput.value = state.recordMoviePrefs.outputDir || "";
+  els.recordMovieOverwriteChk.checked = state.recordMoviePrefs.overwrite !== false;
+}
+
+function updateRecordMovieDialogActions() {
+  const busy = movieRecording.stopping || movieRecording.saving;
+  const hasPending = hasPendingMovieRecording();
+  if (els.recordMovieCancelBtn) {
+    els.recordMovieCancelBtn.disabled = busy;
+  }
+  if (els.recordMovieConfirmBtn) {
+    els.recordMovieConfirmBtn.disabled = busy || !hasPending;
+  }
+  if (els.recordMovieFilenameInput) {
+    els.recordMovieFilenameInput.disabled = busy || !hasPending;
+  }
+  for (const btn of [els.recordMovieFormatWebmBtn, els.recordMovieFormatMp4Btn, els.recordMovieFormatGifBtn]) {
+    if (!btn) continue;
+    btn.disabled = busy || !hasPending;
+  }
+  if (els.recordMovieBrowseBtn) {
+    els.recordMovieBrowseBtn.disabled = busy || !hasPending;
+  }
+  if (els.recordMovieOverwriteChk) {
+    els.recordMovieOverwriteChk.disabled = busy || !hasPending;
+  }
+}
+
+async function chooseRecordMovieFolder() {
+  const payload = await fetchJson("/api/fs/pick", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target: "folder" }),
+  });
+  if (payload.canceled) return false;
+  if (!payload.exists || !payload.is_dir) {
+    throw new Error(`invalid folder: ${payload.path || "unknown"}`);
+  }
+  state.recordMoviePrefs.outputDir = payload.path;
+  updateRecordMovieDialogFields();
+  return true;
+}
+
+function openRecordMovieDialog() {
+  if (!els.recordMovieDialog) return;
+  if (!hasPendingMovieRecording()) return;
+  state.recordMoviePrefs.format = normalizeRecordMovieFormat(state.recordMoviePrefs.format);
+  if (!state.recordMoviePrefs.filename) {
+    state.recordMoviePrefs.filename = defaultRecordMovieFilename(state.recordMoviePrefs.format);
+  }
+  updateRecordMovieDialogFields();
+  updateRecordMovieDialogActions();
+  if (typeof els.recordMovieDialog.showModal === "function") {
+    els.recordMovieDialog.showModal();
+  }
+}
+
+function closeRecordMovieDialog() {
+  if (!els.recordMovieDialog) return;
+  if (els.recordMovieDialog.open) {
+    els.recordMovieDialog.close();
+  }
+  setRecordMovieStatus("");
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error("failed to encode recording"));
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, Math.max(0, ms));
+  });
+}
+
+function loadImageFromDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("failed to decode rendered frame"));
+    img.src = dataUrl;
+  });
+}
+
+async function encodeFramesToWebmDataUrl(frames, fps) {
+  if (!Array.isArray(frames) || frames.length < 1) {
+    throw new Error("No rendered frames to encode.");
+  }
+  if (typeof MediaRecorder === "undefined") {
+    throw new Error("Fallback render encoding requires MediaRecorder support.");
+  }
+  const candidateMimes = [];
+  const pref = preferredMovieMimeType();
+  if (pref) candidateMimes.push(pref);
+  candidateMimes.push("video/webm;codecs=vp8", "video/webm");
+  const uniqueMimes = Array.from(new Set(candidateMimes)).filter((mime) => {
+    if (typeof MediaRecorder.isTypeSupported !== "function") return true;
+    return MediaRecorder.isTypeSupported(mime);
+  });
+  if (!uniqueMimes.length) {
+    throw new Error("Fallback render encoding requires WebM MediaRecorder support.");
+  }
+
+  const first = await loadImageFromDataUrl(frames[0].data_url);
+  const frameDurationMs = Math.max(1, Math.round(1000 / Math.max(1, fps)));
+  let lastErr = null;
+
+  for (const mimeType of uniqueMimes) {
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(2, first.naturalWidth || first.width || 2);
+    canvas.height = Math.max(2, first.naturalHeight || first.height || 2);
+    const ctx = canvas.getContext("2d", { alpha: false });
+    if (!ctx) throw new Error("Could not initialize fallback render encoder canvas.");
+
+    const stream = canvas.captureStream(Math.max(1, fps));
+    const track = stream.getVideoTracks().length ? stream.getVideoTracks()[0] : null;
+    const chunks = [];
+    let stopResolve = null;
+    let stopReject = null;
+    const stopPromise = new Promise((resolve, reject) => {
+      stopResolve = resolve;
+      stopReject = reject;
+    });
+    let recorder = null;
+    try {
+      recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+      };
+      recorder.onerror = (ev) => {
+        if (stopReject) {
+          stopReject(ev && ev.error ? ev.error : new Error("fallback render encoding failed"));
+        }
+      };
+      recorder.onstop = () => {
+        if (stopResolve) stopResolve(null);
+      };
+      recorder.start(250);
+
+      for (let i = 0; i < frames.length; i += 1) {
+        if (renderJob.cancelRequested) throw makeRenderCancelError();
+        const img = i === 0 ? first : await loadImageFromDataUrl(frames[i].data_url);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        if (track && typeof track.requestFrame === "function") {
+          try {
+            track.requestFrame();
+          } catch (_) {
+            // ignore requestFrame failures
+          }
+        }
+        await sleepMs(frameDurationMs);
+      }
+      await sleepMs(frameDurationMs);
+      try {
+        if (typeof recorder.requestData === "function") recorder.requestData();
+      } catch (_) {
+        // ignore requestData failures
+      }
+      if (recorder.state !== "inactive") {
+        recorder.stop();
+      }
+      await stopPromise;
+      const blob = new Blob(chunks, { type: mimeType });
+      if (blob.size > 0) {
+        for (const t of stream.getTracks()) {
+          try {
+            t.stop();
+          } catch (_) {
+            // ignore cleanup failures
+          }
+        }
+        return blobToDataUrl(blob);
+      }
+      lastErr = new Error(`Fallback render encoding produced no video data for ${mimeType}.`);
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err || "fallback render encoding failed"));
+      try {
+        if (recorder && recorder.state !== "inactive") recorder.stop();
+      } catch (_) {
+        // ignore stop failures
+      }
+    } finally {
+      for (const t of stream.getTracks()) {
+        try {
+          t.stop();
+        } catch (_) {
+          // ignore cleanup failures
+        }
+      }
+    }
+  }
+
+  if (lastErr) throw lastErr;
+  throw new Error("Fallback render encoding produced no video data.");
+}
+
+function beginMovieCompositor(qualityCfg) {
+  const cfg = qualityCfg || recordQualityConfig(state.recordMoviePrefs.quality);
+  const source = visibleCanvasForSnapshot(els.canvas);
+  if (!source) throw new Error("Viewer canvas is not available.");
+  const colorbar = visibleCanvasForSnapshot(els.colorbarCanvas, els.colorbarPanel);
+  const sourceW = Math.max(1, source.width);
+  const sourceH = Math.max(1, source.height);
+  const colorbarH = colorbar ? Math.max(1, colorbar.height) : 0;
+  const gap = colorbar ? 8 : 0;
+  const rawOutW = sourceW;
+  const rawOutH = sourceH + (colorbar ? colorbarH + gap : 0);
+  const pixelCount = rawOutW * rawOutH;
+  const scale = pixelCount > cfg.maxPixels
+    ? Math.sqrt(cfg.maxPixels / Math.max(1, pixelCount))
+    : 1;
+
+  const out = document.createElement("canvas");
+  const targetW = Math.max(2, Math.round(rawOutW * scale));
+  const targetH = Math.max(2, Math.round(rawOutH * scale));
+  out.width = targetW % 2 === 0 ? targetW : targetW + 1;
+  out.height = targetH % 2 === 0 ? targetH : targetH + 1;
+  const ctx = out.getContext("2d", { alpha: false, desynchronized: true });
+  if (!ctx) throw new Error("Could not initialize movie recorder canvas.");
+
+  const drawMainH = Math.max(1, Math.round(sourceH * scale));
+  const drawColorbarH = colorbar ? Math.max(1, Math.round(colorbarH * scale)) : 0;
+  const drawGap = colorbar ? Math.max(1, Math.round(gap * scale)) : 0;
+
+  const drawFrame = () => {
+    ctx.fillStyle = "#060d16";
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.drawImage(source, 0, 0, source.width, source.height, 0, 0, out.width, drawMainH);
+    if (colorbar) {
+      ctx.drawImage(colorbar, 0, 0, colorbar.width, colorbar.height, 0, drawMainH + drawGap, out.width, drawColorbarH);
+    }
+  };
+  drawFrame();
+  const frameIntervalMs = Math.max(16, Math.round(1000 / Math.max(1, cfg.fps)));
+  const timerId = window.setInterval(drawFrame, frameIntervalMs);
+
+  const stream = out.captureStream(cfg.fps);
+  const stopDrawing = () => {
+    window.clearInterval(timerId);
+  };
+  return {
+    stream,
+    stopDrawing,
+    stop: () => {
+      stopDrawing();
+      for (const track of stream.getTracks()) {
+        track.stop();
+      }
+    },
+  };
+}
+
+function clearPendingMovieRecording() {
+  movieRecording.pendingBlob = null;
+  movieRecording.pendingMimeType = "";
+  movieRecording.pendingDataId = null;
+}
+
+function resetMovieRecordingRuntime(clearPending = false) {
+  if (movieRecording.stopDrawing) {
+    try {
+      movieRecording.stopDrawing();
+    } catch (_) {
+      // ignore cleanup failures
+    }
+  }
+  if (movieRecording.stopCompositor) {
+    try {
+      movieRecording.stopCompositor();
+    } catch (_) {
+      // ignore cleanup failures
+    }
+  } else if (movieRecording.stream) {
+    for (const track of movieRecording.stream.getTracks()) {
+      try {
+        track.stop();
+      } catch (_) {
+        // ignore cleanup failures
+      }
+    }
+  }
+  movieRecording.recorder = null;
+  movieRecording.stream = null;
+  movieRecording.stopDrawing = null;
+  movieRecording.stopCompositor = null;
+  movieRecording.chunks = [];
+  movieRecording.mimeType = "video/webm";
+  movieRecording.dataId = null;
+  movieRecording.startedAtMs = 0;
+  movieRecording.stopPromise = null;
+  if (clearPending) {
+    clearPendingMovieRecording();
+  }
+}
+
+async function startMovieRecordingFromToolbar() {
+  if (!state.dataId) return;
+  if (isMovieRecordingActive() || movieRecording.stopping) return;
+  if (!isMovieRecordingSupported()) {
+    throw new Error("Movie recording is not supported in this browser.");
+  }
+
+  state.recordMoviePrefs.quality = normalizeRecordQuality(state.recordMoviePrefs.quality);
+  const qualityCfg = recordQualityConfig(state.recordMoviePrefs.quality);
+  if (els.recordMovieDialog && els.recordMovieDialog.open) {
+    closeRecordMovieDialog();
+  }
+  clearPendingMovieRecording();
+  setSystemPickerStatus(`Starting recording (${qualityCfg.label})...`);
+  const mimeType = preferredMovieMimeType() || "video/webm";
+  const compositor = beginMovieCompositor(qualityCfg);
+  const chunks = [];
+  const recorderOpts = { mimeType, videoBitsPerSecond: qualityCfg.bitrate };
+  let recorder = null;
+  try {
+    recorder = new MediaRecorder(compositor.stream, recorderOpts);
+  } catch (err) {
+    compositor.stop();
+    throw err;
+  }
+
+  let settled = false;
+  let resolveStop = null;
+  let rejectStop = null;
+  const stopPromise = new Promise((resolve, reject) => {
+    resolveStop = resolve;
+    rejectStop = reject;
+  });
+  const resolveOnce = () => {
+    if (settled) return;
+    settled = true;
+    if (resolveStop) resolveStop();
+  };
+  const rejectOnce = (err) => {
+    if (settled) return;
+    settled = true;
+    const wrapped = err instanceof Error ? err : new Error(String(err || "recording failed"));
+    if (rejectStop) rejectStop(wrapped);
+  };
+
+  recorder.ondataavailable = (ev) => {
+    if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+  };
+  recorder.onerror = (ev) => {
+    rejectOnce(ev && ev.error ? ev.error : new Error("recording failed"));
+  };
+  recorder.onstop = () => {
+    resolveOnce();
+  };
+
+  try {
+    recorder.start(250);
+  } catch (err) {
+    compositor.stop();
+    throw err;
+  }
+
+  movieRecording.recorder = recorder;
+  movieRecording.stream = compositor.stream;
+  movieRecording.stopDrawing = compositor.stopDrawing;
+  movieRecording.stopCompositor = compositor.stop;
+  movieRecording.chunks = chunks;
+  movieRecording.mimeType = mimeType;
+  movieRecording.dataId = state.dataId;
+  movieRecording.startedAtMs = Date.now();
+  movieRecording.stopPromise = stopPromise;
+  movieRecording.stopping = false;
+  updateExportButtonState();
+  setSystemPickerStatus(`Recording central panel (${qualityCfg.label})`);
+}
+
+async function stopMovieRecordingForExport() {
+  if (!movieRecording.recorder) return;
+  if (movieRecording.stopping) return;
+  movieRecording.stopping = true;
+  updateExportButtonState();
+  setSystemPickerStatus("Stopping recording...");
+
+  const recorder = movieRecording.recorder;
+  const stopPromise = movieRecording.stopPromise;
+  let stopError = null;
+  let stopTimedOut = false;
+  try {
+    if (movieRecording.stopDrawing) {
+      try {
+        // Stop extra compositor work immediately once stop is requested.
+        movieRecording.stopDrawing();
+      } catch (_) {
+        // ignore stopDrawing errors
+      }
+    }
+    try {
+      if (typeof recorder.requestData === "function") {
+        recorder.requestData();
+      }
+    } catch (_) {
+      // ignore requestData errors
+    }
+    try {
+      if (recorder.state !== "inactive") {
+        recorder.stop();
+      }
+    } catch (_) {
+      // ignore stop errors and continue cleanup
+    }
+    if (stopPromise) {
+      await Promise.race([
+        stopPromise,
+        new Promise((resolve) => {
+          window.setTimeout(() => {
+            stopTimedOut = true;
+            resolve(null);
+          }, RECORD_STOP_TIMEOUT_MS);
+        }),
+      ]);
+    }
+  } catch (err) {
+    stopError = err;
+  }
+
+  const chunks = movieRecording.chunks.slice();
+  const mimeType = movieRecording.mimeType || "video/webm";
+  const dataId = movieRecording.dataId || state.dataId;
+  const startedAt = movieRecording.startedAtMs || 0;
+  resetMovieRecordingRuntime(false);
+  movieRecording.stopping = false;
+  updateExportButtonState();
+  if (stopError) {
+    throw stopError;
+  }
+  if (stopTimedOut) {
+    setSystemPickerStatus("Recording stop timed out; attempting export with captured frames.", true);
+  }
+
+  if (!chunks.length) {
+    throw new Error("No recording data captured.");
+  }
+  const blob = new Blob(chunks, { type: mimeType });
+  if (blob.size < 1) {
+    throw new Error("No recording data captured.");
+  }
+  if (!dataId) {
+    throw new Error("No dataset selected for movie export.");
+  }
+
+  movieRecording.pendingBlob = blob;
+  movieRecording.pendingMimeType = mimeType;
+  movieRecording.pendingDataId = dataId;
+  if (!state.recordMoviePrefs.filename) {
+    state.recordMoviePrefs.filename = defaultRecordMovieFilename(state.recordMoviePrefs.format);
+  }
+  state.recordMoviePrefs.filename = normalizeRecordMovieFilename(state.recordMoviePrefs.filename, state.recordMoviePrefs.format);
+  openRecordMovieDialog();
+  const durationSec = startedAt > 0 ? (Date.now() - startedAt) / 1000 : 0;
+  setRecordMovieStatus(`Recording ready (${durationSec.toFixed(1)}s). Choose format and save.`);
+}
+
+function discardPendingMovieRecording() {
+  clearPendingMovieRecording();
+  closeRecordMovieDialog();
+  setSystemPickerStatus("Recording discarded.");
+}
+
+async function savePendingMovieFromDialog() {
+  if (!hasPendingMovieRecording()) {
+    throw new Error("No recording available to save.");
+  }
+  if (!els.recordMovieFilenameInput || !els.recordMovieOverwriteChk) return;
+
+  state.recordMoviePrefs.format = normalizeRecordMovieFormat(state.recordMoviePrefs.format);
+  state.recordMoviePrefs.filename = normalizeRecordMovieFilename(els.recordMovieFilenameInput.value, state.recordMoviePrefs.format);
+  state.recordMoviePrefs.overwrite = Boolean(els.recordMovieOverwriteChk.checked);
+
+  if (!state.recordMoviePrefs.outputDir) {
+    setRecordMovieStatus("Choose a destination folder.", true);
+    const selected = await chooseRecordMovieFolder();
+    if (!selected) return;
+  }
+
+  const dataId = movieRecording.pendingDataId || state.dataId;
+  if (!dataId) {
+    throw new Error("No dataset selected for movie export.");
+  }
+
+  movieRecording.saving = true;
+  updateRecordMovieDialogActions();
+  try {
+    setRecordMovieStatus("Encoding movie...");
+    const dataUrl = await blobToDataUrl(movieRecording.pendingBlob);
+    setRecordMovieStatus("Saving movie...");
+    const response = await fetchJson(`/api/datasets/${dataId}/save-movie`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        output_dir: state.recordMoviePrefs.outputDir,
+        format: state.recordMoviePrefs.format,
+        filename: state.recordMoviePrefs.filename,
+        overwrite: state.recordMoviePrefs.overwrite !== false,
+        data_url: dataUrl,
+      }),
+    });
+    if (!response.saved) {
+      throw new Error(response.detail || "save failed");
+    }
+    clearPendingMovieRecording();
+    closeRecordMovieDialog();
+    setSystemPickerStatus(`Saved movie: ${response.path}`);
+  } finally {
+    movieRecording.saving = false;
+    updateRecordMovieDialogActions();
+  }
+}
+
+function parseRenderAxis(axis) {
+  const token = String(axis || "").trim().toLowerCase();
+  if (!token) return null;
+  if (token === "t" || token === "nu" || token === RENDER_AXIS_HIDDEN) return token;
+  if (token === SAMPLE_MORPH_AXIS || token === "sample-morph" || token === "sample_morph") {
+    return SAMPLE_MORPH_AXIS;
+  }
+  if (token === RENDER_AXIS_ROTATE || token === "rotate" || token === "rotation") {
+    return RENDER_AXIS_ROTATE;
+  }
+  return null;
+}
+
+function isValidRenderAxis(axis) {
+  return parseRenderAxis(axis) !== null;
+}
+
+function normalizeRenderAxis(axis) {
+  return parseRenderAxis(axis) || "t";
+}
+
+function isValidRenderResolution(resolution) {
+  return resolution === "canvas" || Object.prototype.hasOwnProperty.call(RENDER_RESOLUTION_HEIGHT, resolution);
+}
+
+function normalizeRenderResolution(resolution) {
+  return isValidRenderResolution(resolution) ? resolution : "canvas";
+}
+
+function normalizeRenderFps(fps) {
+  const parsed = Number.parseInt(fps, 10);
+  if (!Number.isFinite(parsed)) return 30;
+  return clamp(parsed, 1, 240);
+}
+
+function normalizeRenderLoops(loops) {
+  const parsed = Number.parseInt(loops, 10);
+  if (!Number.isFinite(parsed)) return 1;
+  return clamp(parsed, 1, 100);
+}
+
+function normalizeRenderOverlayOption(value) {
+  return value !== false;
+}
+
+function computeSampleMorphRenderFrameCount(fps) {
+  const nSamples = sampleCount();
+  if (nSamples <= 1) return 0;
+  const transitionFrames = Math.max(1, Math.ceil(sampleMorphDeltaTSec() * Math.max(1, fps)));
+  return nSamples * transitionFrames;
+}
+
+function computeRenderRotationFrameCount(fps) {
+  const fpsSafe = Math.max(1, normalizeRenderFps(fps));
+  // One deterministic full revolution over ~6s by default.
+  return clamp(Math.round(fpsSafe * 6), 24, 720);
+}
+
+function resolveRenderSweepAxis(axisPref = null) {
+  const pref = normalizeRenderAxis(axisPref || state.renderMoviePrefs.axis);
+  return pref === RENDER_AXIS_HIDDEN ? hiddenDim() : pref;
+}
+
+function renderQualityLabel(quality) {
+  return recordQualityConfig(quality).label;
+}
+
+function defaultRenderMovieFilename(format = "mp4") {
+  const base = state.dataId ? state.dataId : "mobula";
+  return `${base}_render_${snapshotTimestamp()}${recordMovieExtension(format)}`;
+}
+
+function normalizeRenderMovieFilename(name, format = "mp4") {
+  const fmt = normalizeRecordMovieFormat(format);
+  let out = String(name || "").trim();
+  if (!out) out = defaultRenderMovieFilename(fmt);
+  out = out.split(/[\\/]/).pop() || defaultRenderMovieFilename(fmt);
+  const ext = recordMovieExtension(fmt);
+  if (!out.toLowerCase().endsWith(ext)) {
+    out = `${out.replace(/\.[^.]+$/, "")}${ext}`;
+  }
+  return out;
+}
+
+function setRenderMovieStatus(message, error = false) {
+  if (!els.renderMovieStatus) return;
+  els.renderMovieStatus.textContent = message || "";
+  els.renderMovieStatus.classList.toggle("error", Boolean(error));
+}
+
+function setRenderChoiceButtons(pairs, activeValue) {
+  for (const [btn, value] of pairs) {
+    if (!btn) continue;
+    const active = value === activeValue;
+    btn.classList.toggle("activeRecordFormat", active);
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+}
+
+function setRenderToggleButton(btn, enabled) {
+  if (!btn) return;
+  const active = Boolean(enabled);
+  btn.classList.toggle("activeRecordFormat", active);
+  btn.setAttribute("aria-pressed", active ? "true" : "false");
+}
+
+function readRenderToggleButton(btn, fallback = true) {
+  if (!btn) return Boolean(fallback);
+  const pressed = btn.getAttribute("aria-pressed");
+  if (pressed === "true") return true;
+  if (pressed === "false") return false;
+  return btn.classList.contains("activeRecordFormat");
+}
+
+function normalizeRenderAxisForData() {
+  const options = ["t", "nu", RENDER_AXIS_HIDDEN, SAMPLE_MORPH_AXIS, RENDER_AXIS_ROTATE];
+  let current = normalizeRenderAxis(state.renderMoviePrefs.axis);
+  if (!canRenderSweepAxis(current)) {
+    const fallback = options.find((value) => canRenderSweepAxis(value));
+    current = fallback || "t";
+  }
+  state.renderMoviePrefs.axis = current;
+}
+
+function canRenderRotationAxis() {
+  return isVolumeMode() || isSphereMode();
+}
+
+function canRenderSweepAxis(axisToken) {
+  const normalizedAxis = parseRenderAxis(axisToken);
+  if (!normalizedAxis) return false;
+  if (normalizedAxis === SAMPLE_MORPH_AXIS) {
+    return sampleCount() > 1;
+  }
+  if (normalizedAxis === RENDER_AXIS_ROTATE) {
+    return canRenderRotationAxis();
+  }
+  const axis = normalizedAxis === RENDER_AXIS_HIDDEN ? hiddenDim() : normalizedAxis;
+  if (!axis) return false;
+  if (playbackAxisLength(axis) <= 1) return false;
+  if (isAxisSelectorLocked(axis)) return false;
+  if (isAxisProjectionActive(axis)) return false;
+  return true;
+}
+
+function hasAnyRenderableSweepAxis() {
+  return (
+    canRenderSweepAxis("t")
+    || canRenderSweepAxis("nu")
+    || canRenderSweepAxis(RENDER_AXIS_HIDDEN)
+    || canRenderSweepAxis(SAMPLE_MORPH_AXIS)
+    || canRenderSweepAxis(RENDER_AXIS_ROTATE)
+  );
+}
+
+function updateRenderAxisOptions() {
+  const hidden = hiddenDim();
+  const busy = renderJob.running || renderJob.encoding;
+  normalizeRenderAxisForData();
+  if (els.renderAxisHiddenBtn) {
+    els.renderAxisHiddenBtn.textContent = axisDisplayLabel(hidden);
+  }
+  const axisButtons = [
+    [els.renderAxisTimeBtn, "t"],
+    [els.renderAxisFreqBtn, "nu"],
+    [els.renderAxisHiddenBtn, RENDER_AXIS_HIDDEN],
+    [els.renderAxisSampleMorphBtn, SAMPLE_MORPH_AXIS],
+    [els.renderAxisRotateBtn, RENDER_AXIS_ROTATE],
+  ];
+  for (const [btn, value] of axisButtons) {
+    if (!btn) continue;
+    const available = canRenderSweepAxis(value);
+    setVisible(btn, available);
+    btn.disabled = busy;
+  }
+  setRenderChoiceButtons(axisButtons, state.renderMoviePrefs.axis);
+}
+
+function updateRenderSettingsFields() {
+  if (!state.renderMoviePrefs) return;
+  normalizeRenderAxisForData();
+  state.renderMoviePrefs.format = normalizeRecordMovieFormat(state.renderMoviePrefs.format);
+  state.renderMoviePrefs.quality = normalizeRecordQuality(state.renderMoviePrefs.quality);
+  state.renderMoviePrefs.fps = normalizeRenderFps(state.renderMoviePrefs.fps);
+  state.renderMoviePrefs.loops = normalizeRenderLoops(state.renderMoviePrefs.loops);
+  state.renderMoviePrefs.resolution = normalizeRenderResolution(state.renderMoviePrefs.resolution);
+  state.renderMoviePrefs.includeColorbar = normalizeRenderOverlayOption(state.renderMoviePrefs.includeColorbar);
+  state.renderMoviePrefs.includeSkyDirections = normalizeRenderOverlayOption(state.renderMoviePrefs.includeSkyDirections);
+  state.renderMoviePrefs.includeLengthScale = normalizeRenderOverlayOption(state.renderMoviePrefs.includeLengthScale);
+  state.renderMoviePrefs.includeSampleLabels = normalizeRenderOverlayOption(state.renderMoviePrefs.includeSampleLabels);
+
+  updateRenderAxisOptions();
+  setRenderChoiceButtons(
+    [
+      [els.renderFormatMp4Btn, "mp4"],
+      [els.renderFormatWebmBtn, "webm"],
+      [els.renderFormatGifBtn, "gif"],
+    ],
+    state.renderMoviePrefs.format
+  );
+  setRenderChoiceButtons(
+    [
+      [els.renderQualityLowBtn, "low"],
+      [els.renderQualityMedBtn, "balanced"],
+      [els.renderQualityHighBtn, "high"],
+    ],
+    state.renderMoviePrefs.quality
+  );
+  setRenderChoiceButtons(
+    [
+      [els.renderResCanvasBtn, "canvas"],
+      [els.renderRes720Btn, "720p"],
+      [els.renderRes1080Btn, "1080p"],
+      [els.renderRes1440Btn, "1440p"],
+      [els.renderRes2160Btn, "2160p"],
+    ],
+    state.renderMoviePrefs.resolution
+  );
+  if (els.renderFpsInput) {
+    els.renderFpsInput.value = String(state.renderMoviePrefs.fps);
+  }
+  if (els.renderLoopInput) {
+    els.renderLoopInput.value = String(state.renderMoviePrefs.loops);
+  }
+  setRenderToggleButton(els.renderIncludeColorbarBtn, state.renderMoviePrefs.includeColorbar);
+  setRenderToggleButton(els.renderIncludeSkyDirectionsBtn, state.renderMoviePrefs.includeSkyDirections);
+  setRenderToggleButton(els.renderIncludeLengthScaleBtn, state.renderMoviePrefs.includeLengthScale);
+  setRenderToggleButton(els.renderIncludeSampleLabelsBtn, state.renderMoviePrefs.includeSampleLabels);
+}
+
+function readRenderSettingsFromUi() {
+  if (els.renderFpsInput) {
+    state.renderMoviePrefs.fps = normalizeRenderFps(els.renderFpsInput.value);
+  }
+  if (els.renderLoopInput) {
+    state.renderMoviePrefs.loops = normalizeRenderLoops(els.renderLoopInput.value);
+  }
+  state.renderMoviePrefs.includeColorbar = readRenderToggleButton(
+    els.renderIncludeColorbarBtn,
+    state.renderMoviePrefs.includeColorbar
+  );
+  state.renderMoviePrefs.includeSkyDirections = readRenderToggleButton(
+    els.renderIncludeSkyDirectionsBtn,
+    state.renderMoviePrefs.includeSkyDirections
+  );
+  state.renderMoviePrefs.includeLengthScale = readRenderToggleButton(
+    els.renderIncludeLengthScaleBtn,
+    state.renderMoviePrefs.includeLengthScale
+  );
+  state.renderMoviePrefs.includeSampleLabels = readRenderToggleButton(
+    els.renderIncludeSampleLabelsBtn,
+    state.renderMoviePrefs.includeSampleLabels
+  );
+}
+
+function renderSettingsSummaryText() {
+  const axis = resolveRenderSweepAxis(state.renderMoviePrefs.axis);
+  const fmt = normalizeRecordMovieFormat(state.renderMoviePrefs.format);
+  const fps = normalizeRenderFps(state.renderMoviePrefs.fps);
+  const loops = normalizeRenderLoops(state.renderMoviePrefs.loops);
+  const quality = normalizeRecordQuality(state.renderMoviePrefs.quality);
+  const resolution = normalizeRenderResolution(state.renderMoviePrefs.resolution);
+  const includeColorbar = normalizeRenderOverlayOption(state.renderMoviePrefs.includeColorbar);
+  const includeSky = normalizeRenderOverlayOption(state.renderMoviePrefs.includeSkyDirections);
+  const includeScale = normalizeRenderOverlayOption(state.renderMoviePrefs.includeLengthScale);
+  const includeLabels = normalizeRenderOverlayOption(state.renderMoviePrefs.includeSampleLabels);
+  const overlayLabel = `CB:${includeColorbar ? "on" : "off"} Sky:${includeSky ? "on" : "off"} Scale:${includeScale ? "on" : "off"} Labels:${includeLabels ? "on" : "off"}`;
+  const axisLabel = axis === SAMPLE_MORPH_AXIS
+    ? "Sample Morph"
+    : axis === RENDER_AXIS_ROTATE
+    ? "Rotation"
+    : axisDisplayLabel(axis);
+  return `Axis ${axisLabel} | ${fmt.toUpperCase()} | ${fps} FPS | Loops ${loops} | ${renderQualityLabel(quality)} quality | ${resolution} | ${overlayLabel}`;
+}
+
+function updateRenderMovieDialogFields() {
+  if (!els.renderMovieFilenameInput || !els.renderMovieLocationInput || !els.renderMovieOverwriteChk) return;
+  if (!state.renderMoviePrefs.outputDir) {
+    state.renderMoviePrefs.outputDir = DEFAULT_EXPORT_OUTPUT_DIR;
+  }
+  if (!state.renderMoviePrefs.filename) {
+    state.renderMoviePrefs.filename = defaultRenderMovieFilename(state.renderMoviePrefs.format);
+  }
+  state.renderMoviePrefs.filename = normalizeRenderMovieFilename(state.renderMoviePrefs.filename, state.renderMoviePrefs.format);
+  els.renderMovieFilenameInput.value = state.renderMoviePrefs.filename;
+  els.renderMovieLocationInput.value = state.renderMoviePrefs.outputDir || "";
+  els.renderMovieOverwriteChk.checked = state.renderMoviePrefs.overwrite !== false;
+  if (els.renderMovieSummary) {
+    els.renderMovieSummary.textContent = renderSettingsSummaryText();
+  }
+}
+
+function updateRenderMovieDialogActions() {
+  const busy = renderJob.running || renderJob.encoding;
+  if (els.renderMovieCancelBtn) {
+    els.renderMovieCancelBtn.disabled = busy;
+  }
+  if (els.renderMovieConfirmBtn) {
+    els.renderMovieConfirmBtn.disabled = busy;
+  }
+  if (els.renderMovieFilenameInput) {
+    els.renderMovieFilenameInput.disabled = busy;
+  }
+  if (els.renderMovieBrowseBtn) {
+    els.renderMovieBrowseBtn.disabled = busy;
+  }
+  if (els.renderMovieOverwriteChk) {
+    els.renderMovieOverwriteChk.disabled = busy;
+  }
+  const settingButtons = [
+    els.renderFormatMp4Btn,
+    els.renderFormatWebmBtn,
+    els.renderFormatGifBtn,
+    els.renderQualityLowBtn,
+    els.renderQualityMedBtn,
+    els.renderQualityHighBtn,
+    els.renderResCanvasBtn,
+    els.renderRes720Btn,
+    els.renderRes1080Btn,
+    els.renderRes1440Btn,
+    els.renderRes2160Btn,
+  ];
+  for (const btn of settingButtons) {
+    if (!btn) continue;
+    btn.disabled = busy;
+  }
+  if (els.renderFpsInput) {
+    els.renderFpsInput.disabled = busy;
+  }
+  if (els.renderLoopInput) {
+    els.renderLoopInput.disabled = busy;
+  }
+  if (els.renderIncludeColorbarBtn) els.renderIncludeColorbarBtn.disabled = busy;
+  if (els.renderIncludeSkyDirectionsBtn) els.renderIncludeSkyDirectionsBtn.disabled = busy;
+  if (els.renderIncludeLengthScaleBtn) els.renderIncludeLengthScaleBtn.disabled = busy;
+  if (els.renderIncludeSampleLabelsBtn) els.renderIncludeSampleLabelsBtn.disabled = busy;
+}
+
+async function chooseRenderMovieFolder() {
+  const payload = await fetchJson("/api/fs/pick", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target: "folder" }),
+  });
+  if (payload.canceled) return false;
+  if (!payload.exists || !payload.is_dir) {
+    throw new Error(`invalid folder: ${payload.path || "unknown"}`);
+  }
+  state.renderMoviePrefs.outputDir = payload.path;
+  updateRenderMovieDialogFields();
+  return true;
+}
+
+function openRenderMovieDialog() {
+  if (!els.renderMovieDialog) return;
+  readRenderSettingsFromUi();
+  if (!state.renderMoviePrefs.filename) {
+    state.renderMoviePrefs.filename = defaultRenderMovieFilename(state.renderMoviePrefs.format);
+  }
+  state.renderMoviePrefs.filename = normalizeRenderMovieFilename(state.renderMoviePrefs.filename, state.renderMoviePrefs.format);
+  updateRenderSettingsFields();
+  updateRenderMovieDialogFields();
+  updateRenderMovieDialogActions();
+  setRenderMovieStatus("");
+  if (typeof els.renderMovieDialog.showModal === "function") {
+    els.renderMovieDialog.showModal();
+  }
+}
+
+function closeRenderMovieDialog() {
+  if (!els.renderMovieDialog) return;
+  if (els.renderMovieDialog.open) {
+    els.renderMovieDialog.close();
+  }
+  setRenderMovieStatus("");
+}
+
+function ensureEvenPositive(n) {
+  const v = Math.max(2, Math.round(Number.isFinite(n) ? n : 2));
+  return v % 2 === 0 ? v : v + 1;
+}
+
+function resolveRenderFrameDimensions(rawW, rawH, resolution) {
+  const key = normalizeRenderResolution(resolution);
+  if (key === "canvas") {
+    return { width: ensureEvenPositive(rawW), height: ensureEvenPositive(rawH) };
+  }
+  const targetH = RENDER_RESOLUTION_HEIGHT[key];
+  const scale = targetH / Math.max(1, rawH);
+  return {
+    width: ensureEvenPositive(rawW * scale),
+    height: ensureEvenPositive(targetH),
+  };
+}
+
+function buildRenderFrameCanvas(resolution = "canvas", options = null) {
+  const source = visibleCanvasForSnapshot(els.canvas);
+  if (!source) throw new Error("Viewer canvas is not available.");
+  const includeColorbar = !options || options.includeColorbar !== false;
+  const colorbar = includeColorbar ? visibleCanvasForSnapshot(els.colorbarCanvas, els.colorbarPanel) : null;
+  const sourceW = Math.max(1, source.width);
+  const sourceH = Math.max(1, source.height);
+  const colorbarH = colorbar ? Math.max(1, colorbar.height) : 0;
+  const gap = colorbar ? 8 : 0;
+  const rawOutW = sourceW;
+  const rawOutH = sourceH + (colorbar ? colorbarH + gap : 0);
+  const dims = resolveRenderFrameDimensions(rawOutW, rawOutH, resolution);
+  const mainH = Math.max(1, Math.round((sourceH / rawOutH) * dims.height));
+  const colorH = colorbar ? Math.max(1, Math.round((colorbarH / rawOutH) * dims.height)) : 0;
+  const gapH = colorbar ? Math.max(1, dims.height - mainH - colorH) : 0;
+
+  const out = document.createElement("canvas");
+  out.width = dims.width;
+  out.height = dims.height;
+  const ctx = out.getContext("2d", { alpha: false });
+  if (!ctx) throw new Error("Could not initialize render frame canvas.");
+  ctx.fillStyle = "#060d16";
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(source, 0, 0, source.width, source.height, 0, 0, out.width, mainH);
+  if (colorbar) {
+    ctx.drawImage(colorbar, 0, 0, colorbar.width, colorbar.height, 0, mainH + gapH, out.width, colorH);
+  }
+  return out;
+}
+
+function renderFrameInterpolationFactor(axis) {
+  if (axis === "t") return temporalScaleFactor();
+  if (axis === "nu") return spectralScaleFactor();
+  return 1;
+}
+
+function computeRenderFramePositions(axis) {
+  const axisLen = Math.max(1, axisSize(axis));
+  let start = 0;
+  let end = axisLen - 1;
+  if (axis === "t" || axis === "nu") {
+    const [w0, w1] = getAxisWindow(axis, axisLen);
+    start = w0;
+    end = w1;
+  }
+  const frameCount = end - start + 1;
+  const factor = renderFrameInterpolationFactor(axis);
+  const targetN = resampledDomainLength(frameCount, factor);
+  if (targetN <= 1 || frameCount <= 1) {
+    return [start];
+  }
+
+  const srcSpan = frameCount - 1;
+  const dstSpan = targetN - 1;
+  const out = [];
+  for (let i = 0; i < targetN; i += 1) {
+    const srcPos = (i * srcSpan) / dstSpan;
+    out.push(start + srcPos);
+  }
+  return out;
+}
+
+function formatEtaMs(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return "--";
+  const totalSec = Math.round(ms / 1000);
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  return `${mins}:${String(secs).padStart(2, "0")}`;
+}
+
+function showRenderProgressOverlay() {
+  if (!els.renderProgressOverlay) return;
+  els.renderProgressOverlay.hidden = false;
+}
+
+function hideRenderProgressOverlay() {
+  if (!els.renderProgressOverlay) return;
+  els.renderProgressOverlay.hidden = true;
+}
+
+function updateRenderProgressOverlay(extraMessage = "") {
+  const total = Math.max(1, renderJob.totalFrames);
+  const completed = clamp(renderJob.completedFrames, 0, total);
+  const pct = Math.round((completed / total) * 100);
+  if (els.renderProgressPrimary) {
+    els.renderProgressPrimary.textContent = `${pct}%`;
+  }
+  if (els.renderProgressSecondary) {
+    const suffix = extraMessage ? ` | ${extraMessage}` : "";
+    els.renderProgressSecondary.textContent = `Frame ${completed} / ${total}${suffix}`;
+  }
+  if (els.renderProgressEta) {
+    if (completed <= 0 || renderJob.encoding) {
+      els.renderProgressEta.textContent = renderJob.encoding ? "ETA encoding..." : "ETA --";
+    } else {
+      const elapsed = Date.now() - renderJob.startedAtMs;
+      const avg = elapsed / completed;
+      const remainingMs = avg * (total - completed);
+      els.renderProgressEta.textContent = `ETA ${formatEtaMs(remainingMs)}`;
+    }
+  }
+}
+
+function requestRenderCancel() {
+  if (!renderJob.running) return;
+  renderJob.cancelRequested = true;
+  if (renderJob.fetchAbortController) {
+    try {
+      renderJob.fetchAbortController.abort();
+    } catch (_) {
+      // ignore abort errors
+    }
+  }
+  updateRenderProgressOverlay("Canceling...");
+}
+
+function makeRenderCancelError() {
+  const err = new Error("render canceled");
+  err.name = "AbortError";
+  return err;
+}
+
+async function nextAnimationFrame() {
+  await new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve(null));
+  });
+}
+
+async function runOfflineRenderFromDialog() {
+  if (!state.dataId) return;
+  if (renderJob.running) return;
+
+  readRenderSettingsFromUi();
+  state.renderMoviePrefs.overwrite = Boolean(els.renderMovieOverwriteChk ? els.renderMovieOverwriteChk.checked : true);
+  if (els.renderMovieFilenameInput) {
+    state.renderMoviePrefs.filename = normalizeRenderMovieFilename(
+      els.renderMovieFilenameInput.value,
+      state.renderMoviePrefs.format
+    );
+  }
+  state.renderMoviePrefs.quality = normalizeRecordQuality(state.renderMoviePrefs.quality);
+
+  if (!state.renderMoviePrefs.outputDir) {
+    setRenderMovieStatus("Choose a destination folder.", true);
+    const selected = await chooseRenderMovieFolder();
+    if (!selected) return;
+  }
+
+  closeRenderMovieDialog();
+
+  if (!canRenderSweepAxis(state.renderMoviePrefs.axis)) {
+    throw new Error("Selected axis is not currently renderable.");
+  }
+  const axis = resolveRenderSweepAxis(state.renderMoviePrefs.axis);
+  if (axis !== SAMPLE_MORPH_AXIS && axis !== RENDER_AXIS_ROTATE) {
+    if (isAxisSelectorLocked(axis)) {
+      throw new Error(`Axis ${axisDisplayLabel(axis)} cannot be swept in the current mode.`);
+    }
+    if (isAxisProjectionActive(axis)) {
+      throw new Error(`Axis ${axisDisplayLabel(axis)} is projected; disable projection before rendering.`);
+    }
+  }
+  const fps = normalizeRenderFps(state.renderMoviePrefs.fps);
+  const baseFramePositions = axis === SAMPLE_MORPH_AXIS || axis === RENDER_AXIS_ROTATE ? [] : computeRenderFramePositions(axis);
+  const baseFrameCount = axis === SAMPLE_MORPH_AXIS
+    ? computeSampleMorphRenderFrameCount(fps)
+    : axis === RENDER_AXIS_ROTATE
+    ? computeRenderRotationFrameCount(fps)
+    : baseFramePositions.length;
+  if (!baseFrameCount) {
+    throw new Error("No frames to render for the current range.");
+  }
+  const loopCount = normalizeRenderLoops(state.renderMoviePrefs.loops);
+  const renderedFrameCount = baseFrameCount;
+
+  const restoreValues = { ...state.values };
+  const restoreSampleState = {
+    sampleMode: state.sampleMode,
+    sampleSingleView: state.sampleSingleView,
+    sampleGridSize: state.sampleGridSize,
+    sampleGridIndices: cloneSessionValue(state.sampleGridIndices),
+    activeSampleTile: state.activeSampleTile,
+    sampleMorph: cloneSessionValue(state.sampleMorph),
+  };
+  const restoreViewState = {
+    volumeYaw: state.volumeYaw,
+    volumePitch: state.volumePitch,
+    sphereYaw: state.sphereYaw,
+    spherePitch: state.spherePitch,
+    sphereRotationMatrix: cloneSessionValue(state.sphereRotationMatrix),
+    sphereRotateAxisObject: cloneSessionValue(state.sphereRotateAxisObject),
+  };
+  const wasPlaying = isPlaying();
+  const wasSampleMorphPlaying = isSampleMorphPlaybackActive();
+  const renderDataId = state.dataId;
+
+  if (wasPlaying) stopPlayback(false);
+  if (wasSampleMorphPlaying) stopSampleMorphPlayback();
+
+  renderJob.running = true;
+  renderJob.cancelRequested = false;
+  renderJob.startedAtMs = Date.now();
+  renderJob.totalFrames = renderedFrameCount;
+  renderJob.completedFrames = 0;
+  renderJob.encoding = false;
+  renderJob.dataId = renderDataId;
+  renderJob.fetchAbortController = null;
+  showRenderProgressOverlay();
+  updateRenderProgressOverlay();
+  updateExportButtonState();
+  renderOverlayDrawOverride = {
+    includeSkyDirections: normalizeRenderOverlayOption(state.renderMoviePrefs.includeSkyDirections),
+    includeLengthScale: normalizeRenderOverlayOption(state.renderMoviePrefs.includeLengthScale),
+    includeSampleLabels: normalizeRenderOverlayOption(state.renderMoviePrefs.includeSampleLabels),
+  };
+  drawFrameAndOverlays();
+
+  const frames = [];
+  try {
+    const cycleFrames = [];
+    if (axis === SAMPLE_MORPH_AXIS && !isSampleMorphMode()) {
+      const sampleIdx = clamp(state.values.sample, 0, Math.max(0, sampleCount() - 1));
+      state.sampleMode = "single";
+      state.sampleSingleView = "morph";
+      state.sampleGridIndices = [sampleIdx];
+      state.activeSampleTile = 0;
+      resetSampleMorphState();
+      updateControlCaps();
+      await refreshSlice();
+    }
+    if (axis === SAMPLE_MORPH_AXIS) {
+      await prepareSampleMorphPair(null, false);
+      const frameDeltaSec = 1 / Math.max(1, fps);
+      for (let i = 0; i < baseFrameCount; i += 1) {
+        if (renderJob.cancelRequested) throw makeRenderCancelError();
+        if (i > 0) {
+          await advanceSampleMorphPlayback(frameDeltaSec, { fullResolution: true });
+        }
+        await nextAnimationFrame();
+        const frameCanvas = buildRenderFrameCanvas(state.renderMoviePrefs.resolution, state.renderMoviePrefs);
+        const dataUrl = frameCanvas.toDataURL("image/png");
+        cycleFrames.push(dataUrl);
+        frames.push({ data_url: dataUrl });
+        renderJob.completedFrames = i + 1;
+        updateRenderProgressOverlay();
+      }
+    } else if (axis === RENDER_AXIS_ROTATE) {
+      const direction = normalizeViewRotateRate(state.viewRotateRate) < 0 ? -1 : 1;
+      const angleStep = (direction * Math.PI * 2) / Math.max(1, baseFrameCount);
+      for (let i = 0; i < baseFrameCount; i += 1) {
+        if (renderJob.cancelRequested) throw makeRenderCancelError();
+        if (i > 0) {
+          if (isVolumeMode()) {
+            state.volumeYaw = normalizeAngleRad((state.volumeYaw || 0) + angleStep);
+            rerenderVolumeFrame();
+          } else if (isSphereMode()) {
+            applySphereAutoRotateDelta(angleStep);
+            rerenderSphereFrame();
+          }
+        }
+        await nextAnimationFrame();
+        const frameCanvas = buildRenderFrameCanvas(state.renderMoviePrefs.resolution, state.renderMoviePrefs);
+        const dataUrl = frameCanvas.toDataURL("image/png");
+        cycleFrames.push(dataUrl);
+        frames.push({ data_url: dataUrl });
+        renderJob.completedFrames = i + 1;
+        updateRenderProgressOverlay();
+      }
+    } else {
+      const endpointFrameCanvasCache = new Map();
+      let blendReuseCanvas = null;
+      const captureEndpointFrame = async (idx) => {
+        const key = String(idx);
+        if (endpointFrameCanvasCache.has(key)) return endpointFrameCanvasCache.get(key);
+        await setAxisIndex(axis, idx, { playback: true });
+        await nextAnimationFrame();
+        const frameCanvas = buildRenderFrameCanvas(state.renderMoviePrefs.resolution, state.renderMoviePrefs);
+        endpointFrameCanvasCache.set(key, frameCanvas);
+        return frameCanvas;
+      };
+      for (let i = 0; i < baseFramePositions.length; i += 1) {
+        if (renderJob.cancelRequested) throw makeRenderCancelError();
+        const framePos = baseFramePositions[i];
+        const lower = clamp(Math.floor(framePos), 0, axisSize(axis) - 1);
+        const upper = clamp(Math.ceil(framePos), 0, axisSize(axis) - 1);
+        let frameCanvas;
+        if (lower === upper || Math.abs(framePos - lower) <= 1.0e-6 || Math.abs(upper - framePos) <= 1.0e-6) {
+          frameCanvas = await captureEndpointFrame(clamp(Math.round(framePos), 0, axisSize(axis) - 1));
+        } else {
+          const alpha = clamp(framePos - lower, 0, 1);
+          const fromCanvas = await captureEndpointFrame(lower);
+          const toCanvas = await captureEndpointFrame(upper);
+          frameCanvas = blendCanvasPair(fromCanvas, toCanvas, alpha, blendReuseCanvas);
+          blendReuseCanvas = frameCanvas;
+        }
+        const dataUrl = frameCanvas.toDataURL("image/png");
+        cycleFrames.push(dataUrl);
+        frames.push({ data_url: dataUrl });
+        renderJob.completedFrames = i + 1;
+        updateRenderProgressOverlay();
+      }
+    }
+
+    if (loopCount > 1) {
+      updateRenderProgressOverlay("Loop duplication...");
+      for (let loop = 2; loop <= loopCount; loop += 1) {
+        for (let i = 0; i < cycleFrames.length; i += 1) {
+          if (renderJob.cancelRequested) throw makeRenderCancelError();
+          frames.push({ data_url: cycleFrames[i] });
+        }
+        updateRenderProgressOverlay();
+      }
+    }
+
+    if (renderJob.cancelRequested) throw makeRenderCancelError();
+
+    renderJob.encoding = true;
+    updateRenderProgressOverlay("Encoding...");
+    const saveBody = {
+      output_dir: state.renderMoviePrefs.outputDir,
+      format: state.renderMoviePrefs.format,
+      filename: state.renderMoviePrefs.filename,
+      overwrite: state.renderMoviePrefs.overwrite !== false,
+      fps,
+      quality: state.renderMoviePrefs.quality,
+      frames,
+    };
+
+    let response = null;
+    try {
+      renderJob.fetchAbortController = new AbortController();
+      response = await fetchJson(`/api/datasets/${renderDataId}/save-render-movie`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: renderJob.fetchAbortController.signal,
+        body: JSON.stringify(saveBody),
+      });
+    } catch (err) {
+      if (isNotFoundError(err)) {
+        updateRenderProgressOverlay("Compatibility encoding...");
+        const dataUrl = await encodeFramesToWebmDataUrl(frames, fps);
+        if (renderJob.cancelRequested) throw makeRenderCancelError();
+        updateRenderProgressOverlay("Compatibility save...");
+        renderJob.fetchAbortController = new AbortController();
+        response = await fetchJson(`/api/datasets/${renderDataId}/save-movie`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: renderJob.fetchAbortController.signal,
+          body: JSON.stringify({
+            output_dir: state.renderMoviePrefs.outputDir,
+            format: state.renderMoviePrefs.format,
+            filename: state.renderMoviePrefs.filename,
+            overwrite: state.renderMoviePrefs.overwrite !== false,
+            data_url: dataUrl,
+          }),
+        });
+      } else {
+        throw err;
+      }
+    }
+
+    if (!response || !response.saved) {
+      throw new Error((response && response.detail) || "render save failed");
+    }
+    setSystemPickerStatus(`Saved movie: ${response.path}`);
+  } catch (err) {
+    if (isAbortError(err) || renderJob.cancelRequested) {
+      setSystemPickerStatus("Render canceled.");
+      return;
+    }
+    throw err;
+  } finally {
+    renderOverlayDrawOverride = null;
+    drawFrameAndOverlays();
+    renderJob.running = false;
+    renderJob.cancelRequested = false;
+    renderJob.encoding = false;
+    renderJob.fetchAbortController = null;
+    renderJob.completedFrames = 0;
+    renderJob.totalFrames = 0;
+    hideRenderProgressOverlay();
+
+    state.values = { ...state.values, ...restoreValues };
+    state.sampleMode = restoreSampleState.sampleMode;
+    state.sampleSingleView = restoreSampleState.sampleSingleView;
+    state.sampleGridSize = restoreSampleState.sampleGridSize;
+    state.sampleGridIndices = cloneSessionValue(restoreSampleState.sampleGridIndices);
+    state.activeSampleTile = restoreSampleState.activeSampleTile;
+    state.sampleMorph = cloneSessionValue(restoreSampleState.sampleMorph);
+    state.volumeYaw = restoreViewState.volumeYaw;
+    state.volumePitch = restoreViewState.volumePitch;
+    state.sphereYaw = restoreViewState.sphereYaw;
+    state.spherePitch = restoreViewState.spherePitch;
+    state.sphereRotationMatrix = cloneSessionValue(restoreViewState.sphereRotationMatrix);
+    state.sphereRotateAxisObject = cloneSessionValue(restoreViewState.sphereRotateAxisObject);
+    updateSliderReadouts(state.selectedCoords);
+    updateControlCaps();
+    await refreshSlice();
+    if (state.selection) await refreshSelectionAnalytics();
+    updateRenderMovieDialogActions();
+    updateExportButtonState();
+  }
 }
 
 function modifierDragMode(metaDown, shiftDown) {
@@ -3435,15 +6718,22 @@ function sampleMorphDeltaTSec() {
   return Math.max(0.01, state.sampleMorphDeltaT || 0.5);
 }
 
+function volumeSpatialRenderFactor() {
+  // Volume raymarching already interpolates values continuously (trilinear),
+  // so apply a conservative frame-resolution boost to avoid stalls at high scales.
+  return clamp(Math.sqrt(spatialScaleFactor()), 0.5, 2.0);
+}
+
 function volumeFrameResolution(tileCount = 1) {
   const qCfg = volumeQualityConfig();
-  const normal = tileCount > 1
+  const base = tileCount > 1
     ? clamp(Math.round(volumeBaseResolution(tileCount) * qCfg.resMul), 140, 420)
     : clamp(Math.round(volumeBaseResolution(1) * qCfg.resMul), 180, 520);
-  if (!state.volumeDrag) return normal;
+  const scaled = clamp(Math.round(base * volumeSpatialRenderFactor()), 96, VOLUME_FRAME_RES_MAX);
+  if (!state.volumeDrag) return scaled;
   const min = tileCount > 1 ? 96 : 120;
   const max = tileCount > 1 ? 260 : 300;
-  return clamp(Math.round(normal * 0.55), min, max);
+  return clamp(Math.round(scaled * 0.55), min, max);
 }
 
 function updatePlaybackButtons() {
@@ -3507,7 +6797,7 @@ function updatePolButtonState() {
   els.evpaDensitySelect.value = String(state.evpaStep);
   els.evpaIThresholdSelect.disabled = !evpaSupported;
   const iThresholdPct = clamp(Math.round(state.evpaIMinFraction * 100), 0, 100);
-  const evpaThresholdOptions = [0, 1, 3, 5, 10];
+  const evpaThresholdOptions = [0, 1, 3, 5, 10, 15, 20];
   const nearestPct = evpaThresholdOptions.reduce((best, cur) =>
     Math.abs(cur - iThresholdPct) < Math.abs(best - iThresholdPct) ? cur : best
   );
@@ -3549,16 +6839,16 @@ function updateSliderReadouts(selectedCoords) {
   const hCoord =
     selectedCoords && selectedCoords[hDim] !== undefined ? selectedCoords[hDim] : dimCoord(hDim, state.values[hDim]);
 
-  els.tValue.textContent = fmtPhysical("t", tCoord, dimUnit("t"));
-  els.nuValue.textContent = fmtPhysical("nu", nuCoord, dimUnit("nu"));
-  els.hiddenNavValue.textContent = fmtPhysical(hDim, hCoord, dimUnit(hDim));
+  els.tValue.textContent = fmtPhysical("t", tCoord, axisDisplayUnit("t"));
+  els.nuValue.textContent = fmtPhysical("nu", nuCoord, axisDisplayUnit("nu"));
+  els.hiddenNavValue.textContent = fmtPhysical(hDim, hCoord, axisDisplayUnit(hDim));
 }
 
 function updateSpatialProfileTitle(profile) {
   if (profile && profile.axis) {
-    els.spatialProfileTitle.textContent = `${profile.axis.toUpperCase()} Flux Profile`;
+    els.spatialProfileTitle.textContent = `${axisDisplayLabel(profile.axis)} Flux Profile`;
   } else {
-    els.spatialProfileTitle.textContent = `${hiddenDim().toUpperCase()} Flux Profile`;
+    els.spatialProfileTitle.textContent = `${axisDisplayLabel(hiddenDim())} Flux Profile`;
   }
 }
 
@@ -3578,6 +6868,7 @@ function updateDomainVisibility() {
     setVisible(els.hiddenNavPanel, false);
     setVisible(els.volumeRenderControls, false);
     setVisible(els.sphereControls, false);
+    setVisible(els.viewRotateControls, false);
     setVisible(els.timeProfileBlock, false);
     setVisible(els.spectrumProfileBlock, false);
     setVisible(els.spatialProfileBlock, false);
@@ -3585,6 +6876,7 @@ function updateDomainVisibility() {
       els.metricsHint.textContent = "Load a dataset to enable controls and profiles.";
     }
     updateVolumeControlReadouts();
+    updateViewRotateControls();
     return;
   }
 
@@ -3663,6 +6955,7 @@ function updateDomainVisibility() {
   }
 
   setVisible(els.spatialControlGroup, true);
+  setVisible(els.spatialResolutionSelect ? els.spatialResolutionSelect.closest("label") : null, !sphereMode);
   setVisible(els.spatialViewRow, !sphereDataset);
   setVisible(els.spatialSliceBtn, !sphereDataset);
   setVisible(els.spatialVolumeBtn, canUseVolumeMode());
@@ -3673,6 +6966,7 @@ function updateDomainVisibility() {
   setVisible(els.hiddenNavPanel, !volumeMode && !sphereMode && hiddenSpatialVarying);
   setVisible(els.volumeRenderControls, volumeMode);
   setVisible(els.sphereControls, sphereMode);
+  setVisible(els.viewRotateControls, volumeMode || sphereMode);
   setVisible(els.polarizationControlGroup, polVarying);
   setVisible(els.sampleModeBlock, sampleVarying);
   setVisible(
@@ -3695,9 +6989,11 @@ function updateDomainVisibility() {
     }
   }
   updateVolumeControlReadouts();
+  updateViewRotateControls();
 }
 
 function updateControlCaps() {
+  const quantityBefore = intensityQuantityKey();
   ["sample", "pol", "t", "nu", "x", "y", "z"].forEach((dim) => {
     const max = Math.max(0, axisSize(dim) - 1);
     state.values[dim] = clamp(state.values[dim], 0, max);
@@ -3709,7 +7005,7 @@ function updateControlCaps() {
 
   const hDim = hiddenDim();
   const spectralSelectorLocked = isAxisSelectorLocked("nu");
-  els.hiddenAxisTitle.textContent = `${hDim.toUpperCase()}-Axis`;
+  els.hiddenAxisTitle.textContent = axisDisplayLabel(hDim);
   els.spatialSliceBtn.classList.toggle("activeSpatial", state.spatialMode === "slice");
   els.spatialVolumeBtn.classList.toggle("activeSpatial", state.spatialMode === "volume");
   if (els.spatialSphereBtn) {
@@ -3759,6 +7055,19 @@ function updateControlCaps() {
   if (els.sliceBackendSelect) {
     els.sliceBackendSelect.value = state.sliceRender.backend;
   }
+  if (els.spatialResolutionSelect) {
+    els.spatialResolutionSelect.value = String(spatialScaleFactor());
+  }
+  if (els.temporalResolutionSelect) {
+    els.temporalResolutionSelect.value = String(temporalScaleFactor());
+  }
+  if (els.spectralResolutionSelect) {
+    els.spectralResolutionSelect.value = String(spectralScaleFactor());
+  }
+  if (els.axisSettingsBtn) {
+    els.axisSettingsBtn.disabled = !state.meta;
+  }
+  updateAxisSettingsButtonState();
   const projection = state.sphereProjection || "mollweide";
   if (els.sphereProjMollweideBtn) {
     const active = projection === "mollweide";
@@ -3785,6 +7094,9 @@ function updateControlCaps() {
   if (state.multiSpectralNuAxisScale !== "log") state.multiSpectralNuAxisScale = "linear";
   if (!Number.isFinite(state.multiSpectralDeslope)) state.multiSpectralDeslope = 0;
   state.multiSpectralDeslope = clamp(state.multiSpectralDeslope, -8, 8);
+  state.multiSpectralNormalizeSpectrum = Boolean(state.multiSpectralNormalizeSpectrum);
+  state.multiSpectralNormalizeBoost = normalizeMultispectralNormalizeBoost(state.multiSpectralNormalizeBoost);
+  state.multiSpectralChannelRange = normalizeMultispectralChannelRange(state.multiSpectralChannelRange);
   els.multiSpectralBtn.disabled = !msAvailable;
   els.multiSpectralBtn.textContent = state.multiSpectral ? "On" : "Off";
   els.multiSpectralBtn.classList.toggle("activeAux", state.multiSpectral);
@@ -3794,7 +7106,7 @@ function updateControlCaps() {
   if (els.msNuAxisLogBtn) {
     const logAxis = state.multiSpectralNuAxisScale === "log";
     els.msNuAxisLogBtn.disabled = !msAvailable || !state.multiSpectral;
-    els.msNuAxisLogBtn.textContent = logAxis ? "Log" : "Linear";
+    els.msNuAxisLogBtn.textContent = "Log";
     els.msNuAxisLogBtn.classList.toggle("activeAux", logAxis);
     els.msNuAxisLogBtn.setAttribute("aria-pressed", logAxis ? "true" : "false");
   }
@@ -3806,12 +7118,44 @@ function updateControlCaps() {
   if (els.msDeslopeValue) {
     els.msDeslopeValue.textContent = multispectralDeslopeLabel();
   }
+  if (els.msNormalizeBtn) {
+    els.msNormalizeBtn.disabled = !msAvailable || !state.multiSpectral;
+    els.msNormalizeBtn.textContent = state.multiSpectralNormalizeSpectrum ? "On" : "Off";
+    els.msNormalizeBtn.classList.toggle("activeAux", state.multiSpectralNormalizeSpectrum);
+    els.msNormalizeBtn.setAttribute("aria-pressed", state.multiSpectralNormalizeSpectrum ? "true" : "false");
+  }
+  if (els.msNormalizeBoostRange) {
+    els.msNormalizeBoostRange.value = String(state.multiSpectralNormalizeBoost);
+    els.msNormalizeBoostRange.disabled = !msAvailable || !state.multiSpectral || !state.multiSpectralNormalizeSpectrum;
+    setSliderFill(els.msNormalizeBoostRange);
+  }
+  if (els.msNormalizeBoostLabel) {
+    setVisible(els.msNormalizeBoostLabel, msAvailable && state.multiSpectral && state.multiSpectralNormalizeSpectrum);
+  }
+  if (els.msNormalizeBoostValue) {
+    els.msNormalizeBoostValue.textContent = multispectralNormalizeBoostLabel();
+  }
+  if (els.msChannelRangeBlock) {
+    els.msChannelRangeBlock.classList.toggle("isDisabled", !msAvailable || !state.multiSpectral);
+  }
+  if (els.msChannelRangeMinRange) {
+    els.msChannelRangeMinRange.disabled = !msAvailable || !state.multiSpectral;
+  }
+  if (els.msChannelRangeMaxRange) {
+    els.msChannelRangeMaxRange.disabled = !msAvailable || !state.multiSpectral;
+  }
+  if (els.msChannelRangeBoundMin) els.msChannelRangeBoundMin.textContent = "0%";
+  if (els.msChannelRangeBoundMax) els.msChannelRangeBoundMax.textContent = "100%";
+  syncMultispectralRangeUi();
   if (els.spectralNavPanel) {
     els.spectralNavPanel.classList.toggle("isLocked", spectralSelectorLocked);
   }
   els.fluxScaleLinearBtn.classList.toggle("activeScale", state.fluxScale === "linear");
   els.fluxScaleSqrtBtn.classList.toggle("activeScale", state.fluxScale === "sqrt");
   els.fluxScaleLogBtn.classList.toggle("activeScale", state.fluxScale === "log");
+  els.fluxScaleLinearBtn.disabled = false;
+  els.fluxScaleSqrtBtn.disabled = false;
+  els.fluxScaleLogBtn.disabled = false;
   els.resampleSamplesBtn.disabled = !isSamplesMode();
 
   updatePolButtonState();
@@ -3822,6 +7166,7 @@ function updateControlCaps() {
   syncSampleMorphPlayback();
   updatePlayUi();
   updateSliderReadouts(state.selectedCoords);
+  applyIntensityQuantityTransition(quantityBefore, intensityQuantityKey());
   updateColorNormalizationControls();
   updateSpatialProfileTitle(state.profiles ? state.profiles.spatial_profile : null);
   updateHoverReadout();
@@ -3832,6 +7177,7 @@ function setFluxScale(mode) {
   if (state.fluxScale === mode) return;
   state.fluxScale = mode;
   updateControlCaps();
+  drawNavigationGraphs();
   drawSelectionGraphs();
   refreshSlice();
 }
@@ -3907,6 +7253,10 @@ function scheduleMultispectralLocalRerender() {
   if (state._multispectralRerenderRaf) return;
   state._multispectralRerenderRaf = window.requestAnimationFrame(() => {
     state._multispectralRerenderRaf = 0;
+    if (multispectralFrameActive()) {
+      void refreshMultispectralControlsFromServer();
+      return;
+    }
     rerenderMultispectralFromCache();
   });
 }
@@ -3925,6 +7275,28 @@ async function refreshMultispectralControlsFromServer() {
   } catch (err) {
     if (!isAbortError(err)) console.warn("multispectral control refresh failed:", err);
   }
+}
+
+function onMultispectralRangeInput(bound, commit = false) {
+  if (!els.msChannelRangeMinRange || !els.msChannelRangeMaxRange) return;
+  const minStep = Number.parseInt(els.msChannelRangeMinRange.value, 10);
+  const maxStep = Number.parseInt(els.msChannelRangeMaxRange.value, 10);
+  if (!Number.isFinite(minStep) || !Number.isFinite(maxStep)) return;
+  let low = clamp(minStep / MULTISPECTRAL_RANGE_STEPS, 0, 1 - MULTISPECTRAL_RANGE_MIN_GAP);
+  let high = clamp(maxStep / MULTISPECTRAL_RANGE_STEPS, MULTISPECTRAL_RANGE_MIN_GAP, 1);
+  if (high <= low + MULTISPECTRAL_RANGE_MIN_GAP) {
+    if (bound === "min") high = Math.min(1, low + MULTISPECTRAL_RANGE_MIN_GAP);
+    else low = Math.max(0, high - MULTISPECTRAL_RANGE_MIN_GAP);
+  }
+  low = clamp(low, 0, 1 - MULTISPECTRAL_RANGE_MIN_GAP);
+  high = clamp(high, low + MULTISPECTRAL_RANGE_MIN_GAP, 1);
+  state.multiSpectralChannelRange = { min: low * 100, max: high * 100 };
+  syncMultispectralRangeUi();
+  if (commit) {
+    void refreshMultispectralControlsFromServer();
+    return;
+  }
+  scheduleMultispectralLocalRerender();
 }
 
 function onVolumeRenderControlChange() {
@@ -4002,7 +7374,7 @@ function drawEvpaOverlay(viewRect, drawRect) {
     ctx.rect(tileRect.x, tileRect.y, tileRect.w, tileRect.h);
     ctx.clip();
     ctx.strokeStyle = "#f8fafc";
-    ctx.lineWidth = 1.2 * s;
+    ctx.lineWidth = 1.6 * s;
 
     let ticks = state.evpaTicks;
     if (isSamplesMode() && state.frameTiles && state.frameTiles.length > 1) {
@@ -4010,8 +7382,10 @@ function drawEvpaOverlay(viewRect, drawRect) {
       ticks = state.evpaTicksBySample[String(sampleIdx)] || state.evpaTicks;
     }
     for (const tick of ticks) {
-      const p0 = dataToScreen(tick.x - tick.dx, tick.y - tick.dy, viewRect, tileRect);
-      const p1 = dataToScreen(tick.x + tick.dx, tick.y + tick.dy, viewRect, tileRect);
+      const drawTick = evpaTickForCurrentPlane(tick);
+      if (!drawTick) continue;
+      const p0 = dataToScreen(drawTick.x - drawTick.dx, drawTick.y - drawTick.dy, viewRect, tileRect);
+      const p1 = dataToScreen(drawTick.x + drawTick.dx, drawTick.y + drawTick.dy, viewRect, tileRect);
       ctx.beginPath();
       ctx.moveTo(p0.x, p0.y);
       ctx.lineTo(p1.x, p1.y);
@@ -4019,6 +7393,19 @@ function drawEvpaOverlay(viewRect, drawRect) {
     }
     ctx.restore();
   }
+}
+
+function evpaTickForCurrentPlane(tick) {
+  if (!tick || !Number.isFinite(tick.x) || !Number.isFinite(tick.y)) return null;
+  if (!Number.isFinite(tick.dx) || !Number.isFinite(tick.dy)) return null;
+  if (state.plane !== "xy") return tick;
+  if (!axisPlaneSwapEnabled("xy")) return tick;
+  return {
+    x: tick.y,
+    y: tick.x,
+    dx: tick.dy,
+    dy: tick.dx,
+  };
 }
 
 function drawSelectionOverlay(viewRect, drawRect) {
@@ -4101,14 +7488,17 @@ function niceScaleValue(target) {
 
 function fmtScale(dim, value, unit) {
   if (!Number.isFinite(value)) return "";
-  if (dim === "nu" || unit === "Hz") return `${(value / 1.0e9).toFixed(3)} GHz`;
+  if (!axisHasCustomUnit(dim) && (dim === "nu" || unit === "Hz")) return `${(value / 1.0e9).toFixed(3)} GHz`;
   const abs = Math.abs(value);
   if (abs >= 10000 || (abs > 0 && abs < 0.01)) return `${value.toExponential(2)} ${unit}`.trim();
   return `${value.toFixed(2)} ${unit}`.trim();
 }
 
-function drawOrientationAndScale(viewRect, drawRect) {
+function drawOrientationAndScale(viewRect, drawRect, options = null) {
   if (isVolumeMode() || isSphereMode()) return;
+  const includeSkyDirections = !options || options.includeSkyDirections !== false;
+  const includeLengthScale = !options || options.includeLengthScale !== false;
+  if (!includeSkyDirections && !includeLengthScale) return;
   const ctx = els.canvas.getContext("2d");
   const s = canvasPixelRatio(els.canvas);
   ctx.save();
@@ -4123,60 +7513,66 @@ function drawOrientationAndScale(viewRect, drawRect) {
   ctx.lineWidth = 1.5 * s;
   ctx.font = `${Math.round(11 * s)}px sans-serif`;
 
-  if (state.plane === "xy") {
-    ctx.beginPath();
-    ctx.moveTo(baseX, baseY);
-    ctx.lineTo(baseX, baseY - arrow);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(baseX, baseY);
-    ctx.lineTo(baseX - arrow, baseY);
-    ctx.stroke();
-    ctx.fillText("N", baseX - 3 * s, baseY - arrow - 6 * s);
-    ctx.fillText("E", baseX - arrow - 16 * s, baseY + 4 * s);
-  } else {
-    const p = planeDims();
-    ctx.beginPath();
-    ctx.moveTo(baseX, baseY);
-    ctx.lineTo(baseX, baseY - arrow);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(baseX, baseY);
-    ctx.lineTo(baseX + arrow, baseY);
-    ctx.stroke();
-    ctx.fillText(`+${p.planeY.toUpperCase()}`, baseX - 6 * s, baseY - arrow - 4 * s);
-    ctx.fillText(`+${p.planeX.toUpperCase()}`, baseX + arrow + 2 * s, baseY + 4 * s);
+  if (includeSkyDirections) {
+    if (state.plane === "xy") {
+      ctx.beginPath();
+      ctx.moveTo(baseX, baseY);
+      ctx.lineTo(baseX, baseY - arrow);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(baseX, baseY);
+      ctx.lineTo(baseX - arrow, baseY);
+      ctx.stroke();
+      ctx.fillText("N", baseX - 3 * s, baseY - arrow - 6 * s);
+      ctx.fillText("E", baseX - arrow - 16 * s, baseY + 4 * s);
+    } else {
+      const p = planeDims();
+      const xSign = axisIsFlipped(p.planeX) ? "-" : "+";
+      const ySign = axisIsFlipped(p.planeY) ? "-" : "+";
+      ctx.beginPath();
+      ctx.moveTo(baseX, baseY);
+      ctx.lineTo(baseX, baseY - arrow);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(baseX, baseY);
+      ctx.lineTo(baseX + arrow, baseY);
+      ctx.stroke();
+      ctx.fillText(`${ySign}${p.planeY.toUpperCase()}`, baseX - 6 * s, baseY - arrow - 4 * s);
+      ctx.fillText(`${xSign}${p.planeX.toUpperCase()}`, baseX + arrow + 2 * s, baseY + 4 * s);
+    }
   }
 
-  const p = planeDims();
-  const dim = p.planeX;
-  const unit = dimUnit(dim);
-  const c0 = dimCoord(dim, viewRect.srcX);
-  const c1 = dimCoord(dim, viewRect.srcX + viewRect.srcW - 1);
-  if (c0 !== null && c1 !== null && Number.isFinite(c0) && Number.isFinite(c1)) {
-    const span = Math.abs(c1 - c0);
-    const target = span * 0.22;
-    const length = niceScaleValue(target);
-    if (length && span > 0) {
-      const px = (length / span) * canvasW * 0.55;
-      if (px >= 20 * s && px <= canvasW * 0.6) {
-        const sx = 30 * s;
-        const sy = canvasH - 26 * s;
-        ctx.strokeStyle = "rgba(237, 242, 247, 0.95)";
-        ctx.lineWidth = 2 * s;
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(sx + px, sy);
-        ctx.stroke();
-        ctx.lineWidth = 1.5 * s;
-        ctx.beginPath();
-        ctx.moveTo(sx, sy - 4 * s);
-        ctx.lineTo(sx, sy + 4 * s);
-        ctx.moveTo(sx + px, sy - 4 * s);
-        ctx.lineTo(sx + px, sy + 4 * s);
-        ctx.stroke();
-        ctx.fillStyle = "rgba(237, 242, 247, 0.95)";
-        ctx.fillText(fmtScale(dim, length, unit), sx, sy - 7 * s);
+  if (includeLengthScale) {
+    const p = planeDims();
+    const dim = p.planeX;
+    const unit = axisDisplayUnit(dim);
+    const c0 = axisValueCoord(dim, dimCoord(dim, viewRect.srcX));
+    const c1 = axisValueCoord(dim, dimCoord(dim, viewRect.srcX + viewRect.srcW - 1));
+    if (c0 !== null && c1 !== null && Number.isFinite(c0) && Number.isFinite(c1)) {
+      const span = Math.abs(c1 - c0);
+      const target = span * 0.22;
+      const length = niceScaleValue(target);
+      if (length && span > 0) {
+        const px = (length / span) * canvasW * 0.55;
+        if (px >= 20 * s && px <= canvasW * 0.6) {
+          const sx = 30 * s;
+          const sy = canvasH - 26 * s;
+          ctx.strokeStyle = "rgba(237, 242, 247, 0.95)";
+          ctx.lineWidth = 2 * s;
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(sx + px, sy);
+          ctx.stroke();
+          ctx.lineWidth = 1.5 * s;
+          ctx.beginPath();
+          ctx.moveTo(sx, sy - 4 * s);
+          ctx.lineTo(sx, sy + 4 * s);
+          ctx.moveTo(sx + px, sy - 4 * s);
+          ctx.lineTo(sx + px, sy + 4 * s);
+          ctx.stroke();
+          ctx.fillStyle = "rgba(237, 242, 247, 0.95)";
+          ctx.fillText(fmtScale(dim, length, unit), sx, sy - 7 * s);
+        }
       }
     }
   }
@@ -4199,7 +7595,11 @@ function drawFrameAndOverlays() {
   const viewRect = renderGeometry.viewRect;
   let drawRect;
   state.drawTiles = [];
-  ctx.imageSmoothingEnabled = false;
+  const smoothUpscale = spatialScaleFactor() !== 1 && !isVolumeMode() && !isSphereMode();
+  ctx.imageSmoothingEnabled = smoothUpscale;
+  if (ctx.imageSmoothingEnabled && "imageSmoothingQuality" in ctx) {
+    ctx.imageSmoothingQuality = "high";
+  }
 
   if (state.frameTiles && state.frameTiles.length) {
     const gridRects = getGridDrawRects(viewRect);
@@ -4209,19 +7609,11 @@ function drawFrameAndOverlays() {
     for (let i = 0; i < state.frameTiles.length && i < gridRects.tiles.length; i += 1) {
       const tileCanvas = state.frameTiles[i];
       const tileRect = gridRects.tiles[i];
-      ctx.drawImage(
-        tileCanvas,
-        viewRect.srcX,
-        viewRect.srcY,
-        viewRect.srcW,
-        viewRect.srcH,
-        tileRect.x,
-        tileRect.y,
-        tileRect.w,
-        tileRect.h
-      );
+      const srcRect = canvasViewSourceRect(tileCanvas, viewRect);
+      drawImageWithPlaneFlip(ctx, tileCanvas, srcRect, tileRect);
 
-      if (isSamplesMode() && Number.isInteger(state.sampleGridIndices[i])) {
+      const includeSampleLabels = !renderOverlayDrawOverride || renderOverlayDrawOverride.includeSampleLabels !== false;
+      if (isSamplesMode() && includeSampleLabels && Number.isInteger(state.sampleGridIndices[i])) {
         const label = `S${state.sampleGridIndices[i]}`;
         ctx.save();
         ctx.font = `${Math.round(11 * s)}px sans-serif`;
@@ -4236,17 +7628,8 @@ function drawFrameAndOverlays() {
   } else {
     drawRect = renderGeometry.drawRect;
     state.drawTiles = [drawRect];
-    ctx.drawImage(
-      state.frameCanvas,
-      viewRect.srcX,
-      viewRect.srcY,
-      viewRect.srcW,
-      viewRect.srcH,
-      drawRect.x,
-      drawRect.y,
-      drawRect.w,
-      drawRect.h
-    );
+    const srcRect = canvasViewSourceRect(state.frameCanvas, viewRect);
+    drawImageWithPlaneFlip(ctx, state.frameCanvas, srcRect, drawRect);
   }
   state.drawRect = drawRect;
   if (els.colorbarPanel) {
@@ -4254,7 +7637,7 @@ function drawFrameAndOverlays() {
     els.colorbarPanel.style.width = `${cssBarW}px`;
   }
 
-  drawOrientationAndScale(viewRect, drawRect);
+  drawOrientationAndScale(viewRect, drawRect, renderOverlayDrawOverride);
   drawEvpaOverlay(viewRect, drawRect);
   drawSelectionOverlay(viewRect, drawRect);
   drawZoomDragOverlay(viewRect, drawRect);
@@ -4278,9 +7661,10 @@ function payloadFullShape(payload, width, height) {
 const HEALPIX_JRLL = [2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4];
 const HEALPIX_JPLL = [1, 3, 5, 7, 0, 2, 4, 6, 1, 3, 5, 7];
 const SPHERE_INSIDE_SCALE = 0.2;
-const SPHERE_INSIDE_SCALE_MIN = 0.05;
+const SPHERE_INSIDE_SCALE_MIN = 0.004;
 const SPHERE_INSIDE_SCALE_MAX = 6.0;
 const SPHERE_OUTSIDE_RADIUS = 0.47;
+const SPHERE_DRAG_PREVIEW_MAX_PIXELS = 140000;
 
 function healpixRingPixToVector(nside, ipix) {
   const npix = 12 * nside * nside;
@@ -4443,41 +7827,16 @@ function ensureSphereSimplexFaces() {
 }
 
 function rotateSphereVector(x, y, z) {
-  const yaw = state.sphereYaw || 0;
-  const pitch = state.spherePitch || 0;
-  const cy = Math.cos(yaw);
-  const sy = Math.sin(yaw);
-  const cp = Math.cos(pitch);
-  const sp = Math.sin(pitch);
-
-  const x1 = x * cy - y * sy;
-  const y1 = x * sy + y * cy;
-  const z1 = z;
-
-  const x2 = x1 * cp + z1 * sp;
-  const y2 = y1;
-  const z2 = -x1 * sp + z1 * cp;
-  return [x2, y2, z2];
+  const m = activeSphereRotationMatrix();
+  return [
+    x * m[0] + y * m[1] + z * m[2],
+    x * m[3] + y * m[4] + z * m[5],
+    x * m[6] + y * m[7] + z * m[8],
+  ];
 }
 
 function inverseSphereRotationMatrix() {
-  const yaw = state.sphereYaw || 0;
-  const pitch = state.spherePitch || 0;
-  const cy = Math.cos(yaw);
-  const sy = Math.sin(yaw);
-  const cp = Math.cos(pitch);
-  const sp = Math.sin(pitch);
-  return [
-    cp * cy,
-    sy,
-    -sp * cy,
-    -cp * sy,
-    cy,
-    sp * sy,
-    sp,
-    0,
-    cp,
-  ];
+  return mat3Transpose(activeSphereRotationMatrix());
 }
 
 function healpixVecToRingPix(nside, x, y, z) {
@@ -4677,32 +8036,226 @@ function ensureSphereRayGrid(width, height, projection) {
   return grid;
 }
 
-function renderSphereRayMapped(img, indexMap, width, height, projection, npix, colorForPixel, vectors) {
+function sphereOrthogonalBasis(x, y, z) {
+  let rx = 0;
+  let ry = 0;
+  let rz = 1;
+  if (Math.abs(z) > 0.9) {
+    rx = 0;
+    ry = 1;
+    rz = 0;
+  }
+
+  let tx = ry * z - rz * y;
+  let ty = rz * x - rx * z;
+  let tz = rx * y - ry * x;
+  let tn = Math.hypot(tx, ty, tz);
+  if (!(tn > 1.0e-12)) {
+    tx = 1;
+    ty = 0;
+    tz = 0;
+    tn = 1;
+  }
+  tx /= tn;
+  ty /= tn;
+  tz /= tn;
+
+  let ux = y * tz - z * ty;
+  let uy = z * tx - x * tz;
+  let uz = x * ty - y * tx;
+  let un = Math.hypot(ux, uy, uz);
+  if (!(un > 1.0e-12)) {
+    ux = 0;
+    uy = 1;
+    uz = 0;
+    un = 1;
+  }
+  ux /= un;
+  uy /= un;
+  uz /= un;
+  return [tx, ty, tz, ux, uy, uz];
+}
+
+function sphereNormalizeVector(x, y, z) {
+  const norm = Math.hypot(x, y, z);
+  if (!(norm > 1.0e-12)) return [1, 0, 0];
+  const inv = 1 / norm;
+  return [x * inv, y * inv, z * inv];
+}
+
+function sphereUpsampleKernelCacheKey(dataNside, mapNside, ordering) {
+  return `${ordering}:${dataNside}->${mapNside}`;
+}
+
+function cacheSphereUpsampleKernel(key, kernel) {
+  sphereUpsampleKernelCache.set(key, kernel);
+  if (sphereUpsampleKernelCache.size <= SPHERE_UPSAMPLE_KERNEL_CACHE_MAX) return;
+  const oldestKey = sphereUpsampleKernelCache.keys().next().value;
+  if (oldestKey !== undefined) sphereUpsampleKernelCache.delete(oldestKey);
+}
+
+function ensureSphereUpsampleKernel(dataNside, mapNside, ordering, ringLut) {
+  if (!(mapNside > dataNside)) return null;
+  const key = sphereUpsampleKernelCacheKey(dataNside, mapNside, ordering);
+  const cached = sphereUpsampleKernelCache.get(key);
+  if (cached) return cached;
+
+  const mapNpix = 12 * mapNside * mapNside;
+  const samples = new Int32Array(mapNpix * 5);
+  const centers = new Int32Array(mapNpix);
+  samples.fill(-1);
+  centers.fill(-1);
+
+  const ringToData = ordering === "nested" ? ringLut : null;
+  const angularJitter = 0.62 / Math.max(1, dataNside);
+  for (let mapRing = 0; mapRing < mapNpix; mapRing += 1) {
+    const [vx, vy, vz] = healpixRingPixToVector(mapNside, mapRing);
+    const [tx, ty, tz, ux, uy, uz] = sphereOrthogonalBasis(vx, vy, vz);
+    const samplePoints = [
+      vx,
+      vy,
+      vz,
+      ...sphereNormalizeVector(vx + tx * angularJitter, vy + ty * angularJitter, vz + tz * angularJitter),
+      ...sphereNormalizeVector(vx - tx * angularJitter, vy - ty * angularJitter, vz - tz * angularJitter),
+      ...sphereNormalizeVector(vx + ux * angularJitter, vy + uy * angularJitter, vz + uz * angularJitter),
+      ...sphereNormalizeVector(vx - ux * angularJitter, vy - uy * angularJitter, vz - uz * angularJitter),
+    ];
+
+    let center = -1;
+    const base = mapRing * 5;
+    for (let si = 0; si < 5; si += 1) {
+      const pi = si * 3;
+      const ring = healpixVecToRingPix(dataNside, samplePoints[pi + 0], samplePoints[pi + 1], samplePoints[pi + 2]);
+      const dataIdx = ringToData ? ringToData[ring] : ring;
+      if (!Number.isFinite(dataIdx) || dataIdx < 0) continue;
+      samples[base + si] = dataIdx;
+      if (si === 0) center = dataIdx;
+    }
+    if (center < 0) {
+      for (let si = 1; si < 5; si += 1) {
+        const idx = samples[base + si];
+        if (idx >= 0) {
+          center = idx;
+          break;
+        }
+      }
+    }
+    centers[mapRing] = center;
+  }
+
+  const kernel = { samples, centers, mapNpix };
+  cacheSphereUpsampleKernel(key, kernel);
+  return kernel;
+}
+
+function sphereBuildRayMappedColorBuffers(npix, colorForPixel, dataNside, mapNside, ordering, ringLut, interpolateUpscale) {
+  const dataR = new Uint8Array(npix);
+  const dataG = new Uint8Array(npix);
+  const dataB = new Uint8Array(npix);
+  const fallback = colorForNorm(0);
+  for (let ipix = 0; ipix < npix; ipix += 1) {
+    const rgb = colorForPixel(ipix);
+    if (rgb) {
+      dataR[ipix] = rgb[0];
+      dataG[ipix] = rgb[1];
+      dataB[ipix] = rgb[2];
+    } else {
+      dataR[ipix] = fallback[0];
+      dataG[ipix] = fallback[1];
+      dataB[ipix] = fallback[2];
+    }
+  }
+
+  const useInterpolation = Boolean(interpolateUpscale && mapNside > dataNside);
+  if (!useInterpolation) {
+    return {
+      colorR: dataR,
+      colorG: dataG,
+      colorB: dataB,
+      mapToData: null,
+      interpolated: false,
+    };
+  }
+
+  const kernel = ensureSphereUpsampleKernel(dataNside, mapNside, ordering, ringLut);
+  if (!kernel) {
+    return {
+      colorR: dataR,
+      colorG: dataG,
+      colorB: dataB,
+      mapToData: null,
+      interpolated: false,
+    };
+  }
+  const mapNpix = kernel.mapNpix;
+  const mapR = new Uint8Array(mapNpix);
+  const mapG = new Uint8Array(mapNpix);
+  const mapB = new Uint8Array(mapNpix);
+  const mapToData = kernel.centers;
+  const sampleIdx = kernel.samples;
+  const sampleWeight = [2.2, 1, 1, 1, 1];
+
+  for (let mapRing = 0; mapRing < mapNpix; mapRing += 1) {
+    const base = mapRing * 5;
+    let wr = 0;
+    let wg = 0;
+    let wb = 0;
+    let wsum = 0;
+    for (let si = 0; si < 5; si += 1) {
+      const idx = sampleIdx[base + si];
+      if (idx < 0 || idx >= npix) continue;
+      const w = sampleWeight[si];
+      wr += dataR[idx] * w;
+      wg += dataG[idx] * w;
+      wb += dataB[idx] * w;
+      wsum += w;
+    }
+    if (!(wsum > 0)) {
+      mapR[mapRing] = 255;
+      mapG[mapRing] = 255;
+      mapB[mapRing] = 255;
+      continue;
+    }
+    mapR[mapRing] = clamp(Math.round(wr / wsum), 0, 255);
+    mapG[mapRing] = clamp(Math.round(wg / wsum), 0, 255);
+    mapB[mapRing] = clamp(Math.round(wb / wsum), 0, 255);
+  }
+
+  return {
+    colorR: mapR,
+    colorG: mapG,
+    colorB: mapB,
+    mapToData,
+    interpolated: true,
+  };
+}
+
+function renderSphereRayMapped(img, indexMap, width, height, projection, npix, colorForPixel, vectors, dataNside, renderNside) {
   if (projection !== "inside" && projection !== "outside" && projection !== "mollweide") return false;
   const ordering = state.sphereMeta.ordering || "ring";
   const ringLut = ordering === "nested" ? ensureSphereRingToDataLut(vectors) : null;
   const rayGrid = ensureSphereRayGrid(width, height, projection);
   if (!rayGrid || !rayGrid.pixels || !rayGrid.rays) return false;
 
-  const colorR = new Uint8Array(npix);
-  const colorG = new Uint8Array(npix);
-  const colorB = new Uint8Array(npix);
-  for (let ipix = 0; ipix < npix; ipix += 1) {
-    const rgb = colorForPixel(ipix);
-    if (rgb) {
-      colorR[ipix] = rgb[0];
-      colorG[ipix] = rgb[1];
-      colorB[ipix] = rgb[2];
-    } else {
-      // Match slice rendering behavior in log mode where invalid/negative values appear as white.
-      colorR[ipix] = 255;
-      colorG[ipix] = 255;
-      colorB[ipix] = 255;
-    }
-  }
-
   const data = img.data;
-  const nside = state.sphereMeta.nside;
+  const nside = Math.max(1, Math.round(dataNside || state.sphereMeta.nside || 1));
+  const mapNside = Math.max(1, Math.round(renderNside || nside));
+  const useUpscaleInterpolation = mapNside > nside && !state.sphereDrag;
+  const colorBuffers = sphereBuildRayMappedColorBuffers(
+    npix,
+    colorForPixel,
+    nside,
+    mapNside,
+    ordering,
+    ringLut,
+    useUpscaleInterpolation
+  );
+  const colorR = colorBuffers.colorR;
+  const colorG = colorBuffers.colorG;
+  const colorB = colorBuffers.colorB;
+  const mapToData = colorBuffers.mapToData;
+  const interpolated = colorBuffers.interpolated === true;
+
   const [m00, m01, m02, m10, m11, m12, m20, m21, m22] = inverseSphereRotationMatrix();
   const pixels = rayGrid.pixels;
   const rays = rayGrid.rays;
@@ -4714,17 +8267,41 @@ function renderSphereRayMapped(img, indexMap, width, height, projection, npix, c
     const wx = m00 * cx + m01 * cy + m02 * cz;
     const wy = m10 * cx + m11 * cy + m12 * cz;
     const wz = m20 * cx + m21 * cy + m22 * cz;
-    const ring = healpixVecToRingPix(nside, wx, wy, wz);
-    const ipix = ordering === "nested" ? ringLut[ring] : ring;
-    if (!Number.isFinite(ipix) || ipix < 0 || ipix >= npix) continue;
+
+    let colorIdx = -1;
+    let dataIdx = -1;
+    if (interpolated) {
+      const mapRing = healpixVecToRingPix(mapNside, wx, wy, wz);
+      colorIdx = mapRing;
+      dataIdx = mapToData ? mapToData[mapRing] : -1;
+      if (dataIdx < 0) {
+        const mapVec = healpixRingPixToVector(mapNside, mapRing);
+        const ring = healpixVecToRingPix(nside, mapVec[0], mapVec[1], mapVec[2]);
+        dataIdx = ordering === "nested" ? ringLut[ring] : ring;
+      }
+    } else {
+      if (mapNside === nside) {
+        const ring = healpixVecToRingPix(nside, wx, wy, wz);
+        dataIdx = ordering === "nested" ? ringLut[ring] : ring;
+      } else {
+        const mapRing = healpixVecToRingPix(mapNside, wx, wy, wz);
+        const mapVec = healpixRingPixToVector(mapNside, mapRing);
+        const ring = healpixVecToRingPix(nside, mapVec[0], mapVec[1], mapVec[2]);
+        dataIdx = ordering === "nested" ? ringLut[ring] : ring;
+      }
+      colorIdx = dataIdx;
+    }
+
+    if (!Number.isFinite(colorIdx) || colorIdx < 0 || colorIdx >= colorR.length) continue;
+    if (!Number.isFinite(dataIdx) || dataIdx < 0 || dataIdx >= npix) continue;
 
     const didx = pixels[k];
     const di = didx * 4;
-    data[di + 0] = colorR[ipix];
-    data[di + 1] = colorG[ipix];
-    data[di + 2] = colorB[ipix];
+    data[di + 0] = colorR[colorIdx];
+    data[di + 1] = colorG[colorIdx];
+    data[di + 2] = colorB[colorIdx];
     data[di + 3] = 255;
-    indexMap[didx] = ipix;
+    indexMap[didx] = dataIdx;
   }
   return true;
 }
@@ -4777,27 +8354,42 @@ function projectSphereVector(x, y, z, width, height, projection, allowOutside = 
   return { x: sx, y: sy, depth: x };
 }
 
-function sphereCanvasSize() {
-  const nside = state.sphereMeta && Number.isFinite(state.sphereMeta.nside) ? state.sphereMeta.nside : 16;
-  if (state.sphereProjection === "inside") {
-    const areaSide = clamp(Math.round(nside * 64), 1024, 1792);
-    const area = areaSide * areaSide;
-    const rect = els.canvas ? els.canvas.getBoundingClientRect() : null;
-    const aspect = clamp(
-      (rect && rect.width > 0 ? rect.width : els.canvas?.clientWidth || els.canvas?.width || areaSide) /
-        Math.max(1, rect && rect.height > 0 ? rect.height : els.canvas?.clientHeight || els.canvas?.height || areaSide),
-      0.5,
-      3.0
-    );
-    const width = clamp(Math.round(Math.sqrt(area * aspect)), 768, 2304);
-    const height = clamp(Math.round(Math.sqrt(area / aspect)), 768, 2304);
-    return [width, height];
+function sphereNsideScaleOffset() {
+  // Disabled for now: sphere rendering should not be coupled to spatial resolution scaling.
+  return 0;
+}
+
+function sphereRenderNside(baseNside) {
+  const n = Math.max(1, Math.round(Number.isFinite(baseNside) ? baseNside : 1));
+  const offset = sphereNsideScaleOffset();
+  const hardMax = Math.max(SPHERE_RENDER_NSIDE_MAX, n);
+  const log2n = Math.log2(n);
+  if (Number.isFinite(log2n) && Math.abs(log2n - Math.round(log2n)) <= 1.0e-6) {
+    const order = Math.round(log2n);
+    const targetOrder = Math.max(0, order + offset);
+    const scaled = 2 ** targetOrder;
+    return clamp(Math.round(scaled), SPHERE_RENDER_NSIDE_MIN, hardMax);
   }
-  if (state.sphereProjection === "outside") {
-    const side = clamp(Math.round(nside * 56), 896, 1536);
+  const scaled = n + offset;
+  return clamp(Math.max(1, Math.round(scaled)), SPHERE_RENDER_NSIDE_MIN, hardMax);
+}
+
+function sphereCanvasSize() {
+  const baseNside = state.sphereMeta && Number.isFinite(state.sphereMeta.nside) ? state.sphereMeta.nside : 16;
+  const nside = sphereRenderNside(baseNside);
+  const ratio = Math.sqrt(Math.max(1.0e-6, nside / Math.max(1, baseNside)));
+  if (state.sphereProjection === "inside") {
+    const baseSide = clamp(Math.round(baseNside * 64), 1024, 1792);
+    const side = clamp(Math.round(baseSide * ratio), 640, 1792);
     return [side, side];
   }
-  const width = clamp(Math.round(nside * 96), 1024, 2048);
+  if (state.sphereProjection === "outside") {
+    const baseSide = clamp(Math.round(baseNside * 56), 896, 1536);
+    const side = clamp(Math.round(baseSide * ratio), 560, 1536);
+    return [side, side];
+  }
+  const baseWidth = clamp(Math.round(baseNside * 96), 1024, 2048);
+  const width = clamp(Math.round(baseWidth * ratio), 768, 2048);
   return [width, Math.round(width * 0.5)];
 }
 
@@ -4806,14 +8398,15 @@ function sphereRenderDimensions(options = null) {
   const previewRequested =
     options && options.spherePreview === false
       ? false
-      : (options && options.spherePreview === true) || isPlaying() || isSampleMorphPlaybackActive();
+      : (options && options.spherePreview === true) || state.sphereDrag || isPlaying() || isSampleMorphPlaybackActive();
   if (!previewRequested) {
     return { renderW: outW, renderH: outH, outW, outH };
   }
+  const defaultMaxPixels = state.sphereDrag ? Math.min(playbackMaxPixelsForFrame(), SPHERE_DRAG_PREVIEW_MAX_PIXELS) : playbackMaxPixelsForFrame();
   const maxPixels =
     options && Number.isFinite(options.sphereMaxPixels) && options.sphereMaxPixels > 0
       ? Math.floor(options.sphereMaxPixels)
-      : playbackMaxPixelsForFrame();
+      : defaultMaxPixels;
   if (!Number.isFinite(maxPixels) || maxPixels <= 0) {
     return { renderW: outW, renderH: outH, outW, outH };
   }
@@ -4870,30 +8463,79 @@ function colorizeScalar(v, mm, maxPositive, minPositive) {
   return colorForNorm(norm);
 }
 
-function colorizeMultispectral(rv, gv, bv, stats, gains = null) {
-  const gainR = Array.isArray(gains) && Number.isFinite(gains[0]) && gains[0] > 0 ? gains[0] : 1;
-  const gainG = Array.isArray(gains) && Number.isFinite(gains[1]) && gains[1] > 0 ? gains[1] : 1;
-  const gainB = Array.isArray(gains) && Number.isFinite(gains[2]) && gains[2] > 0 ? gains[2] : 1;
-  const rSample = rv * gainR;
-  const gSample = gv * gainG;
-  const bSample = bv * gainB;
-  if (state.fluxScale === "log") {
-    if (rSample < 0 || gSample < 0 || bSample < 0) return [255, 255, 255];
-    const r = normalizeFluxLog(rSample, stats.maxR * gainR) ?? 0;
-    const g = normalizeFluxLog(gSample, stats.maxG * gainG) ?? 0;
-    const b = normalizeFluxLog(bSample, stats.maxB * gainB) ?? 0;
-    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
-  }
-  if (state.fluxScale === "sqrt") {
-    const r = Math.sqrt(clamp((rSample - stats.mmR.min * gainR) / (stats.spanR * gainR || 1), 0, 1));
-    const g = Math.sqrt(clamp((gSample - stats.mmG.min * gainG) / (stats.spanG * gainG || 1), 0, 1));
-    const b = Math.sqrt(clamp((bSample - stats.mmB.min * gainB) / (stats.spanB * gainB || 1), 0, 1));
-    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
-  }
-  const r = clamp((rSample - stats.mmR.min * gainR) / (stats.spanR * gainR || 1), 0, 1);
-  const g = clamp((gSample - stats.mmG.min * gainG) / (stats.spanG * gainG || 1), 0, 1);
-  const b = clamp((bSample - stats.mmB.min * gainB) / (stats.spanB * gainB || 1), 0, 1);
+function colorizeMultispectral(rv, gv, bv) {
+  const r = clamp(Number.isFinite(rv) ? rv : 0, 0, 1);
+  const g = clamp(Number.isFinite(gv) ? gv : 0, 0, 1);
+  const b = clamp(Number.isFinite(bv) ? bv : 0, 0, 1);
   return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+}
+
+function sphereScalarColorTableKey(mm, maxPositive, minPositive) {
+  const fmt = (v) => (Number.isFinite(v) ? Number(v).toPrecision(9) : "nan");
+  return [
+    state.colorMap || "viridis",
+    state.fluxScale || "linear",
+    state.derivedPolMode || "none",
+    fmt(mm?.min),
+    fmt(mm?.max),
+    fmt(maxPositive),
+    fmt(minPositive),
+  ].join("|");
+}
+
+function getSphereScalarColorTable(values, npix, mm, maxPositive, minPositive) {
+  if (!values || values.length < npix) return null;
+  let byKey = sphereScalarColorTableCache.get(values);
+  if (!byKey) {
+    byKey = new Map();
+    sphereScalarColorTableCache.set(values, byKey);
+  }
+  const key = sphereScalarColorTableKey(mm, maxPositive, minPositive);
+  const cached = byKey.get(key);
+  if (cached && cached.npix === npix) return cached;
+
+  const colors = new Uint8Array(npix * 3);
+  const valid = new Uint8Array(npix);
+  for (let ipix = 0; ipix < npix; ipix += 1) {
+    const v = values[ipix];
+    let norm;
+    if (state.fluxScale === "log") {
+      norm = normalizeFluxLog(v, maxPositive, minPositive);
+    } else if (state.fluxScale === "sqrt") {
+      norm = normalizeFluxSqrt(v, mm);
+    } else {
+      norm = normalizeForColormap(v, mm);
+    }
+    if (norm === null) continue;
+    const rgb = colorForNorm(norm);
+    if (!rgb) continue;
+    const ci = ipix * 3;
+    colors[ci + 0] = rgb[0];
+    colors[ci + 1] = rgb[1];
+    colors[ci + 2] = rgb[2];
+    valid[ipix] = 1;
+  }
+  const out = { npix, colors, valid };
+  byKey.set(key, out);
+  return out;
+}
+
+function getSphereRgbColorTable(rgbValues, npix) {
+  if (!rgbValues || !rgbValues.r || !rgbValues.g || !rgbValues.b) return null;
+  if (rgbValues.r.length < npix || rgbValues.g.length < npix || rgbValues.b.length < npix) return null;
+  const cached = sphereRgbColorTableCache.get(rgbValues);
+  if (cached && cached.npix === npix) return cached;
+
+  const colors = new Uint8Array(npix * 3);
+  for (let ipix = 0; ipix < npix; ipix += 1) {
+    const ci = ipix * 3;
+    colors[ci + 0] = Math.round(clamp(Number.isFinite(rgbValues.r[ipix]) ? rgbValues.r[ipix] : 0, 0, 1) * 255);
+    colors[ci + 1] = Math.round(clamp(Number.isFinite(rgbValues.g[ipix]) ? rgbValues.g[ipix] : 0, 0, 1) * 255);
+    colors[ci + 2] = Math.round(clamp(Number.isFinite(rgbValues.b[ipix]) ? rgbValues.b[ipix] : 0, 0, 1) * 255);
+  }
+  const out = { npix, colors };
+  sphereRgbColorTableCache.set(rgbValues, out);
+  return out;
 }
 
 function buildSphereProjectionMask(width, height, projection) {
@@ -5203,6 +8845,8 @@ function createSphereCanvasCpu(slice, rangeOverride = null, options = null) {
   const vectors = ensureSphereVectors();
   if (!vectors) return null;
   const npix = state.sphereMeta.npix;
+  const dataNside = state.sphereMeta.nside;
+  const renderNside = sphereRenderNside(dataNside);
   const values = slice && Array.isArray(slice.values) ? slice.values : null;
   const rgbValues =
     slice &&
@@ -5240,8 +8884,6 @@ function createSphereCanvasCpu(slice, rangeOverride = null, options = null) {
   let mm = null;
   let maxPositive = 0;
   let minPositive = 0;
-  let rgbStats = null;
-  const rgbGains = rgbMode ? multispectralCorrectionGains(slice) : null;
   if (scalarMode) {
     const sliceStats = isValidRangeStats(slice?.stats) ? slice.stats : null;
     const baseStats = fixedStats ? { min: fixedStats.min, max: fixedStats.max } : sliceStats ? sliceStats : minMax(values);
@@ -5251,39 +8893,29 @@ function createSphereCanvasCpu(slice, rangeOverride = null, options = null) {
       minPositive = Math.max(0, mm.min);
       maxPositive = Math.max(minPositive, mm.max);
     }
-  } else {
-    const mmR = minMax(rgbValues.r);
-    const mmG = minMax(rgbValues.g);
-    const mmB = minMax(rgbValues.b);
-    rgbStats = {
-      mmR,
-      mmG,
-      mmB,
-      spanR: mmR.max - mmR.min || 1,
-      spanG: mmG.max - mmG.min || 1,
-      spanB: mmB.max - mmB.min || 1,
-      maxR: 0,
-      maxG: 0,
-      maxB: 0,
-    };
-    if (state.fluxScale === "log") {
-      for (let i = 0; i < npix; i += 1) {
-        const rv = rgbValues.r[i];
-        const gv = rgbValues.g[i];
-        const bv = rgbValues.b[i];
-        if (rv > rgbStats.maxR) rgbStats.maxR = rv;
-        if (gv > rgbStats.maxG) rgbStats.maxG = gv;
-        if (bv > rgbStats.maxB) rgbStats.maxB = bv;
-      }
-    }
   }
-  const pixelColor = (ipix) =>
-    scalarMode
-      ? colorizeScalar(values[ipix], mm, maxPositive, minPositive)
-      : colorizeMultispectral(rgbValues.r[ipix], rgbValues.g[ipix], rgbValues.b[ipix], rgbStats, rgbGains);
+  const scalarTable = scalarMode ? getSphereScalarColorTable(values, npix, mm, maxPositive, minPositive) : null;
+  const rgbTable = rgbMode ? getSphereRgbColorTable(rgbValues, npix) : null;
+  const scratchRgb = [0, 0, 0];
+  const pixelColor = (ipix) => {
+    if (scalarTable) {
+      if (!scalarTable.valid[ipix]) return null;
+      const ci = ipix * 3;
+      scratchRgb[0] = scalarTable.colors[ci + 0];
+      scratchRgb[1] = scalarTable.colors[ci + 1];
+      scratchRgb[2] = scalarTable.colors[ci + 2];
+      return scratchRgb;
+    }
+    if (!rgbTable) return null;
+    const ci = ipix * 3;
+    scratchRgb[0] = rgbTable.colors[ci + 0];
+    scratchRgb[1] = rgbTable.colors[ci + 1];
+    scratchRgb[2] = rgbTable.colors[ci + 2];
+    return scratchRgb;
+  };
 
   const projection = state.sphereProjection || "mollweide";
-  if (renderSphereRayMapped(img, indexMap, width, height, projection, npix, pixelColor, vectors)) {
+  if (renderSphereRayMapped(img, indexMap, width, height, projection, npix, pixelColor, vectors, dataNside, renderNside)) {
     off.getContext("2d").putImageData(img, 0, 0);
     off.__healpixIndexMap = indexMap;
     return upscaleSphereCanvasOutput(off, dims.outW, dims.outH, includeIndexMap);
@@ -5368,7 +9000,9 @@ function createSphereCanvas(slice, rangeOverride = null, options = null) {
   const width = dims.renderW;
   const height = dims.renderH;
   const includeIndexMap = !state.sphereDrag && options?.sphereIncludeIndexMap !== false;
-  if (sphereBackendMode(width, height) === "gpu") {
+  const scaledSphereNside = sphereRenderNside(state.sphereMeta?.nside || 1);
+  const useGpuSphere = (scalarMode || rgbMode) && sphereBackendMode(width, height) === "gpu" && scaledSphereNside === (state.sphereMeta?.nside || 1);
+  if (useGpuSphere) {
     const renderer = ensureSphereGpuRenderer();
     if (renderer) {
       try {
@@ -5381,7 +9015,6 @@ function createSphereCanvas(slice, rangeOverride = null, options = null) {
         const gpu = renderer.render({
           values: scalarMode ? values : null,
           rgbValues: rgbMode ? rgbValues : null,
-          rgbGains: rgbMode ? multispectralCorrectionGains(slice) : null,
           npix,
           nside: state.sphereMeta.nside,
           projection: state.sphereProjection || "mollweide",
@@ -5417,6 +9050,206 @@ function upscaleCanvasNearest(srcCanvas, targetW, targetH) {
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(srcCanvas, 0, 0, targetW, targetH);
   return out;
+}
+
+function upscaleCanvasInterpolated(srcCanvas, targetW, targetH) {
+  if (!srcCanvas) return null;
+  if (srcCanvas.width === targetW && srcCanvas.height === targetH) return srcCanvas;
+  const out = document.createElement("canvas");
+  out.width = targetW;
+  out.height = targetH;
+  const ctx = out.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  if ("imageSmoothingQuality" in ctx) ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(srcCanvas, 0, 0, targetW, targetH);
+  return out;
+}
+
+function setCanvasLogicalSize(canvas, logicalW, logicalH) {
+  if (!canvas) return;
+  const w = Math.max(1, Math.round(Number.isFinite(logicalW) ? logicalW : canvas.width));
+  const h = Math.max(1, Math.round(Number.isFinite(logicalH) ? logicalH : canvas.height));
+  canvas.__logicalWidth = w;
+  canvas.__logicalHeight = h;
+}
+
+function canvasLogicalWidth(canvas) {
+  if (!canvas) return 1;
+  const w = Number(canvas.__logicalWidth);
+  return Number.isFinite(w) && w > 0 ? w : Math.max(1, canvas.width || 1);
+}
+
+function canvasLogicalHeight(canvas) {
+  if (!canvas) return 1;
+  const h = Number(canvas.__logicalHeight);
+  return Number.isFinite(h) && h > 0 ? h : Math.max(1, canvas.height || 1);
+}
+
+function canvasViewSourceRect(canvas, viewRect) {
+  const logicalW = canvasLogicalWidth(canvas);
+  const logicalH = canvasLogicalHeight(canvas);
+  const scaleX = (canvas && canvas.width ? canvas.width : logicalW) / Math.max(1.0e-6, logicalW);
+  const scaleY = (canvas && canvas.height ? canvas.height : logicalH) / Math.max(1.0e-6, logicalH);
+  const maxSrcW = canvas && canvas.width ? canvas.width : logicalW;
+  const maxSrcH = canvas && canvas.height ? canvas.height : logicalH;
+  const rawSrcX = viewRect.srcX * scaleX;
+  const rawSrcY = viewRect.srcY * scaleY;
+  const rawSrcW = viewRect.srcW * scaleX;
+  const rawSrcH = viewRect.srcH * scaleY;
+  const spanW = Math.max(1.0, maxSrcW * VIEW_SOURCE_RECT_MAX_MULTIPLIER);
+  const spanH = Math.max(1.0, maxSrcH * VIEW_SOURCE_RECT_MAX_MULTIPLIER);
+  const srcX = clamp(rawSrcX, -spanW, maxSrcW + spanW);
+  const srcY = clamp(rawSrcY, -spanH, maxSrcH + spanH);
+  const srcW = clamp(rawSrcW, 1.0e-6, spanW);
+  const srcH = clamp(rawSrcH, 1.0e-6, spanH);
+  return { srcX, srcY, srcW, srcH };
+}
+
+function applySliceUpscale(canvas, logicalW, logicalH) {
+  if (!canvas) return null;
+  const lw = Math.max(1, Math.round(logicalW));
+  const lh = Math.max(1, Math.round(logicalH));
+  const factor = spatialScaleFactor();
+  let targetW = Math.max(1, lw * factor);
+  let targetH = Math.max(1, lh * factor);
+  const totalPixels = targetW * targetH;
+  if (totalPixels > SPATIAL_SCALE_MAX_PIXELS) {
+    const scale = Math.sqrt(SPATIAL_SCALE_MAX_PIXELS / totalPixels);
+    targetW = Math.max(1, Math.floor(targetW * scale));
+    targetH = Math.max(1, Math.floor(targetH * scale));
+  }
+  const shouldInterpolate = targetW !== canvas.width || targetH !== canvas.height;
+  const out = shouldInterpolate ? upscaleCanvasInterpolated(canvas, targetW, targetH) : canvas;
+  setCanvasLogicalSize(out, lw, lh);
+  return out;
+}
+
+function spatialScaledPlaneShape(logicalW, logicalH, factor = spatialScaleFactor()) {
+  const lw = Math.max(1, Math.round(logicalW));
+  const lh = Math.max(1, Math.round(logicalH));
+  let targetW = Math.max(1, Math.round(lw * factor));
+  let targetH = Math.max(1, Math.round(lh * factor));
+  const totalPixels = targetW * targetH;
+  if (totalPixels > SPATIAL_SCALE_MAX_PIXELS) {
+    const scale = Math.sqrt(SPATIAL_SCALE_MAX_PIXELS / totalPixels);
+    targetW = Math.max(1, Math.floor(targetW * scale));
+    targetH = Math.max(1, Math.floor(targetH * scale));
+  }
+  return { logicalW: lw, logicalH: lh, width: targetW, height: targetH };
+}
+
+function finiteBilinearValue(c00, c10, c01, c11, tx, ty) {
+  const w00 = (1 - tx) * (1 - ty);
+  const w10 = tx * (1 - ty);
+  const w01 = (1 - tx) * ty;
+  const w11 = tx * ty;
+  let sum = 0;
+  let weight = 0;
+  if (Number.isFinite(c00)) {
+    sum += c00 * w00;
+    weight += w00;
+  }
+  if (Number.isFinite(c10)) {
+    sum += c10 * w10;
+    weight += w10;
+  }
+  if (Number.isFinite(c01)) {
+    sum += c01 * w01;
+    weight += w01;
+  }
+  if (Number.isFinite(c11)) {
+    sum += c11 * w11;
+    weight += w11;
+  }
+  if (weight <= 1.0e-12) return Number.NaN;
+  return sum / weight;
+}
+
+function bilinearSamplePlane(values, width, height, fx, fy) {
+  const x0 = Math.floor(fx);
+  const y0 = Math.floor(fy);
+  const x1 = Math.min(width - 1, x0 + 1);
+  const y1 = Math.min(height - 1, y0 + 1);
+  const tx = fx - x0;
+  const ty = fy - y0;
+  const c00 = values[x0 * height + y0];
+  const c10 = values[x1 * height + y0];
+  const c01 = values[x0 * height + y1];
+  const c11 = values[x1 * height + y1];
+  return finiteBilinearValue(c00, c10, c01, c11, tx, ty);
+}
+
+function resampleScalarPlaneValues(values, sourceW, sourceH, logicalW, logicalH, stepX, stepY, targetW, targetH) {
+  if (!Array.isArray(values) || values.length !== sourceW * sourceH) return null;
+  const sx = Math.max(1, Number.isFinite(stepX) ? Math.floor(stepX) : 1);
+  const sy = Math.max(1, Number.isFinite(stepY) ? Math.floor(stepY) : 1);
+  const out = new Array(targetW * targetH);
+  const logicalSpanX = Math.max(1, logicalW - 1);
+  const logicalSpanY = Math.max(1, logicalH - 1);
+  const targetSpanX = Math.max(1, targetW - 1);
+  const targetSpanY = Math.max(1, targetH - 1);
+
+  for (let x = 0; x < targetW; x += 1) {
+    const logicalX = targetW > 1 ? (x * logicalSpanX) / targetSpanX : 0;
+    const fx = clamp(logicalX / sx, 0, sourceW - 1);
+    for (let y = 0; y < targetH; y += 1) {
+      const logicalY = targetH > 1 ? (y * logicalSpanY) / targetSpanY : 0;
+      const fy = clamp(logicalY / sy, 0, sourceH - 1);
+      out[x * targetH + y] = bilinearSamplePlane(values, sourceW, sourceH, fx, fy);
+    }
+  }
+  return out;
+}
+
+function resampleScalarSliceForSpatialScale(slice, logicalW, logicalH, targetW, targetH) {
+  if (!slice || !Array.isArray(slice.shape) || slice.shape.length < 2 || !Array.isArray(slice.values)) return null;
+  const sourceW = Math.max(1, Number.parseInt(slice.shape[0], 10));
+  const sourceH = Math.max(1, Number.parseInt(slice.shape[1], 10));
+  const [stepX, stepY] = payloadSamplingStep(slice);
+  const cacheKey = `${targetW}x${targetH}:${logicalW}x${logicalH}:${stepX}x${stepY}`;
+  let cacheByKey = spatialSliceResampleCache.get(slice);
+  if (!cacheByKey) {
+    cacheByKey = new Map();
+    spatialSliceResampleCache.set(slice, cacheByKey);
+  }
+  const cached = cacheByKey.get(cacheKey);
+  if (cached) return cached;
+  const values = resampleScalarPlaneValues(slice.values, sourceW, sourceH, logicalW, logicalH, stepX, stepY, targetW, targetH);
+  if (!values) return null;
+  const resampled = {
+    ...slice,
+    shape: [targetW, targetH],
+    full_shape: [logicalW, logicalH],
+    sampling_step: [1, 1],
+    values,
+  };
+  cacheByKey.set(cacheKey, resampled);
+  return resampled;
+}
+
+function resampleRgbPayloadForSpatialScale(payload, logicalW, logicalH, targetW, targetH) {
+  if (!payload || !payload.values || !Array.isArray(payload.values.r) || !Array.isArray(payload.values.g) || !Array.isArray(payload.values.b)) {
+    return null;
+  }
+  const [sourceWRaw, sourceHRaw] = payloadShape2d(payload);
+  const sourceW = Math.max(1, sourceWRaw);
+  const sourceH = Math.max(1, sourceHRaw);
+  const [stepX, stepY] = payloadSamplingStep(payload);
+  const cacheKey = `${targetW}x${targetH}:${logicalW}x${logicalH}:${stepX}x${stepY}`;
+  let cacheByKey = spatialRgbResampleCache.get(payload);
+  if (!cacheByKey) {
+    cacheByKey = new Map();
+    spatialRgbResampleCache.set(payload, cacheByKey);
+  }
+  const cached = cacheByKey.get(cacheKey);
+  if (cached) return cached;
+  const r = resampleScalarPlaneValues(payload.values.r, sourceW, sourceH, logicalW, logicalH, stepX, stepY, targetW, targetH);
+  const g = resampleScalarPlaneValues(payload.values.g, sourceW, sourceH, logicalW, logicalH, stepX, stepY, targetW, targetH);
+  const b = resampleScalarPlaneValues(payload.values.b, sourceW, sourceH, logicalW, logicalH, stepX, stepY, targetW, targetH);
+  if (!r || !g || !b) return null;
+  const resampled = { width: targetW, height: targetH, r, g, b };
+  cacheByKey.set(cacheKey, resampled);
+  return resampled;
 }
 
 function createSingleCanvasCpu(slice, rangeOverride = null) {
@@ -5481,14 +9314,28 @@ function createSingleCanvas(slice, rangeOverride = null, options = null) {
     const sphereCanvas = createSphereCanvas(slice, rangeOverride, options);
     if (sphereCanvas) return sphereCanvas;
   }
-  const [width, height] = slice.shape;
+  const [width, height] = payloadShape2d(slice);
   const [fullW, fullH] = payloadFullShape(slice, width, height);
-  if (sliceBackendMode(width, height) === "gpu") {
+  const shape = spatialScaledPlaneShape(fullW, fullH);
+  const scaled = shape.width !== fullW || shape.height !== fullH;
+  const renderPayload = scaled
+    ? resampleScalarSliceForSpatialScale(slice, shape.logicalW, shape.logicalH, shape.width, shape.height) || slice
+    : slice;
+  const [renderWidth, renderHeight] = payloadShape2d(renderPayload);
+
+  if (sliceBackendMode(renderWidth, renderHeight) === "gpu") {
     const renderer = ensureSliceGpuRenderer();
     if (renderer) {
       try {
-        const gpu = renderer.render(slice, rangeOverride);
-        if (gpu) return upscaleCanvasNearest(gpu, fullW, fullH);
+        const gpu = renderer.render(renderPayload, rangeOverride);
+        if (gpu) {
+          if (scaled && renderWidth === shape.width && renderHeight === shape.height) {
+            setCanvasLogicalSize(gpu, shape.logicalW, shape.logicalH);
+            return gpu;
+          }
+          const upsampled = upscaleCanvasNearest(gpu, fullW, fullH);
+          return applySliceUpscale(upsampled, fullW, fullH);
+        }
       } catch (err) {
         state.sliceGpu.lastError = err && err.message ? err.message : "render failed";
         state.sliceGpu.available = false;
@@ -5496,84 +9343,24 @@ function createSingleCanvas(slice, rangeOverride = null, options = null) {
       }
     }
   }
-  return upscaleCanvasNearest(createSingleCanvasCpu(slice, rangeOverride), fullW, fullH);
+  if (scaled && renderWidth === shape.width && renderHeight === shape.height) {
+    const cpuScaled = createSingleCanvasCpu(renderPayload, rangeOverride);
+    setCanvasLogicalSize(cpuScaled, shape.logicalW, shape.logicalH);
+    return cpuScaled;
+  }
+  const cpuCanvas = upscaleCanvasNearest(createSingleCanvasCpu(slice, rangeOverride), fullW, fullH);
+  return applySliceUpscale(cpuCanvas, fullW, fullH);
 }
 
-function createRgbCanvas(width, height, redVals, greenVals, blueVals, payload = null) {
-  const gains = multispectralCorrectionGains(payload);
-  if (rgbBackendMode(width, height) === "gpu") {
-    const renderer = ensureRgbGpuRenderer();
-    if (renderer) {
-      try {
-        const gpu = renderer.render(width, height, redVals, greenVals, blueVals, {
-          gains,
-          fluxScale: state.fluxScale,
-        });
-        if (gpu) {
-          const [fullW, fullH] = payloadFullShape(payload, width, height);
-          return upscaleCanvasNearest(gpu, fullW, fullH);
-        }
-      } catch (err) {
-        state.rgbGpu.lastError = err && err.message ? err.message : "render failed";
-        state.rgbGpu.available = false;
-        state.rgbGpu.renderer = null;
-      }
-    }
-  }
-
-  const [gainR, gainG, gainB] = gains;
+function createRgbRasterCanvas(width, height, redVals, greenVals, blueVals) {
   const img = els.canvas.getContext("2d").createImageData(width, height);
-  const mmR = minMax(redVals);
-  const mmG = minMax(greenVals);
-  const mmB = minMax(blueVals);
-  const minR = mmR.min * gainR;
-  const minG = mmG.min * gainG;
-  const minB = mmB.min * gainB;
-  const spanR = (mmR.max - mmR.min) * gainR || 1;
-  const spanG = (mmG.max - mmG.min) * gainG || 1;
-  const spanB = (mmB.max - mmB.min) * gainB || 1;
-  let maxR = 0;
-  let maxG = 0;
-  let maxB = 0;
-  if (state.fluxScale === "log") {
-    for (let i = 0; i < redVals.length; i += 1) {
-      if (redVals[i] > maxR) maxR = redVals[i];
-      if (greenVals[i] > maxG) maxG = greenVals[i];
-      if (blueVals[i] > maxB) maxB = blueVals[i];
-    }
-    maxR *= gainR;
-    maxG *= gainG;
-    maxB *= gainB;
-  }
 
   for (let x = 0; x < width; x += 1) {
     for (let y = 0; y < height; y += 1) {
       const src = x * height + y;
-      const rv = redVals[src] * gainR;
-      const gv = greenVals[src] * gainG;
-      const bv = blueVals[src] * gainB;
-      let r;
-      let g;
-      let b;
-      if (state.fluxScale === "log") {
-        if (rv < 0 || gv < 0 || bv < 0) {
-          r = 1;
-          g = 1;
-          b = 1;
-        } else {
-          r = normalizeFluxLog(rv, maxR) ?? 0;
-          g = normalizeFluxLog(gv, maxG) ?? 0;
-          b = normalizeFluxLog(bv, maxB) ?? 0;
-        }
-      } else if (state.fluxScale === "sqrt") {
-        r = Math.sqrt(clamp((rv - minR) / spanR, 0, 1));
-        g = Math.sqrt(clamp((gv - minG) / spanG, 0, 1));
-        b = Math.sqrt(clamp((bv - minB) / spanB, 0, 1));
-      } else {
-        r = clamp((rv - minR) / spanR, 0, 1);
-        g = clamp((gv - minG) / spanG, 0, 1);
-        b = clamp((bv - minB) / spanB, 0, 1);
-      }
+      const r = clamp(Number.isFinite(redVals[src]) ? redVals[src] : 0, 0, 1);
+      const g = clamp(Number.isFinite(greenVals[src]) ? greenVals[src] : 0, 0, 1);
+      const b = clamp(Number.isFinite(blueVals[src]) ? blueVals[src] : 0, 0, 1);
       const dst = (y * width + x) * 4;
       img.data[dst + 0] = Math.round(r * 255);
       img.data[dst + 1] = Math.round(g * 255);
@@ -5586,8 +9373,72 @@ function createRgbCanvas(width, height, redVals, greenVals, blueVals, payload = 
   off.width = width;
   off.height = height;
   off.getContext("2d").putImageData(img, 0, 0);
+  return off;
+}
+
+function createRgbCanvas(width, height, redVals, greenVals, blueVals, payload = null) {
   const [fullW, fullH] = payloadFullShape(payload, width, height);
-  return upscaleCanvasNearest(off, fullW, fullH);
+  const shape = spatialScaledPlaneShape(fullW, fullH);
+  const scaledRequested = shape.width !== fullW || shape.height !== fullH;
+  let scaled = false;
+  let renderWidth = width;
+  let renderHeight = height;
+  let renderR = redVals;
+  let renderG = greenVals;
+  let renderB = blueVals;
+
+  if (scaledRequested) {
+    const resampled = payload ? resampleRgbPayloadForSpatialScale(payload, shape.logicalW, shape.logicalH, shape.width, shape.height) : null;
+    if (resampled) {
+      renderWidth = resampled.width;
+      renderHeight = resampled.height;
+      renderR = resampled.r;
+      renderG = resampled.g;
+      renderB = resampled.b;
+      scaled = true;
+    } else {
+      const rScaled = resampleScalarPlaneValues(redVals, width, height, fullW, fullH, 1, 1, shape.width, shape.height);
+      const gScaled = resampleScalarPlaneValues(greenVals, width, height, fullW, fullH, 1, 1, shape.width, shape.height);
+      const bScaled = resampleScalarPlaneValues(blueVals, width, height, fullW, fullH, 1, 1, shape.width, shape.height);
+      if (rScaled && gScaled && bScaled) {
+        renderWidth = shape.width;
+        renderHeight = shape.height;
+        renderR = rScaled;
+        renderG = gScaled;
+        renderB = bScaled;
+        scaled = true;
+      }
+    }
+  }
+
+  if (rgbBackendMode(renderWidth, renderHeight) === "gpu") {
+    const renderer = ensureRgbGpuRenderer();
+    if (renderer) {
+      try {
+        const gpu = renderer.render(renderWidth, renderHeight, renderR, renderG, renderB);
+        if (gpu) {
+          if (scaled) {
+            setCanvasLogicalSize(gpu, shape.logicalW, shape.logicalH);
+            return gpu;
+          }
+          const upsampled = upscaleCanvasNearest(gpu, fullW, fullH);
+          return applySliceUpscale(upsampled, fullW, fullH);
+        }
+      } catch (err) {
+        state.rgbGpu.lastError = err && err.message ? err.message : "render failed";
+        state.rgbGpu.available = false;
+        state.rgbGpu.renderer = null;
+      }
+    }
+  }
+
+  const off = createRgbRasterCanvas(renderWidth, renderHeight, renderR, renderG, renderB);
+  if (scaled) {
+    setCanvasLogicalSize(off, shape.logicalW, shape.logicalH);
+    return off;
+  }
+  const upsampled = upscaleCanvasNearest(off, fullW, fullH);
+  return applySliceUpscale(upsampled, fullW, fullH);
 }
 
 function trilinearSample(values, nx, ny, nz, fx, fy, fz) {
@@ -5802,14 +9653,15 @@ function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null, o
 
   const yaw = state.volumeYaw;
   const pitch = state.volumePitch;
-  const planeScale = 1.05 / clamp(state.volumeZoom, 0.35, 10.0);
+  const planeScale = 1.05 / clamp(state.volumeZoom, VOLUME_ZOOM_MIN, VOLUME_ZOOM_MAX);
   const planeScaleX = planeScale * (width / Math.max(1, height));
   const cy = Math.cos(yaw);
   const sy = Math.sin(yaw);
   const cp = Math.cos(pitch);
   const sp = Math.sin(pitch);
   const qCfg = volumeQualityConfig();
-  const steps = clamp(Math.round(Math.max(nx, ny, nz) * qCfg.stepMul), 24, 160);
+  const stepScale = clamp(volumeSpatialRenderFactor(), 0.75, 1.75);
+  const steps = clamp(Math.round(Math.max(nx, ny, nz) * qCfg.stepMul * stepScale), 24, 180);
   const opacityGain = clamp(state.volumeRender.opacity, 0.1, 12.0);
   const gamma = clamp(state.volumeRender.gamma, 0.4, 2.4);
   const cutoff = 0;
@@ -6080,53 +9932,39 @@ function drawColorbar() {
   const unit = state.currentIntensityUnit || (state.meta ? state.meta.intensity_unit || "" : "");
   if (state.multiSpectral && state.currentMultispectralBands) {
     const bands = state.currentMultispectralBands;
-    const redBand = bands.red || [0, 1];
-    const greenBand = bands.green || [0, 1];
-    const blueBand = bands.blue || [0, 1];
-    const nuMin = redBand[0];
-    const nuMax = blueBand[1];
-    const requestedAxisScale = bands.axis_scale === "log" ? "log" : "linear";
-    const logAxisUsable = requestedAxisScale === "log" && nuMin > 0 && nuMax > nuMin;
-    const axisScale = logAxisUsable ? "log" : "linear";
-    const axisFromNu = (nu) => (axisScale === "log" ? Math.log10(Math.max(nu, 1e-30)) : nu);
-    const nuFromAxis = (axisCoord) => (axisScale === "log" ? 10 ** axisCoord : axisCoord);
-    const axisMin = axisFromNu(nuMin);
-    const axisMax = axisFromNu(nuMax);
-    const axisSpan = Math.max(1e-9, axisMax - axisMin);
+    const mapper = multispectralNuMapper(bands);
     const unitNu = bands.unit || dimUnit("nu") || "Hz";
     const deslopeAlpha = Number.isFinite(state.multiSpectralDeslope)
       ? state.multiSpectralDeslope
       : Number.isFinite(bands.deslope)
       ? bands.deslope
       : 0;
+    const spectrumNormalized = Boolean(bands.normalize_spectrum);
+    const spectrumNormalizeBoost = Number.isFinite(bands.normalize_spectrum_boost)
+      ? bands.normalize_spectrum_boost
+      : normalizeMultispectralNormalizeBoost(state.multiSpectralNormalizeBoost);
+    const totalFluxBrightness = bands.brightness_mode === "total_flux";
 
     for (let x = 0; x < w; x += 1) {
       const t = x / Math.max(1, w - 1);
-      const nu = nuFromAxis(axisMin + t * axisSpan);
-      const [r, g, b] = colorForSpectralNu(nu, bands);
+      const nu = mapper ? mapper.nuFromAxis(mapper.axisMin + t * mapper.axisSpan) : t;
+      const [r, g, b] = colorForSpectralNu(nu, bands, mapper);
       ctx.fillStyle = `rgb(${r} ${g} ${b})`;
       ctx.fillRect(x, 0, 1, h);
     }
 
-    const rgEdge = 0.5 * ((redBand[1] ?? nuMin) + (greenBand[0] ?? nuMin));
-    const gbEdge = 0.5 * ((greenBand[1] ?? nuMax) + (blueBand[0] ?? nuMax));
-    const xOf = (nu) => ((axisFromNu(nu) - axisMin) / axisSpan) * (w - 1);
-    ctx.strokeStyle = "rgba(237, 242, 247, 0.85)";
-    ctx.lineWidth = 1;
-    for (const edge of [rgEdge, gbEdge]) {
-      if (Number.isFinite(edge) && edge > nuMin && edge < nuMax) {
-        const x = xOf(edge);
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, h);
-        ctx.stroke();
-      }
-    }
-
+    const nuMin = mapper ? mapper.nuMin : Number.parseFloat(bands.red?.[0] ?? 0);
+    const nuMax = mapper ? mapper.nuMax : Number.parseFloat(bands.blue?.[1] ?? 1);
     els.colorbarMin.textContent = fmtPhysical("nu", nuMin, unitNu);
-    const axisLabel = axisScale === "log" ? "log nu" : "linear nu";
+    const axisLabel = mapper && mapper.axisScale === "log" ? "log Frequency" : "linear Frequency";
     const deslopeLabel = Math.abs(deslopeAlpha) > 1.0e-6 ? `, spectral index correction=${deslopeAlpha.toFixed(1)}` : "";
-    els.colorbarMid.textContent = `Spectral map: R -> G -> B (${axisLabel}${deslopeLabel})`;
+    const normalizeLabel = spectrumNormalized
+      ? Math.abs(spectrumNormalizeBoost - 1.0) > 1.0e-6
+        ? `, mean spectrum removed (boost=${spectrumNormalizeBoost.toFixed(2)}x)`
+        : ", mean spectrum removed"
+      : "";
+    const brightnessLabel = totalFluxBrightness ? ", brightness from total flux" : "";
+    els.colorbarMid.textContent = `Spectral delta -> eye RGB (${axisLabel}${deslopeLabel}${normalizeLabel}${brightnessLabel})`;
     els.colorbarMax.textContent = fmtPhysical("nu", nuMax, unitNu);
   } else {
     const stats = activeIntensityRangeStats();
@@ -6143,7 +9981,7 @@ function drawColorbar() {
         modeLabel && windowLabel ? `, ${modeLabel}, ${windowLabel}` : modeLabel ? `, ${modeLabel}` : windowLabel ? `, ${windowLabel}` : "";
       if (state.fluxScale === "log") {
         els.colorbarMin.textContent = `${fmtIntensity(Math.max(0, stats.min))} ${unit}`.trim();
-        els.colorbarMid.textContent = `${state.colorMap} (log, neg=white${fixedLabel})`;
+        els.colorbarMid.textContent = `${state.colorMap} (log${fixedLabel})`;
         els.colorbarMax.textContent = `${fmtIntensity(Math.max(0, stats.max))} ${unit}`.trim();
       } else if (state.fluxScale === "sqrt") {
         els.colorbarMin.textContent = `${fmtIntensity(stats.min)} ${unit}`.trim();
@@ -6204,6 +10042,26 @@ function renderTileFrame(frameTiles, gridSize, selectedCoords, intensityStats, i
   refreshHoverProbeFromPointer();
 }
 
+function renderFrameFast(frameCanvas, options = null) {
+  const refreshHover = !options || options.refreshHover !== false;
+  state.frameCanvas = frameCanvas;
+  state.frameTiles = null;
+  state.frameGrid = 1;
+  state.drawTiles = [];
+  drawFrameAndOverlays();
+  if (refreshHover) refreshHoverProbeFromPointer();
+}
+
+function renderTileFrameFast(frameTiles, gridSize, options = null) {
+  const refreshHover = !options || options.refreshHover !== false;
+  state.frameCanvas = null;
+  state.frameTiles = frameTiles;
+  state.frameGrid = Math.max(1, gridSize);
+  state.drawTiles = [];
+  drawFrameAndOverlays();
+  if (refreshHover) refreshHoverProbeFromPointer();
+}
+
 function nextSampleIndex(idx) {
   const n = sampleCount();
   if (n <= 1) return 0;
@@ -6230,6 +10088,7 @@ function blendCanvasPair(fromCanvas, toCanvas, alpha, reuseCanvas = null) {
   ctx.globalAlpha = clamp(alpha, 0, 1);
   ctx.drawImage(toCanvas, 0, 0);
   ctx.globalAlpha = 1;
+  setCanvasLogicalSize(out, canvasLogicalWidth(fromCanvas), canvasLogicalHeight(fromCanvas));
   if (fromCanvas && fromCanvas.__healpixIndexMap) {
     out.__healpixIndexMap = fromCanvas.__healpixIndexMap;
   } else {
@@ -6300,6 +10159,13 @@ function sampleMorphMultispectralBands(fromSlice, toSlice, alpha) {
     axis_scale: toBands.axis_scale || fromBands.axis_scale || state.multiSpectralNuAxisScale,
     deslope: state.multiSpectralDeslope,
     deslope_ref: Number.isFinite(toBands.deslope_ref) ? toBands.deslope_ref : fromBands.deslope_ref,
+    normalize_spectrum: Boolean(toBands.normalize_spectrum) || Boolean(fromBands.normalize_spectrum),
+    normalize_spectrum_boost: Number.isFinite(toBands.normalize_spectrum_boost)
+      ? toBands.normalize_spectrum_boost
+      : Number.isFinite(fromBands.normalize_spectrum_boost)
+      ? fromBands.normalize_spectrum_boost
+      : normalizeMultispectralNormalizeBoost(state.multiSpectralNormalizeBoost),
+    brightness_mode: toBands.brightness_mode || fromBands.brightness_mode || "total_flux",
   };
 }
 
@@ -6522,10 +10388,11 @@ async function prepareSampleMorphPair(maxPixels = null, preserveAlpha = false) {
   renderSampleMorphFrame();
 }
 
-async function advanceSampleMorphPlayback(deltaSec) {
+async function advanceSampleMorphPlayback(deltaSec, options = {}) {
   if (!isSampleMorphMode() || sampleCount() <= 1) return;
   if (isVolumeMode() && state.volumeDrag) return;
-  const lodMaxPixels = isSphereMode() ? null : playbackMaxPixelsForFrame();
+  const fullResolution = Boolean(options && options.fullResolution === true);
+  const lodMaxPixels = fullResolution ? null : (isSphereMode() ? null : spatialLodMaxPixels(playbackMaxPixelsForFrame()));
   const dSec = Number.isFinite(deltaSec) && deltaSec > 0 ? deltaSec : 1 / Math.max(1, state.playbackFps);
   const sampleDeltaT = sampleMorphDeltaTSec();
   const morphVolumeMode = isVolumeMode();
@@ -6641,9 +10508,11 @@ function rerenderCurrentFrameForColorNormalization() {
     drawColorbar();
     return;
   }
-  if (state.multiSpectral) {
-    updateColorNormalizationControls();
-    drawColorbar();
+  if (multispectralFrameActive()) {
+    if (!rerenderMultispectralFromCache()) {
+      updateColorNormalizationControls();
+      drawColorbar();
+    }
     return;
   }
   if (isVolumeMode() && isSampleMorphMode() && state.sampleMorph.fromCanvas && state.sampleMorph.toCanvas) {
@@ -6752,7 +10621,19 @@ function onColorNormRangeInput(bound, commit = false) {
   const lowV = clamp(colorNormFromScale(lowT), resolved.domain.min, resolved.domain.max);
   const highV = clamp(colorNormFromScale(highT), resolved.domain.min, resolved.domain.max);
   state.colorNormValueWindow = { min: lowV, max: highV };
+  if (multispectralFrameActive()) {
+    state.multiSpectralChannelRange = normalizeMultispectralChannelRange({ min: lowV, max: highV });
+  }
+  rememberCurrentQuantityColorNormWindow();
   updateColorNormalizationControls();
+  if (multispectralFrameActive()) {
+    if (commit) {
+      void refreshMultispectralControlsFromServer();
+    } else {
+      scheduleMultispectralLocalRerender();
+    }
+    return;
+  }
   scheduleColorNormRerender(commit);
 }
 
@@ -6808,13 +10689,14 @@ async function refreshEvpaTicks() {
 async function fetchEvpaTicksForSample(sampleIdx) {
   if (!state.dataId || state.plane !== "xy" || isVolumeMode() || isSphereMode()) return [];
   const effectiveMode = state.sampleMode === "std" || state.sampleMode === "rel_uncert" ? "mean" : sampleModeForApi();
+  const upscaleAwareStep = evpaStepForCurrentResolution();
   const qs = new URLSearchParams({
     sample: String(sampleIdx),
     t: String(state.values.t),
     nu: String(state.values.nu),
     z: String(state.values.z),
     sample_mode: effectiveMode,
-    step: String(state.evpaStep),
+    step: String(upscaleAwareStep),
     min_fraction: "0.05",
     i_min_fraction: String(state.evpaIMinFraction),
   });
@@ -6824,6 +10706,21 @@ async function fetchEvpaTicksForSample(sampleIdx) {
   }
   const data = await fetchJson(`/api/datasets/${state.dataId}/evpa?${qs.toString()}`);
   return Array.isArray(data?.ticks) ? data.ticks : [];
+}
+
+function evpaStepForCurrentResolution() {
+  const baseStep = clamp(Math.round(state.evpaStep), 1, 32);
+  const scale = evpaResolutionScaleFactor();
+  if (!(scale > 1)) return baseStep;
+  return clamp(Math.round(baseStep / scale), 1, 32);
+}
+
+function evpaResolutionScaleFactor() {
+  const direct = Number.parseFloat(state?.renderScale?.spatial);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const legacy = Number.parseFloat(state?.sliceRender?.upscaleFactor);
+  if (Number.isFinite(legacy) && legacy > 0) return legacy;
+  return spatialScaleFactor();
 }
 
 function computeStats(values) {
@@ -7009,6 +10906,7 @@ function rerenderVolumeFrame() {
 
 function rerenderSphereFrame() {
   if (!isSphereMode()) return;
+  const fastPreview = Boolean(state.sphereDrag);
   if (isSampleMorphMode() && state.sampleMorph.fromSlice && state.sampleMorph.toSlice) {
     const sharedStats = isValidRangeStats(state.fixedColorRange)
       ? state.fixedColorRange
@@ -7024,19 +10922,28 @@ function rerenderSphereFrame() {
     const tiles = state.currentMultispectralTiles.map((slice, idx) =>
       createSingleCanvas(slice, null, { sphereIncludeIndexMap: idx === activeIdx })
     );
-    const primary = state.currentMultispectralTiles[activeIdx] || state.currentMultispectralTiles[0] || null;
-    const selectedCoords = primary ? primary.selected_coords || indicesToCoords(primary.selected_indices) : null;
-    renderTileFrame(tiles, state.sampleGridSize, selectedCoords, null);
+    if (fastPreview) {
+      renderTileFrameFast(tiles, state.sampleGridSize, { refreshHover: false });
+    } else {
+      const primary = state.currentMultispectralTiles[activeIdx] || state.currentMultispectralTiles[0] || null;
+      const selectedCoords = primary ? primary.selected_coords || indicesToCoords(primary.selected_indices) : null;
+      renderTileFrame(tiles, state.sampleGridSize, selectedCoords, null);
+    }
     return;
   }
   if (state.currentMultispectralSlice) {
     const slice = state.currentMultispectralSlice;
-    renderFrame(
-      createSingleCanvas(slice),
-      slice.selected_coords || indicesToCoords(slice.selected_indices),
-      null,
-      null
-    );
+    const canvas = createSingleCanvas(slice);
+    if (fastPreview) {
+      renderFrameFast(canvas, { refreshHover: false });
+    } else {
+      renderFrame(
+        canvas,
+        slice.selected_coords || indicesToCoords(slice.selected_indices),
+        null,
+        null
+      );
+    }
     return;
   }
   if (state.currentMonoSliceTiles && state.currentMonoSliceTiles.length) {
@@ -7047,21 +10954,30 @@ function rerenderSphereFrame() {
     const tiles = state.currentMonoSliceTiles.map((slice, idx) =>
       createSingleCanvas(slice, sharedStats, { sphereIncludeIndexMap: idx === activeIdx })
     );
-    const primary = state.currentMonoSliceTiles[activeIdx] || state.currentMonoSliceTiles[0] || null;
-    const selectedCoords = primary ? primary.selected_coords || indicesToCoords(primary.selected_indices) : null;
-    const intensityUnit = isDerivedPolModeActive() ? derivedPolUnit(state.derivedPolMode) : null;
-    renderTileFrame(tiles, state.sampleGridSize, selectedCoords, sharedStats, intensityUnit);
+    if (fastPreview) {
+      renderTileFrameFast(tiles, state.sampleGridSize, { refreshHover: false });
+    } else {
+      const primary = state.currentMonoSliceTiles[activeIdx] || state.currentMonoSliceTiles[0] || null;
+      const selectedCoords = primary ? primary.selected_coords || indicesToCoords(primary.selected_indices) : null;
+      const intensityUnit = isDerivedPolModeActive() ? derivedPolUnit(state.derivedPolMode) : null;
+      renderTileFrame(tiles, state.sampleGridSize, selectedCoords, sharedStats, intensityUnit);
+    }
     return;
   }
   if (state.currentMonoSlice) {
     const slice = state.currentMonoSlice;
-    const intensityUnit = isDerivedPolModeActive() ? derivedPolUnit(state.derivedPolMode) : null;
-    renderFrame(
-      createSingleCanvas(slice),
-      slice.selected_coords || indicesToCoords(slice.selected_indices),
-      slice.stats || null,
-      intensityUnit
-    );
+    const canvas = createSingleCanvas(slice);
+    if (fastPreview) {
+      renderFrameFast(canvas, { refreshHover: false });
+    } else {
+      const intensityUnit = isDerivedPolModeActive() ? derivedPolUnit(state.derivedPolMode) : null;
+      renderFrame(
+        canvas,
+        slice.selected_coords || indicesToCoords(slice.selected_indices),
+        slice.stats || null,
+        intensityUnit
+      );
+    }
   }
 }
 
@@ -7072,6 +10988,7 @@ async function setSpatialMode(mode) {
   if (mode === "sphere" && !isSphereDataset()) return;
   if (state.spatialMode === mode) return;
 
+  const quantityBefore = intensityQuantityKey();
   stopSampleMorphPlayback();
   state.spatialMode = mode;
   if (mode === "sphere") {
@@ -7085,6 +11002,7 @@ async function setSpatialMode(mode) {
   state.volumeDrag = null;
   state.sphereDrag = null;
   resetView();
+  applyIntensityQuantityTransition(quantityBefore, intensityQuantityKey());
   updateControlCaps();
   await refreshSlice();
   if (mode === "slice" && state.selection) await refreshSelectionAnalytics();
@@ -7097,7 +11015,8 @@ async function refreshSlice(options = {}) {
   try {
   state.hoverProbe = null;
   const playbackMode = options.playback === true;
-  const lodMaxPixels = playbackMode && !isSphereMode() ? playbackMaxPixelsForFrame() : null;
+  const playbackLodMaxPixels = playbackMode && !isSphereMode() ? playbackMaxPixelsForFrame() : null;
+  const lodMaxPixels = !isSphereMode() ? spatialLodMaxPixels(playbackLodMaxPixels) : null;
   if (state.sampleMode === "single") {
     if (isSampleMorphMode()) {
       state.sampleGridIndices = [clamp(state.values.sample, 0, Math.max(0, sampleCount() - 1))];
@@ -7302,13 +11221,17 @@ function axisRangeFromProfile(axis, profile) {
 function setAxisRangeLabels(minEl, maxEl, axis, profile) {
   if (profile && Array.isArray(profile.coords) && profile.coords.length >= 1 && (axis === "t" || axis === "nu")) {
     const [s, e] = getAxisWindow(axis, profile.coords.length);
-    minEl.textContent = fmtPhysical(axis, profile.coords[s], dimUnit(axis));
-    maxEl.textContent = fmtPhysical(axis, profile.coords[e], dimUnit(axis));
+    const leftCoord = axisIsFlipped(axis) ? profile.coords[e] : profile.coords[s];
+    const rightCoord = axisIsFlipped(axis) ? profile.coords[s] : profile.coords[e];
+    minEl.textContent = fmtPhysical(axis, leftCoord, axisDisplayUnit(axis));
+    maxEl.textContent = fmtPhysical(axis, rightCoord, axisDisplayUnit(axis));
     return;
   }
   const [a, b] = axisRangeFromProfile(axis, profile);
-  minEl.textContent = fmtPhysical(axis, a, dimUnit(axis));
-  maxEl.textContent = fmtPhysical(axis, b, dimUnit(axis));
+  const leftCoord = axisIsFlipped(axis) ? b : a;
+  const rightCoord = axisIsFlipped(axis) ? a : b;
+  minEl.textContent = fmtPhysical(axis, leftCoord, axisDisplayUnit(axis));
+  maxEl.textContent = fmtPhysical(axis, rightCoord, axisDisplayUnit(axis));
 }
 
 function getAxisWindow(axis, n) {
@@ -7365,15 +11288,20 @@ function drawNavigator(canvasEl, profile, indicatorIdx, axis) {
   const fullCoords = profile.coords;
   const fullSeries = profile.series_mean;
   const [startIdx, endIdx] = getAxisWindow(axis, fullCoords.length);
-  const series = fullSeries.slice(startIdx, endIdx + 1);
-  const coords = fullCoords.slice(startIdx, endIdx + 1);
+  const windowSeries = fullSeries.slice(startIdx, endIdx + 1);
+  const windowCoords = fullCoords.slice(startIdx, endIdx + 1);
+  const domainFactor = axisDomainScaleFactor(axis);
+  const resampled = resampleSeriesWithCoords(windowSeries, windowCoords, domainFactor);
+  const series = resampled.series;
+  const coords = resampled.coords;
+  const plotSeries = series.map(fluxPlotValue);
   const n = series.length;
-  const xmap = buildAxisXMapper(coords);
+  const xmap = buildAxisXMapper(axisMapCoords(axis, coords));
   let yMin = Number.POSITIVE_INFINITY;
   let yMax = Number.NEGATIVE_INFINITY;
-  for (let i = 0; i < series.length; i += 1) {
-    if (series[i] < yMin) yMin = series[i];
-    if (series[i] > yMax) yMax = series[i];
+  for (let i = 0; i < plotSeries.length; i += 1) {
+    if (plotSeries[i] < yMin) yMin = plotSeries[i];
+    if (plotSeries[i] > yMax) yMax = plotSeries[i];
   }
   if (!Number.isFinite(yMin) || !Number.isFinite(yMax) || yMax <= yMin) {
     yMin = -1;
@@ -7401,7 +11329,7 @@ function drawNavigator(canvasEl, profile, indicatorIdx, axis) {
   ctx.beginPath();
   for (let i = 0; i < n; i += 1) {
     const x = xOf(i);
-    const y = yOf(series[i]);
+    const y = yOf(plotSeries[i]);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   }
@@ -7409,7 +11337,7 @@ function drawNavigator(canvasEl, profile, indicatorIdx, axis) {
 
   if (indicatorIdx !== null && indicatorIdx !== undefined) {
     if (indicatorIdx >= startIdx && indicatorIdx <= endIdx) {
-      const i = indicatorIdx - startIdx;
+      const i = mappedIndicatorIndex(indicatorIdx - startIdx, resampled.sourceLength, n);
       const x = xOf(i);
       ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 1 * s;
@@ -7422,8 +11350,8 @@ function drawNavigator(canvasEl, profile, indicatorIdx, axis) {
 
   ctx.fillStyle = "#8ea1b5";
   ctx.font = `${Math.round(10 * s)}px sans-serif`;
-  ctx.fillText(yMax.toExponential(1), 2 * s, margin.t + 9 * s);
-  ctx.fillText(yMin.toExponential(1), 2 * s, margin.t + pxH);
+  ctx.fillText(fmtIntensity(fluxFromPlotValue(yMax)), 2 * s, margin.t + 9 * s);
+  ctx.fillText(fmtIntensity(fluxFromPlotValue(yMin)), 2 * s, margin.t + pxH);
 }
 
 function drawNavigatorZoomDrag(canvasEl, profile, axis, drag) {
@@ -7433,7 +11361,7 @@ function drawNavigatorZoomDrag(canvasEl, profile, axis, drag) {
   const [startIdx, endIdx] = getAxisWindow(axis, profile.coords.length);
   const visibleCoords = profile.coords.slice(startIdx, endIdx + 1);
   if (visibleCoords.length < 2) return;
-  const xmap = buildAxisXMapper(visibleCoords);
+  const xmap = buildAxisXMapper(axisMapCoords(axis, visibleCoords));
   const local0 = clamp(Math.min(drag.startIdx, drag.lastIdx) - startIdx, 0, visibleCoords.length - 1);
   const local1 = clamp(Math.max(drag.startIdx, drag.lastIdx) - startIdx, 0, visibleCoords.length - 1);
   const s = canvasPixelRatio(canvasEl);
@@ -7489,7 +11417,7 @@ function profileIndexFromEvent(canvas, profile, ev) {
   const s = canvasPixelRatio(canvas);
   const margin = scaleInsets(PROFILE_MARGIN, s);
   const visibleCoords = profile.coords.slice(startIdx, endIdx + 1);
-  const xmap = buildAxisXMapper(visibleCoords);
+  const xmap = buildAxisXMapper(axisMapCoords(axis, visibleCoords));
 
   const rect = canvas.getBoundingClientRect();
   const cx = (ev.clientX - rect.left) * (canvas.width / Math.max(1, rect.width));
@@ -7547,19 +11475,27 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
   const pxW = w - margin.l - margin.r;
   const pxH = h - margin.t - margin.b;
   const [startIdx, endIdx] = getProfileZoomWindow(profile);
-  const n = endIdx - startIdx + 1;
-  const coords = profile.coords.slice(startIdx, endIdx + 1);
+  const baseCoords = profile.coords.slice(startIdx, endIdx + 1);
   const axisName = profile.axis || "axis";
   const axisUnit = profile.axis_unit || "";
   const fluxUnit = state.meta ? state.meta.intensity_unit || "arb" : "arb";
   const perSample = (profile.per_sample || []).map((s) => s.slice(startIdx, endIdx + 1));
   const mean = (profile.series_mean || []).slice(startIdx, endIdx + 1);
   const std = (profile.series_std || []).slice(startIdx, endIdx + 1);
-  const perSampleY = perSample.map((s) => s.map(fluxPlotValue));
-  const meanY = mean.map(fluxPlotValue);
-  const upperY = mean.map((m, i) => fluxPlotValue(m + std[i]));
-  const lowerY = mean.map((m, i) => fluxPlotValue(m - std[i]));
-  const xmap = buildAxisXMapper(coords);
+  const domainFactor = axisDomainScaleFactor(axisName);
+  const meanResampled = resampleSeriesWithCoords(mean, baseCoords, domainFactor);
+  const stdResampled = resampleSeriesWithCoords(std, baseCoords, domainFactor);
+  const perSampleResampled = perSample.map((series) => resampleSeriesWithCoords(series, baseCoords, domainFactor).series);
+  const coords = meanResampled.coords;
+  const n = coords.length;
+  const meanSeries = meanResampled.series;
+  const stdSeries = stdResampled.series;
+  const sourceLength = meanResampled.sourceLength;
+  const meanY = meanSeries.map(fluxPlotValue);
+  const upperY = meanSeries.map((m, i) => fluxPlotValue(m + (stdSeries[i] || 0)));
+  const lowerY = meanSeries.map((m, i) => fluxPlotValue(m - (stdSeries[i] || 0)));
+  const perSampleY = perSampleResampled.map((s) => s.map(fluxPlotValue));
+  const xmap = buildAxisXMapper(axisMapCoords(axisName, coords));
 
   let yMin = Number.POSITIVE_INFINITY;
   let yMax = Number.NEGATIVE_INFINITY;
@@ -7622,7 +11558,7 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
     ctx.stroke();
   }
 
-  if (std.length === mean.length && mean.length > 1) {
+  if (stdSeries.length === meanSeries.length && meanSeries.length > 1) {
     ctx.fillStyle = "rgba(99, 177, 231, 0.19)";
     ctx.beginPath();
     for (let i = 0; i < meanY.length; i += 1) {
@@ -7653,7 +11589,7 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
 
   if (indicatorIdx !== null && indicatorIdx !== undefined) {
     if (indicatorIdx >= startIdx && indicatorIdx <= endIdx) {
-      const i = indicatorIdx - startIdx;
+      const i = mappedIndicatorIndex(indicatorIdx - startIdx, sourceLength, n);
       const x = xOf(i);
       ctx.strokeStyle = PROFILE_THEME.indicator;
       ctx.lineWidth = 1.5 * scale;
@@ -7691,7 +11627,9 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
   ctx.font = `${Math.round(13 * scale)}px Manrope, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
-  const xLabelBase = axisUnit ? `${axisName.toUpperCase()} [${axisUnit}]` : axisName.toUpperCase();
+  const axisLabel = axisDisplayLabel(axisName);
+  const logSuffix = axisName === "nu" && state.multiSpectralNuAxisScale === "log" ? " (log scale)" : "";
+  const xLabelBase = axisUnit ? `${axisLabel} [${axisUnit}]${logSuffix}` : `${axisLabel}${logSuffix}`;
   const xLabel = xLabelBase;
   ctx.fillText(xLabel, margin.l + pxW / 2, h - 15 * scale);
 
@@ -8002,7 +11940,7 @@ function applyZoomBox(zoomDrag) {
     const cx = 0.5 * (u0 + u1);
     const cy = 0.5 * (v0 + v1);
     let zoomFactor = Math.min(w / Math.max(1.0e-6, canvas.width), h / Math.max(1.0e-6, canvas.height));
-    if (!(zoomFactor > 0)) zoomFactor = 1 / 1.12;
+    if (!(zoomFactor > 0)) zoomFactor = 1 / WHEEL_ZOOM_STEP_FACTOR;
     zoomFactor = clamp(1 / zoomFactor, 1, 16);
     state.sphereInsideScale = clamp(
       sphereInsideRenderScale() * zoomFactor,
@@ -8013,8 +11951,9 @@ function applyZoomBox(zoomDrag) {
     const probe = sphereProbeFromDataPoint({ u: cx, v: cy }, tile, null);
     if (probe && Number.isFinite(probe.vx) && Number.isFinite(probe.vy) && Number.isFinite(probe.vz)) {
       const rxy = Math.hypot(probe.vx, probe.vy);
-      state.sphereYaw = Math.atan2(-probe.vy, probe.vx);
-      state.spherePitch = clamp(Math.atan2(probe.vz, Math.max(1.0e-9, rxy)), -1.45, 1.45);
+      const yaw = Math.atan2(-probe.vy, probe.vx);
+      const pitch = clamp(Math.atan2(probe.vz, Math.max(1.0e-9, rxy)), -1.45, 1.45);
+      setSphereOrientationFromYawPitch(yaw, pitch);
     }
 
     rerenderSphereFrame();
@@ -8036,14 +11975,14 @@ function handleWheelZoom(ev) {
   if (!state.frameCanvas && !(state.frameTiles && state.frameTiles.length)) return;
   ev.preventDefault();
   if (isVolumeMode()) {
-    const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
-    state.volumeZoom = clamp(state.volumeZoom * factor, 0.5, 8.0);
+    const factor = ev.deltaY < 0 ? WHEEL_ZOOM_STEP_FACTOR : 1 / WHEEL_ZOOM_STEP_FACTOR;
+    state.volumeZoom = clamp(state.volumeZoom * factor, VOLUME_ZOOM_MIN, VOLUME_ZOOM_MAX);
     updateVolumeControlReadouts();
     rerenderVolumeFrame();
     return;
   }
   if (isSphereMode() && state.sphereProjection === "inside") {
-    const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
+    const factor = ev.deltaY < 0 ? WHEEL_ZOOM_STEP_FACTOR : 1 / WHEEL_ZOOM_STEP_FACTOR;
     state.sphereInsideScale = clamp(
       sphereInsideRenderScale() * factor,
       SPHERE_INSIDE_SCALE_MIN,
@@ -8058,7 +11997,7 @@ function handleWheelZoom(ev) {
   const { viewRect: renderViewRect, drawRect } = getRenderGeometry(baseViewRect);
   const before = screenToData(ev, renderViewRect, drawRect);
 
-  const scale = ev.deltaY < 0 ? 1 / 1.12 : 1.12;
+  const scale = ev.deltaY < 0 ? 1 / WHEEL_ZOOM_STEP_FACTOR : WHEEL_ZOOM_STEP_FACTOR;
   let newW;
   let newH;
   if (isSphereMode() && state.sphereProjection === "mollweide") {
@@ -8074,6 +12013,7 @@ function handleWheelZoom(ev) {
       newW = newH * bounds.aspect;
     }
   } else {
+    const base = !isSphereMode() ? sliceFullViewWindow(baseViewRect.imgW, baseViewRect.imgH) : null;
     const minW = isSphereMode() && state.sphereProjection === "inside"
       ? baseViewRect.imgW
       : Math.min(2, baseViewRect.imgW);
@@ -8081,8 +12021,12 @@ function handleWheelZoom(ev) {
       ? baseViewRect.imgH
       : Math.min(2, baseViewRect.imgH);
     const maxZoomOut = sphereZoomOutLimit();
-    const maxW = isSphereMode() ? baseViewRect.imgW * maxZoomOut : baseViewRect.imgW;
-    const maxH = isSphereMode() ? baseViewRect.imgH * maxZoomOut : baseViewRect.imgH;
+    const maxW = isSphereMode()
+      ? baseViewRect.imgW * maxZoomOut
+      : (base ? base.w : baseViewRect.imgW) * maxZoomOut;
+    const maxH = isSphereMode()
+      ? baseViewRect.imgH * maxZoomOut
+      : (base ? base.h : baseViewRect.imgH) * maxZoomOut;
     newW = clamp(baseViewRect.srcW * scale, minW, maxW);
     newH = clamp(baseViewRect.srcH * scale, minH, maxH);
   }
@@ -8105,7 +12049,7 @@ function navIndexFromEvent(canvas, ev, profile, axis) {
   const margin = scaleInsets(NAV_MARGIN, s);
   const [startIdx, endIdx] = getAxisWindow(axis, len);
   const visibleCoords = profile.coords.slice(startIdx, endIdx + 1);
-  const xmap = buildAxisXMapper(visibleCoords);
+  const xmap = buildAxisXMapper(axisMapCoords(axis, visibleCoords));
   const rect = canvas.getBoundingClientRect();
   const cx = (ev.clientX - rect.left) * (canvas.width / Math.max(1, rect.width));
   const pxW = canvas.width - margin.l - margin.r;
@@ -8129,6 +12073,7 @@ async function setAxisIndex(axis, idx, options = {}) {
 
 async function toggleAxisProjection(axis) {
   if (!canProjectAxis(axis)) return;
+  const quantityBefore = intensityQuantityKey();
   const next = !isAxisProjected(axis);
   state.axisProjection[axis] = next;
 
@@ -8142,6 +12087,7 @@ async function toggleAxisProjection(axis) {
   if (next && axis === "nu" && state.multiSpectral) {
     state.multiSpectral = false;
   }
+  applyIntensityQuantityTransition(quantityBefore, intensityQuantityKey());
 
   updateControlCaps();
   drawNavigationGraphs();
@@ -8224,6 +12170,7 @@ function bindProfileZoomCanvas(canvas, kind) {
 
 async function onSampleModeChange(mode) {
   if (!["single", "mean", "std", "rel_uncert"].includes(mode)) return;
+  const quantityBefore = intensityQuantityKey();
   state.sampleMode = mode;
   if (mode === "single") {
     const requestedGrid = parseGridCount(els.sampleGridCountSelect.value);
@@ -8244,6 +12191,8 @@ async function onSampleModeChange(mode) {
     state.activeSampleTile = 0;
     resetSampleMorphState();
   }
+  const quantityAfter = intensityQuantityKey();
+  applyIntensityQuantityTransition(quantityBefore, quantityAfter);
   updateControlCaps();
   try {
     await refreshSlice();
@@ -8450,9 +12399,13 @@ function syncUiToState() {
       els.datasetSelect.value = wanted;
     }
   }
+  state.colorMap = normalizeColorMapKey(state.colorMap);
   if (els.colorMapSelect) els.colorMapSelect.value = state.colorMap;
   if (els.colorRangeModeSelect) els.colorRangeModeSelect.value = state.colorRangeMode;
   if (els.sliceBackendSelect) els.sliceBackendSelect.value = state.sliceRender.backend;
+  if (els.spatialResolutionSelect) els.spatialResolutionSelect.value = String(spatialScaleFactor());
+  if (els.temporalResolutionSelect) els.temporalResolutionSelect.value = String(temporalScaleFactor());
+  if (els.spectralResolutionSelect) els.spectralResolutionSelect.value = String(spectralScaleFactor());
   if (els.playSpeedSelect) els.playSpeedSelect.value = String(state.playbackFps);
   if (els.sampleMorphDeltaSelect) els.sampleMorphDeltaSelect.value = String(state.sampleMorphDeltaT);
   if (els.coordSystemSelect) els.coordSystemSelect.value = state.coordSystem;
@@ -8616,44 +12569,2044 @@ function setSystemPickerStatus(message, isError = false) {
   els.systemPickerStatus.classList.toggle("error", nextError);
 }
 
-function shouldOfferAxisMapping(message) {
-  if (!message) return false;
-  const lowered = String(message).toLowerCase();
-  return (
-    lowered.includes("missing 'dims'") ||
-    lowered.includes("unknown dimensions") ||
-    lowered.includes("dims length") ||
-    lowered.includes("dims contain duplicates") ||
-    lowered.includes("dims not in canonical order")
+function resetIngestWizardState() {
+  endIngestAxisDrag();
+  ingestWizard.step = "intent";
+  ingestWizard.inspection = null;
+  ingestWizard.plan = null;
+  ingestWizard.selectedPresetId = null;
+  ingestWizard.mappings = [];
+  ingestWizard.intent = "tabs";
+  ingestWizard.fileAxis = "sample";
+  ingestWizard.activeFileIndex = 0;
+}
+
+function setIngestStatus(message, isError = false) {
+  if (!els.ingestStatus) return;
+  els.ingestStatus.textContent = message || "";
+  els.ingestStatus.classList.toggle("error", Boolean(isError));
+}
+
+function setIngestStep(step) {
+  const resolved = ["intent", "keys", "map"].includes(String(step || "")) ? String(step) : "intent";
+  ingestWizard.step = resolved;
+  if (els.ingestStepPillMap) els.ingestStepPillMap.classList.toggle("isActive", resolved === "map");
+}
+
+function ingestConfidenceLabel(fileInfo) {
+  const tier = String(fileInfo?.confidence_tier || "low");
+  const score = Number(fileInfo?.confidence || 0);
+  return `${tier.toUpperCase()} (${score.toFixed(2)})`;
+}
+
+function ingestFiles() {
+  return Array.isArray(ingestWizard.inspection?.files) ? ingestWizard.inspection.files : [];
+}
+
+function ingestDatasetCandidates(fileInfo) {
+  const candidates = fileInfo?.parsed?.format_metadata?.dataset_candidates;
+  if (!Array.isArray(candidates)) return [];
+  return candidates.filter(
+    (row) => row && typeof row === "object" && typeof row.path === "string" && Array.isArray(row.shape) && row.shape.length
   );
 }
 
-function parseAxisMappingInput(raw) {
-  const dims = String(raw || "")
-    .split(",")
-    .map((part) => part.trim().toLowerCase())
-    .filter(Boolean);
-  if (!dims.length) throw new Error("No axes provided.");
-  const valid = new Set(["sample", "pol", "t", "nu", "x", "y", "z"]);
-  const invalid = dims.filter((dim) => !valid.has(dim));
-  if (invalid.length) throw new Error(`Unknown axes: ${invalid.join(", ")}`);
-  if (new Set(dims).size !== dims.length) throw new Error("Duplicate axes are not allowed.");
-  return dims;
+function ingestDisplayDatasetCandidates(fileInfo, mapping) {
+  const candidates = ingestDatasetCandidates(fileInfo);
+  if (!candidates.length) return [];
+  const nonStack = candidates.filter((row) => String(row.kind || "dataset") !== "stokes_stack");
+  const filtered = nonStack.filter((row) => !Boolean(row.coordinate_like));
+  const base = filtered.length ? filtered : nonStack;
+  return [...base];
 }
 
-function promptForAxisMapping() {
-  const help =
-    "Enter axis names in file order (comma-separated).\nAllowed: sample, pol, t, nu, x, y, z\nExample: t,nu,x,y";
-  // Keep prompting until user provides a valid mapping or cancels.
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const raw = window.prompt(help, "t,nu,x,y");
-    if (raw === null) return null;
-    try {
-      return parseAxisMappingInput(raw);
-    } catch (err) {
-      window.alert(err.message);
+function ingestSelectableDatasetPathSet(fileInfo) {
+  const candidates = ingestDisplayDatasetCandidates(fileInfo, null);
+  if (candidates.length) {
+    return new Set(candidates.map((row) => String(row.path || "").trim()).filter((path) => path));
+  }
+  return new Set(
+    ingestDatasetCandidates(fileInfo)
+      .filter((row) => String(row.kind || "dataset") !== "stokes_stack")
+      .map((row) => String(row.path || "").trim())
+      .filter((path) => path)
+  );
+}
+
+function ingestNormalizeDatasetSelectionPaths(fileInfo, paths) {
+  const candidates = ingestDatasetCandidates(fileInfo);
+  const candidateByPath = new Map(candidates.map((row) => [String(row.path || "").trim(), row]));
+  const selectablePathSet = ingestSelectableDatasetPathSet(fileInfo);
+  const out = [];
+  const seen = new Set();
+  const rawPaths = Array.isArray(paths) ? paths : [];
+  for (const rawPath of rawPaths) {
+    const target = String(rawPath || "").trim();
+    if (!target) continue;
+    const candidate = candidateByPath.get(target);
+    const expanded =
+      String(candidate?.kind || "dataset") === "stokes_stack" && Array.isArray(candidate?.member_paths) && candidate.member_paths.length
+        ? candidate.member_paths
+        : [target];
+    for (const member of expanded) {
+      const memberPath = String(member || "").trim();
+      if (!memberPath || seen.has(memberPath)) continue;
+      if (selectablePathSet.size && !selectablePathSet.has(memberPath)) continue;
+      seen.add(memberPath);
+      out.push(memberPath);
     }
+  }
+  return out;
+}
+
+function ingestStokesStackCandidates(fileInfo) {
+  return ingestDatasetCandidates(fileInfo).filter(
+    (row) => String(row.kind || "") === "stokes_stack" && Array.isArray(row.member_paths) && row.member_paths.length >= 2
+  );
+}
+
+function ingestDefaultDatasetSelectionPaths(fileInfo) {
+  const defaultPath = String(fileInfo?.parsed?.format_metadata?.dataset_path || "").trim();
+  if (defaultPath) {
+    const normalizedDefault = ingestNormalizeDatasetSelectionPaths(fileInfo, [defaultPath]);
+    if (normalizedDefault.length) return normalizedDefault;
+  }
+
+  const stacks = ingestStokesStackCandidates(fileInfo).sort((a, b) => Number(b?.score || 0) - Number(a?.score || 0));
+  if (stacks.length) {
+    const members = ingestNormalizeDatasetSelectionPaths(fileInfo, stacks[0].member_paths);
+    if (members.length) return members;
+  }
+
+  const visible = ingestDisplayDatasetCandidates(fileInfo, null);
+  if (visible.length) {
+    const normalizedVisible = ingestNormalizeDatasetSelectionPaths(fileInfo, [visible[0].path]);
+    if (normalizedVisible.length) return normalizedVisible;
+  }
+
+  const anyNonStack = ingestDatasetCandidates(fileInfo).filter((row) => String(row.kind || "dataset") !== "stokes_stack");
+  if (anyNonStack.length) {
+    const normalizedAny = ingestNormalizeDatasetSelectionPaths(fileInfo, [anyNonStack[0].path]);
+    if (normalizedAny.length) return normalizedAny;
+  }
+  return [];
+}
+
+function ingestTrimmedDatasetPath(path) {
+  return String(path || "")
+    .trim()
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+}
+
+function ingestStackAxisHintFromToken(token) {
+  const normalized = String(token || "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "sample" || normalized === "samples" || normalized === "realization" || normalized === "realizations") {
+    return "sample";
+  }
+  if (normalized === "pol" || normalized === "polarization" || normalized === "polarizations" || normalized === "stokes") {
+    return "pol";
+  }
+  if (normalized === "t" || normalized === "time" || normalized === "times" || normalized === "frame" || normalized === "frames") {
+    return "t";
+  }
+  if (
+    normalized === "nu" ||
+    normalized === "freq" ||
+    normalized === "frequency" ||
+    normalized === "frequencies" ||
+    normalized === "band" ||
+    normalized === "bands"
+  ) {
+    return "nu";
+  }
+  if (normalized === "x") return "x";
+  if (normalized === "y") return "y";
+  if (normalized === "z") return "z";
+  return null;
+}
+
+function ingestInferStackAxisFromPaths(paths) {
+  const selected = Array.isArray(paths)
+    ? [...new Set(paths.map((path) => ingestTrimmedDatasetPath(path)).filter((path) => path))]
+    : [];
+  if (selected.length < 2) return null;
+
+  const partsList = selected.map((path) => path.split("/").filter((part) => part));
+  if (!partsList.every((parts) => parts.length > 0)) return null;
+
+  const tokenized = (part) => String(part || "").toLowerCase().split(/[^a-z0-9]+/).filter((token) => token);
+  const inferFromPart = (part) => {
+    const direct = ingestStackAxisHintFromToken(part);
+    if (direct) return direct;
+    const tokens = tokenized(part);
+    for (const token of tokens) {
+      const inferred = ingestStackAxisHintFromToken(token);
+      if (inferred) return inferred;
+    }
+    return null;
+  };
+
+  const minDepth = Math.min(...partsList.map((parts) => parts.length));
+  let sharedDepth = 0;
+  while (sharedDepth < minDepth) {
+    const seg = String(partsList[0][sharedDepth] || "").toLowerCase();
+    if (partsList.every((parts) => String(parts[sharedDepth] || "").toLowerCase() === seg)) {
+      sharedDepth += 1;
+      continue;
+    }
+    break;
+  }
+  if (sharedDepth > 0) {
+    const sharedSegment = partsList[0][sharedDepth - 1];
+    const fromShared = inferFromPart(sharedSegment);
+    if (fromShared) return fromShared;
+  }
+
+  const leafTokens = new Set(partsList.flatMap((parts) => tokenized(parts[parts.length - 1])));
+  if (leafTokens.size > 0 && [...leafTokens].every((token) => /^\d+$/.test(token))) {
+    const parentTokens = new Set(partsList.flatMap((parts) => (parts.length > 1 ? tokenized(parts[parts.length - 2]) : [])));
+    if (parentTokens.has("sample") || parentTokens.has("samples")) return "sample";
+    if (parentTokens.has("time") || parentTokens.has("times") || parentTokens.has("t")) return "t";
+  }
+  if (["i", "q", "u", "v"].every((token) => leafTokens.has(token))) return "pol";
+
+  const voteCounts = new Map();
+  for (const parts of partsList) {
+    for (const part of parts) {
+      const inferred = inferFromPart(part);
+      if (!inferred) continue;
+      voteCounts.set(inferred, Number(voteCounts.get(inferred) || 0) + 1);
+    }
+  }
+  let best = null;
+  let bestScore = 0;
+  for (const dim of INGEST_CANONICAL_DIMS) {
+    const score = Number(voteCounts.get(dim) || 0);
+    if (score > bestScore) {
+      best = dim;
+      bestScore = score;
+    }
+  }
+  return bestScore > 0 ? best : null;
+}
+
+function ingestSetSelectedDatasetPaths(mapping, fileInfo, paths) {
+  if (!mapping || !fileInfo) return;
+  let next = ingestNormalizeDatasetSelectionPaths(fileInfo, paths);
+  if (!next.length && ingestShouldAutoselectDatasets(fileInfo)) {
+    next = ingestDefaultDatasetSelectionPaths(fileInfo);
+  }
+  mapping.datasetPaths = next;
+  mapping.datasetPath = next.length ? next[0] : null;
+  mapping.keyStackAxis = next.length > 1 ? ingestStackAxisForMapping(mapping) : null;
+  normalizeIngestMappingForFile(fileInfo, mapping);
+}
+
+function ingestDatasetPrefixGroups(fileInfo, mapping) {
+  const groups = new Map();
+  const candidates = ingestDisplayDatasetCandidates(fileInfo, mapping);
+  for (const cand of candidates) {
+    const rawPath = String(cand?.path || "").trim();
+    if (!rawPath) continue;
+    const trimmed = ingestTrimmedDatasetPath(rawPath);
+    const parts = trimmed.split("/").filter((part) => part);
+    if (parts.length < 2) continue;
+    for (let depth = 1; depth < parts.length; depth += 1) {
+      const prefix = parts.slice(0, depth).join("/");
+      const existing = groups.get(prefix) || { prefix, depth, paths: new Set() };
+      existing.paths.add(rawPath);
+      groups.set(prefix, existing);
+    }
+  }
+  return [...groups.values()]
+    .filter((group) => group.paths.size > 1)
+    .sort((a, b) => b.depth - a.depth || b.paths.size - a.paths.size || a.prefix.localeCompare(b.prefix));
+}
+
+function ingestStackableDatasetCandidates(fileInfo) {
+  return ingestDatasetCandidates(fileInfo).filter(
+    (row) => String(row.kind || "dataset") === "dataset" && !Boolean(row.coordinate_like) && Array.isArray(row.shape) && row.shape.length >= 2
+  );
+}
+
+function ingestDatasetCandidateLabel(cand) {
+  if (!cand || typeof cand !== "object") return "?";
+  if (String(cand.kind || "") === "stokes_stack") {
+    const members = Array.isArray(cand.member_paths) ? cand.member_paths.join(", ") : "I,Q,U,V";
+    return `Stokes stack (${members})`;
+  }
+  return String(cand.path || "?");
+}
+
+function ingestDatasetLeafName(path) {
+  const trimmed = ingestTrimmedDatasetPath(path);
+  if (!trimmed) return "";
+  const parts = trimmed.split("/");
+  return String(parts[parts.length - 1] || "").trim();
+}
+
+function ingestUniqueDatasetPathList(paths) {
+  const out = [];
+  const seen = new Set();
+  const items = Array.isArray(paths) ? paths : [];
+  for (const item of items) {
+    const path = String(item || "").trim();
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    out.push(path);
+  }
+  return out;
+}
+
+function ingestPolarizationChannelHint(path) {
+  const trimmed = ingestTrimmedDatasetPath(path).toLowerCase();
+  if (!trimmed) return "";
+  const parts = trimmed.split("/").filter((part) => part);
+  const inspectParts = [];
+  if (parts.length) inspectParts.push(parts[parts.length - 1]);
+  if (parts.length > 1) inspectParts.push(parts[parts.length - 2]);
+  const direct = new Set(["i", "q", "u", "v"]);
+  for (const part of inspectParts) {
+    if (direct.has(part)) return part;
+    const tokens = String(part).split(/[^a-z0-9]+/).filter((token) => token);
+    for (const token of tokens) {
+      if (direct.has(token)) return token;
+      const stokesMatch = token.match(/^stokes([iquv])$/);
+      if (stokesMatch) return String(stokesMatch[1] || "");
+      const polMatch = token.match(/^pol([iquv])$/);
+      if (polMatch) return String(polMatch[1] || "");
+    }
+  }
+  return "";
+}
+
+function ingestMapSelectionByPolarizationChannels(fileInfo, sourcePaths) {
+  const source = ingestUniqueDatasetPathList(sourcePaths);
+  if (source.length < 2) return [];
+  const sourceChannels = source.map((path) => ingestPolarizationChannelHint(path));
+  if (sourceChannels.some((channel) => !channel)) return [];
+  if (new Set(sourceChannels).size !== sourceChannels.length) return [];
+
+  const selectable = ingestSelectableDatasetPathSet(fileInfo);
+  const candidates = ingestDatasetCandidates(fileInfo).filter((row) => selectable.has(String(row?.path || "").trim()));
+  const channelToPath = new Map();
+  const duplicateChannels = new Set();
+  for (const cand of candidates) {
+    const path = String(cand?.path || "").trim();
+    if (!path) continue;
+    const channel = ingestPolarizationChannelHint(path);
+    if (!channel) continue;
+    if (channelToPath.has(channel)) {
+      duplicateChannels.add(channel);
+      continue;
+    }
+    channelToPath.set(channel, path);
+  }
+  for (const channel of duplicateChannels) channelToPath.delete(channel);
+
+  const mapped = [];
+  const used = new Set();
+  for (const channel of sourceChannels) {
+    const path = String(channelToPath.get(channel) || "").trim();
+    if (!path || used.has(path)) return [];
+    used.add(path);
+    mapped.push(path);
+  }
+  const normalized = ingestNormalizeDatasetSelectionPaths(fileInfo, mapped);
+  return normalized.length === source.length ? normalized : [];
+}
+
+function ingestMapSelectionByLeafNames(fileInfo, sourcePaths) {
+  const source = ingestUniqueDatasetPathList(sourcePaths);
+  if (!source.length) return [];
+  const sourceLeaves = source.map((path) => ingestDatasetLeafName(path).toLowerCase()).filter((leaf) => leaf);
+  if (sourceLeaves.length !== source.length) return [];
+
+  const selectable = ingestSelectableDatasetPathSet(fileInfo);
+  const candidates = ingestDatasetCandidates(fileInfo).filter((row) => selectable.has(String(row?.path || "").trim()));
+  const leafToPath = new Map();
+  const duplicateLeaves = new Set();
+  for (const cand of candidates) {
+    const path = String(cand?.path || "").trim();
+    if (!path) continue;
+    const leaf = ingestDatasetLeafName(path).toLowerCase();
+    if (!leaf) continue;
+    if (leafToPath.has(leaf)) {
+      duplicateLeaves.add(leaf);
+      continue;
+    }
+    leafToPath.set(leaf, path);
+  }
+  for (const leaf of duplicateLeaves) leafToPath.delete(leaf);
+
+  const mapped = [];
+  const used = new Set();
+  for (const leaf of sourceLeaves) {
+    const path = String(leafToPath.get(leaf) || "").trim();
+    if (!path || used.has(path)) return [];
+    used.add(path);
+    mapped.push(path);
+  }
+  const normalized = ingestNormalizeDatasetSelectionPaths(fileInfo, mapped);
+  return normalized.length === source.length ? normalized : [];
+}
+
+function ingestResolveDatasetSelectionForFile(fileInfo, sourcePaths, { stackAxis = null, allowDefaultFallback = false } = {}) {
+  const source = ingestUniqueDatasetPathList(sourcePaths);
+  const selectable = ingestSelectableDatasetPathSet(fileInfo);
+  if (source.length) {
+    if (source.every((path) => selectable.has(path))) {
+      const normalized = ingestNormalizeDatasetSelectionPaths(fileInfo, source);
+      if (normalized.length === source.length) return normalized;
+    }
+    if (source.length > 1 && String(stackAxis || "").toLowerCase() === "pol") {
+      const byChannel = ingestMapSelectionByPolarizationChannels(fileInfo, source);
+      if (byChannel.length === source.length) return byChannel;
+      const stokesCandidates = ingestStokesStackCandidates(fileInfo).sort((a, b) => Number(b?.score || 0) - Number(a?.score || 0));
+      for (const cand of stokesCandidates) {
+        const members = ingestStokesMemberPathsFromCandidate(fileInfo, cand);
+        if (members.length === source.length) return members;
+      }
+    }
+    const byLeaf = ingestMapSelectionByLeafNames(fileInfo, source);
+    if (byLeaf.length === source.length) return byLeaf;
+  }
+  if (allowDefaultFallback) {
+    return ingestDefaultDatasetSelectionPaths(fileInfo);
+  }
+  return [];
+}
+
+function ingestStokesMemberPathsFromCandidate(fileInfo, cand) {
+  if (!cand) return [];
+  const members = Array.isArray(cand.member_paths) ? cand.member_paths : [];
+  return ingestNormalizeDatasetSelectionPaths(fileInfo, members);
+}
+
+function ingestStokesStackQuickLabel(cand, memberPaths = []) {
+  const labels = memberPaths
+    .map((path) => ingestDatasetLeafName(path))
+    .map((name) => name.toUpperCase())
+    .filter((name) => name);
+  if (labels.length) return `Stokes stack (${labels.join(", ")})`;
+  return ingestDatasetCandidateLabel(cand);
+}
+
+function ingestSelectedDatasetPaths(fileInfo, mapping) {
+  if (Array.isArray(mapping?.datasetPaths)) {
+    const fromList = mapping.datasetPaths.map((x) => String(x || "").trim()).filter((x) => x);
+    return ingestNormalizeDatasetSelectionPaths(fileInfo, fromList);
+  }
+  const single = String(mapping?.datasetPath || fileInfo?.parsed?.format_metadata?.dataset_path || "").trim();
+  return single ? ingestNormalizeDatasetSelectionPaths(fileInfo, [single]) : [];
+}
+
+function ingestSelectedDatasetCandidate(fileInfo, mapping) {
+  const visibleCandidates = ingestDisplayDatasetCandidates(fileInfo, mapping);
+  const candidates = visibleCandidates.length
+    ? visibleCandidates
+    : ingestDatasetCandidates(fileInfo).filter((row) => String(row.kind || "dataset") !== "stokes_stack");
+  if (!candidates.length) return null;
+  const selectedPaths = ingestSelectedDatasetPaths(fileInfo, mapping);
+  if (!selectedPaths.length) return null;
+  const selectedPath = selectedPaths.length ? selectedPaths[0] : "";
+  if (selectedPath) {
+    const selected = candidates.find((row) => String(row.path || "") === String(selectedPath));
+    if (selected) return selected;
+  }
+  return candidates[0];
+}
+
+function ingestStackAxisForMapping(mapping) {
+  const axis = String(mapping?.keyStackAxis || "").trim().toLowerCase();
+  if (INGEST_CANONICAL_DIMS.includes(axis)) return axis;
+  const inferred = ingestInferStackAxisFromPaths(mapping?.datasetPaths);
+  return inferred && INGEST_CANONICAL_DIMS.includes(inferred) ? inferred : "pol";
+}
+
+function ingestHdf5StackToken(paths) {
+  const items = Array.isArray(paths)
+    ? paths.map((x) => String(x || "").trim()).filter((x) => x)
+    : [];
+  if (!items.length) return "";
+  return `${INGEST_HDF5_STACK_TOKEN_PREFIX}${JSON.stringify(items)}`;
+}
+
+function ingestShapeForMapping(fileInfo, mapping) {
+  const candidates = ingestDatasetCandidates(fileInfo);
+  const selectedPaths = ingestSelectedDatasetPaths(fileInfo, mapping);
+  if (!selectedPaths.length) {
+    return Array.isArray(fileInfo?.parsed?.shape) ? fileInfo.parsed.shape : [];
+  }
+  const selectedRows = selectedPaths
+    .map((path) => candidates.find((row) => String(row.path || "") === String(path)))
+    .filter((row) => row && Array.isArray(row.shape));
+  if (!selectedRows.length) {
+    return Array.isArray(fileInfo?.parsed?.shape) ? fileInfo.parsed.shape : [];
+  }
+  if (selectedRows.length === 1) {
+    return selectedRows[0].shape;
+  }
+  const baseShape = selectedRows[0].shape;
+  const compatible = selectedRows.every((row) => row.shape.length === baseShape.length && row.shape.every((v, i) => v === baseShape[i]));
+  if (!compatible) {
+    return [];
+  }
+  return [selectedRows.length, ...baseShape];
+}
+
+function reorderIngestSelectedKeys(mapping, sourcePath, targetPath, { after = false } = {}) {
+  if (!mapping || !Array.isArray(mapping.datasetPaths) || mapping.datasetPaths.length < 2) return false;
+  const src = mapping.datasetPaths.findIndex((path) => String(path || "") === String(sourcePath || ""));
+  if (src < 0) return false;
+  const next = [...mapping.datasetPaths];
+  const [moved] = next.splice(src, 1);
+  if (!targetPath) {
+    next.push(moved);
+  } else {
+    let dst = next.findIndex((path) => String(path || "") === String(targetPath || ""));
+    if (dst < 0) return false;
+    if (after) dst += 1;
+    next.splice(dst, 0, moved);
+  }
+  mapping.datasetPaths = next;
+  mapping.datasetPath = next[0] || null;
+  return true;
+}
+
+function normalizeIngestMappingForFile(fileInfo, mapping, { forceResetAxes = false } = {}) {
+  if (!mapping || !fileInfo) return;
+  const selected = ingestSelectedDatasetPaths(fileInfo, mapping);
+  if (!selected.length && ingestShouldAutoselectDatasets(fileInfo)) {
+    selected.push(...ingestDefaultDatasetSelectionPaths(fileInfo));
+  }
+  mapping.datasetPaths = selected;
+  mapping.datasetPath = selected.length ? selected[0] : null;
+  mapping.keyStackAxis = selected.length > 1 ? ingestStackAxisForMapping(mapping) : null;
+
+  const shape = ingestShapeForMapping(fileInfo, mapping);
+  const current = Array.isArray(mapping.axisAssignments) ? mapping.axisAssignments : [];
+  let needsReset = forceResetAxes || current.length !== shape.length;
+  if (!needsReset && selected.length > 1 && current.length) {
+    const stackAxis = ingestStackAxisForMapping(mapping);
+    const firstCanonical = canonicalIngestDim(String(current[0] || "").trim());
+    if (firstCanonical !== stackAxis) needsReset = true;
+  }
+  if (needsReset) {
+    mapping.axisAssignments = ingestDefaultAxisAssignments(fileInfo, mapping, shape);
+    mapping.axisAssignmentsConfirmed = new Array(mapping.axisAssignments.length).fill(false);
+  } else {
+    ensureIngestAssignmentConfirmed(mapping, mapping.axisAssignments.length);
+  }
+  if (typeof mapping.fileAxisConfirmed !== "boolean") mapping.fileAxisConfirmed = false;
+}
+
+function fileAxisFromGrouping(mode) {
+  if (mode === "files_as_t") return "t";
+  if (mode === "files_as_nu") return "nu";
+  if (mode === "files_as_pol") return "pol";
+  return "sample";
+}
+
+function groupingFromFileAxis(dim) {
+  if (dim === "t") return "files_as_t";
+  if (dim === "nu") return "files_as_nu";
+  if (dim === "pol") return "files_as_pol";
+  return "files_as_sample";
+}
+
+function canonicalIngestDim(dim) {
+  return dim === INGEST_SPHERE_ALIAS_DIM ? "x" : dim;
+}
+
+function ingestAxisLabel(dim) {
+  const raw = String(dim || "").trim().toLowerCase();
+  return INGEST_AXIS_LABEL[raw] || INGEST_AXIS_LABEL[canonicalIngestDim(raw)] || raw || "?";
+}
+
+function ingestSupportsKeySelection(fileInfo) {
+  return String(fileInfo?.raw_input?.format || "").toLowerCase() === "hdf5";
+}
+
+function ingestShouldAutoselectDatasets(fileInfo) {
+  return !ingestSupportsKeySelection(fileInfo);
+}
+
+function ingestHasKeySelectionStep() {
+  const files = ingestFiles();
+  if (files.length > 1) return true;
+  return ingestSupportsKeySelection(files[0]);
+}
+
+function ensureIngestAssignmentConfirmed(mapping, shapeLength) {
+  const targetLength = Math.max(0, Number(shapeLength) || 0);
+  const current = Array.isArray(mapping?.axisAssignmentsConfirmed) ? mapping.axisAssignmentsConfirmed : [];
+  const next = new Array(targetLength).fill(false);
+  for (let i = 0; i < targetLength; i += 1) {
+    next[i] = Boolean(current[i]);
+  }
+  if (mapping) mapping.axisAssignmentsConfirmed = next;
+  if (mapping && typeof mapping.fileAxisConfirmed !== "boolean") mapping.fileAxisConfirmed = false;
+}
+
+function isIngestAxisAssignmentConfirmed(mapping, axis) {
+  if (!mapping) return false;
+  const idx = Number(axis);
+  if (!Number.isInteger(idx) || idx < 0) return false;
+  const list = Array.isArray(mapping.axisAssignmentsConfirmed) ? mapping.axisAssignmentsConfirmed : [];
+  return Boolean(list[idx]);
+}
+
+function setIngestAxisAssignmentConfirmed(mapping, axis, confirmed) {
+  if (!mapping) return;
+  const idx = Number(axis);
+  if (!Number.isInteger(idx) || idx < 0) return;
+  ensureIngestAssignmentConfirmed(mapping, Array.isArray(mapping.axisAssignments) ? mapping.axisAssignments.length : 0);
+  if (idx >= mapping.axisAssignmentsConfirmed.length) return;
+  mapping.axisAssignmentsConfirmed[idx] = Boolean(confirmed);
+}
+
+function ingestAxisThemeForDim(dim) {
+  const canonical = canonicalIngestDim(String(dim || "").trim().toLowerCase());
+  return INGEST_AXIS_THEME[canonical] || null;
+}
+
+function applyIngestAxisTheme(el, dim) {
+  if (!el || !(el instanceof HTMLElement)) return;
+  const theme = ingestAxisThemeForDim(dim);
+  if (!theme) {
+    el.style.removeProperty("--ingest-axis-rgb");
+    el.style.removeProperty("--ingest-axis-border");
+    el.style.removeProperty("--ingest-axis-text");
+    return;
+  }
+  el.style.setProperty("--ingest-axis-rgb", theme.rgb);
+  el.style.setProperty("--ingest-axis-border", theme.border);
+  el.style.setProperty("--ingest-axis-text", theme.text);
+}
+
+function defaultIntentFromInspection(inspection) {
+  const files = Array.isArray(inspection?.files) ? inspection.files : [];
+  if (files.length <= 1) {
+    return { intent: "tabs", fileAxis: "sample" };
+  }
+  const candidates = Array.isArray(inspection?.grouping_candidates) ? inspection.grouping_candidates : [];
+  const sorted = [...candidates].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+  const top = sorted[0];
+  const second = sorted[1];
+  if (!top) return { intent: "tabs", fileAxis: "sample" };
+  const topScore = Number(top.score || 0);
+  if (top.mode === "separate" || topScore < 0.6) return { intent: "tabs", fileAxis: "sample" };
+  if (top.mode === "files_as_sample" && topScore >= 0.7) {
+    return { intent: "axis", fileAxis: "sample" };
+  }
+  if (second && Math.abs(topScore - Number(second.score || 0)) <= 0.1) return { intent: "tabs", fileAxis: "sample" };
+  return { intent: "axis", fileAxis: fileAxisFromGrouping(top.mode) };
+}
+
+function highConfidenceAxisAssignments(file, shapeOverride = null) {
+  const shape = Array.isArray(shapeOverride) ? shapeOverride : Array.isArray(file?.parsed?.shape) ? file.parsed.shape : [];
+  const assignments = new Array(shape.length).fill(null);
+  const used = new Set();
+
+  const inferences = Array.isArray(file?.axis_inferences) ? file.axis_inferences : [];
+  for (let axis = 0; axis < shape.length; axis += 1) {
+    const inf = inferences.find((row) => Number(row.axis_index) === axis);
+    const recommended = String(inf?.recommended || "");
+    const candidates = Array.isArray(inf?.candidates) ? inf.candidates : [];
+    const recCandidate = candidates.find((c) => String(c.target_dim || "") === recommended);
+    const score = Number(recCandidate?.score ?? 0);
+    if (score >= 0.85 && INGEST_CANONICAL_DIMS.includes(recommended) && !used.has(recommended)) {
+      assignments[axis] = recommended;
+      used.add(recommended);
+    }
+  }
+  return assignments;
+}
+
+function ingestDefaultAxisAssignments(fileInfo, mapping, shapeOverride = null) {
+  const shape = Array.isArray(shapeOverride) ? shapeOverride : ingestShapeForMapping(fileInfo, mapping);
+  if (!Array.isArray(shape) || !shape.length) return [];
+
+  const selected = ingestSelectedDatasetCandidate(fileInfo, mapping);
+  const selectedPaths = ingestSelectedDatasetPaths(fileInfo, mapping);
+  const dimsFromAttr = Array.isArray(selected?.dims_attr)
+    ? selected.dims_attr
+        .map((dim) => String(dim || "").trim().toLowerCase())
+        .filter((dim) => INGEST_CANONICAL_DIMS.includes(dim))
+    : [];
+  const fallbackOrder = ["y", "z", "x", "t", "nu", "sample", "pol"];
+  const isPolSizeValid = (size) => Number(size) === 1 || Number(size) === 4;
+  const isSphereSizeValid = (size) => healpixNsideFromNpix(Math.trunc(Number(size))) !== null;
+  const isDimAllowedForSize = (dim, size) => {
+    const raw = String(dim || "").trim().toLowerCase();
+    if (!raw) return false;
+    const canonical = canonicalIngestDim(raw);
+    if (canonical === "pol") return isPolSizeValid(size);
+    if (raw === INGEST_SPHERE_ALIAS_DIM) return isSphereSizeValid(size);
+    return INGEST_CANONICAL_DIMS.includes(canonical);
+  };
+  const pickUnusedDim = (candidates, size, usedCanonical) => {
+    for (const cand of candidates) {
+      const dim = String(cand || "").trim().toLowerCase();
+      if (!isDimAllowedForSize(dim, size)) continue;
+      const canonical = canonicalIngestDim(dim);
+      if (usedCanonical.has(canonical)) continue;
+      return dim;
+    }
+    return "";
+  };
+  const fillUnknownAxes = (seedDims, startAxis = 0) => {
+    const out = new Array(shape.length).fill(null);
+    const usedCanonical = new Set();
+    for (let axis = 0; axis < shape.length; axis += 1) {
+      if (axis < startAxis) continue;
+      const size = Number(shape[axis] || 0);
+      const seed = String(seedDims[axis] || "").trim().toLowerCase();
+      if (!seed) continue;
+      if (!isDimAllowedForSize(seed, size)) continue;
+      const canonical = canonicalIngestDim(seed);
+      if (usedCanonical.has(canonical)) continue;
+      out[axis] = seed;
+      usedCanonical.add(canonical);
+    }
+    for (let axis = startAxis; axis < shape.length; axis += 1) {
+      if (out[axis]) continue;
+      const size = Number(shape[axis] || 0);
+      const candidates = [];
+      if (isSphereSizeValid(size)) candidates.push(INGEST_SPHERE_ALIAS_DIM);
+      if (isPolSizeValid(size)) candidates.push("pol");
+      candidates.push(...fallbackOrder);
+      const chosen = pickUnusedDim(candidates, size, usedCanonical);
+      if (!chosen) continue;
+      out[axis] = chosen;
+      usedCanonical.add(canonicalIngestDim(chosen));
+    }
+    return out.map((dim) => (dim ? String(dim).trim().toLowerCase() : dim));
+  };
+
+  if (selectedPaths.length > 1 && shape.length >= 1) {
+    const stackAxis = ingestStackAxisForMapping(mapping);
+    const baseRank = shape.length - 1;
+    const baseShape = shape.slice(1).map((v) => Number(v || 0));
+    const inferredBase = highConfidenceAxisAssignments(fileInfo, baseShape);
+    const ordered = new Array(shape.length).fill(null);
+    ordered[0] = canonicalIngestDim(stackAxis);
+    const usedCanonical = new Set([canonicalIngestDim(stackAxis)]);
+    for (let i = 0; i < baseRank; i += 1) {
+      const axis = i + 1;
+      const size = baseShape[i];
+      const attrDim = String(dimsFromAttr[i] || "").trim().toLowerCase();
+      const infDim = String(inferredBase[i] || "").trim().toLowerCase();
+      const candidates = [];
+      if (isSphereSizeValid(size)) candidates.push(INGEST_SPHERE_ALIAS_DIM);
+      if (attrDim) candidates.push(attrDim);
+      if (infDim) candidates.push(infDim);
+      if (isPolSizeValid(size)) candidates.push("pol");
+      candidates.push(...fallbackOrder);
+      const chosen = pickUnusedDim(candidates, size, usedCanonical);
+      if (!chosen) continue;
+      ordered[axis] = chosen;
+      usedCanonical.add(canonicalIngestDim(chosen));
+    }
+    return ordered.map((dim) => (dim ? String(dim).trim().toLowerCase() : dim));
+  }
+
+  const seeded = new Array(shape.length).fill(null);
+  if (dimsFromAttr.length === shape.length) {
+    for (let axis = 0; axis < shape.length; axis += 1) seeded[axis] = dimsFromAttr[axis];
+  } else {
+    const inferred = highConfidenceAxisAssignments(fileInfo, shape);
+    for (let axis = 0; axis < shape.length; axis += 1) seeded[axis] = inferred[axis];
+  }
+  return fillUnknownAxes(seeded, 0);
+}
+
+function nextUnfilledSlot(mapping, startIndex = 0) {
+  const dims = Array.isArray(mapping?.axisAssignments) ? mapping.axisAssignments : [];
+  if (!dims.length) return -1;
+  const start = clamp(Number(startIndex) || 0, 0, dims.length - 1);
+  for (let i = start; i < dims.length; i += 1) {
+    if (!dims[i]) return i;
+  }
+  for (let i = 0; i < start; i += 1) {
+    if (!dims[i]) return i;
+  }
+  return -1;
+}
+
+function activeMapping() {
+  if (!ingestWizard.mappings.length) return null;
+  ingestWizard.activeFileIndex = clamp(ingestWizard.activeFileIndex, 0, ingestWizard.mappings.length - 1);
+  return ingestWizard.mappings[ingestWizard.activeFileIndex] || null;
+}
+
+function ingestMappingValidationIssues(mapping, fileInfo) {
+  const issues = [];
+  const dimsRaw = Array.isArray(mapping?.axisAssignments) ? mapping.axisAssignments : [];
+  const shape = ingestShapeForMapping(fileInfo, mapping);
+  const selectedPaths = ingestSelectedDatasetPaths(fileInfo, mapping);
+  if (ingestSupportsKeySelection(fileInfo) && selectedPaths.length < 1) {
+    issues.push("select at least one data key");
+    return issues;
+  }
+  if (selectedPaths.length > 1) {
+    if (!shape.length) {
+      issues.push("selected data keys must have matching shapes to stack");
+    } else if (dimsRaw.length === shape.length && dimsRaw[0]) {
+      const stackAxis = ingestStackAxisForMapping(mapping);
+      const first = canonicalIngestDim(String(dimsRaw[0]));
+      if (first !== stackAxis) {
+        issues.push(`axis 0 must be assigned to key-stack axis '${stackAxis}'`);
+      }
+    }
+  }
+  if (!dimsRaw.length || dimsRaw.length !== shape.length) return issues;
+  if (dimsRaw.some((dim) => !dim)) return issues;
+
+  const canonicalDims = dimsRaw.map((dim) => canonicalIngestDim(String(dim)));
+  const polAxis = canonicalDims.indexOf("pol");
+  if (polAxis >= 0) {
+    const polSize = Number(shape[polAxis] || 0);
+    if (polSize !== 1 && polSize !== 3 && polSize !== 4) {
+      issues.push(`pol axis size must be 1, 3, or 4 (got ${polSize})`);
+    }
+  }
+
+  const sphereAxes = dimsRaw.reduce((out, dim, axis) => {
+    if (dim === INGEST_SPHERE_ALIAS_DIM) out.push(axis);
+    return out;
+  }, []);
+  if (sphereAxes.length > 1) {
+    issues.push("only one sphere axis can be assigned per file");
+  } else if (sphereAxes.length === 1) {
+    const sphereAxis = sphereAxes[0];
+    const npix = Number(shape[sphereAxis] || 0);
+    const nside = healpixNsideFromNpix(npix);
+    if (nside === null) {
+      issues.push(`sphere axis requires HEALPix npix=12*nside^2 with power-of-two nside (got N=${npix})`);
+    }
+  }
+  return issues;
+}
+
+function renderIntentDialogControls() {
+  const files = ingestFiles();
+  const multi = files.length > 1;
+  if (els.ingestIntentAxisBtn) {
+    const selected = ingestWizard.intent === "axis";
+    els.ingestIntentAxisBtn.classList.toggle("isSelected", selected);
+    els.ingestIntentAxisBtn.setAttribute("aria-pressed", selected ? "true" : "false");
+    els.ingestIntentAxisBtn.disabled = !multi;
+  }
+  if (els.ingestIntentTabsBtn) {
+    const selected = ingestWizard.intent !== "axis";
+    els.ingestIntentTabsBtn.classList.toggle("isSelected", selected);
+    els.ingestIntentTabsBtn.setAttribute("aria-pressed", selected ? "true" : "false");
+    els.ingestIntentTabsBtn.disabled = !multi;
+  }
+  if (els.ingestIntentFileAxisFieldset) {
+    els.ingestIntentFileAxisFieldset.hidden = !(multi && ingestWizard.intent === "axis");
+  }
+
+  const axisButtons = [
+    els.ingestIntentFileAxisSampleBtn,
+    els.ingestIntentFileAxisPolBtn,
+    els.ingestIntentFileAxisTimeBtn,
+    els.ingestIntentFileAxisFreqBtn,
+  ];
+  for (const btn of axisButtons) {
+    if (!btn) continue;
+    const dim = String(btn.dataset.fileAxis || "");
+    const selected = dim === ingestWizard.fileAxis;
+    btn.classList.toggle("isSelected", selected);
+    btn.setAttribute("aria-pressed", selected ? "true" : "false");
+    btn.disabled = !(multi && ingestWizard.intent === "axis");
+    applyIngestAxisTheme(btn, dim);
+  }
+  if (els.ingestIntentFileAxisHint) {
+    if (multi && ingestWizard.intent === "axis") {
+      els.ingestIntentFileAxisHint.textContent =
+        `Files will be combined along '${ingestWizard.fileAxis}' (new file identity axis).`;
+    } else if (multi) {
+      els.ingestIntentFileAxisHint.textContent = "Files will create separate datasets/tabs.";
+    } else {
+      els.ingestIntentFileAxisHint.textContent = "Single file import.";
+    }
+  }
+}
+
+function openIngestIntentDialog() {
+  if (!els.ingestIntentDialog) return;
+  setIngestStep("intent");
+  renderIntentDialogControls();
+  if (typeof els.ingestIntentDialog.showModal === "function" && !els.ingestIntentDialog.open) {
+    els.ingestIntentDialog.showModal();
+  }
+}
+
+function closeIngestIntentDialog() {
+  if (!els.ingestIntentDialog?.open) return;
+  els.ingestIntentDialog.close();
+}
+
+function setIngestKeysStatus(message, isError = false) {
+  if (!els.ingestKeysStatus) return;
+  els.ingestKeysStatus.textContent = message || "";
+  els.ingestKeysStatus.classList.toggle("error", Boolean(isError));
+}
+
+function openIngestKeysDialog() {
+  if (!els.ingestKeysDialog) return;
+  setIngestStep("keys");
+  renderIngestKeysDialog();
+  if (typeof els.ingestKeysDialog.showModal === "function" && !els.ingestKeysDialog.open) {
+    els.ingestKeysDialog.showModal();
+  }
+}
+
+function closeIngestKeysDialog() {
+  if (!els.ingestKeysDialog?.open) return;
+  els.ingestKeysDialog.close();
+}
+
+function closeAllIngestDialogs() {
+  closeIngestDialog();
+  closeIngestKeysDialog();
+  closeIngestIntentDialog();
+}
+
+function toggleIngestKeySelection(mapping, fileInfo, path, enabled) {
+  const target = String(path || "").trim();
+  if (!target || !mapping || !fileInfo) return;
+  const current = ingestSelectedDatasetPaths(fileInfo, mapping);
+  let next = [...current];
+  if (enabled) {
+    if (!next.includes(target)) next.push(target);
+  } else {
+    next = next.filter((row) => row !== target);
+  }
+  ingestSetSelectedDatasetPaths(mapping, fileInfo, next);
+}
+
+function renderIngestSelectedKeysList(fileInfo, mapping) {
+  if (!els.ingestSelectedKeysList) return;
+  els.ingestSelectedKeysList.innerHTML = "";
+  const selectedPaths = ingestSelectedDatasetPaths(fileInfo, mapping);
+  const candidateByPath = new Map(ingestDatasetCandidates(fileInfo).map((row) => [String(row.path || ""), row]));
+  if (!selectedPaths.length) {
+    const msg = document.createElement("div");
+    msg.className = "ingestKeyEmpty";
+    msg.textContent = "Select one or more keys.";
+    els.ingestSelectedKeysList.appendChild(msg);
+    return;
+  }
+  for (const path of selectedPaths) {
+    const cand = candidateByPath.get(path);
+    const item = document.createElement("div");
+    item.className = "ingestKeyOrderItem";
+    item.draggable = true;
+    item.dataset.path = path;
+    const shape = Array.isArray(cand?.shape) ? cand.shape.join("x") : "?";
+    item.textContent = `${ingestDatasetCandidateLabel(cand || { path })} (${shape})`;
+    item.addEventListener("dragstart", (ev) => {
+      if (!ev.dataTransfer) return;
+      ev.dataTransfer.effectAllowed = "move";
+      ev.dataTransfer.setData("text/plain", path);
+      item.classList.add("isDragging");
+    });
+    item.addEventListener("dragend", () => {
+      item.classList.remove("isDragging");
+      for (const node of els.ingestSelectedKeysList.querySelectorAll(".ingestKeyOrderItem.isDragTarget")) {
+        node.classList.remove("isDragTarget");
+      }
+    });
+    item.addEventListener("dragover", (ev) => {
+      ev.preventDefault();
+      if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+      item.classList.add("isDragTarget");
+    });
+    item.addEventListener("dragleave", () => {
+      item.classList.remove("isDragTarget");
+    });
+    item.addEventListener("drop", (ev) => {
+      ev.preventDefault();
+      item.classList.remove("isDragTarget");
+      const src = String(ev.dataTransfer?.getData("text/plain") || "");
+      if (!src || src === path) return;
+      if (!reorderIngestSelectedKeys(mapping, src, path)) return;
+      normalizeIngestMappingForFile(fileInfo, mapping);
+      renderIngestKeysDialog();
+    });
+    els.ingestSelectedKeysList.appendChild(item);
+  }
+  const tail = document.createElement("div");
+  tail.className = "ingestKeyOrderTail";
+  tail.textContent = "Drop here to move key to end";
+  tail.addEventListener("dragover", (ev) => {
+    ev.preventDefault();
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+    tail.classList.add("isDragTarget");
+  });
+  tail.addEventListener("dragleave", () => {
+    tail.classList.remove("isDragTarget");
+  });
+  tail.addEventListener("drop", (ev) => {
+    ev.preventDefault();
+    tail.classList.remove("isDragTarget");
+    const src = String(ev.dataTransfer?.getData("text/plain") || "");
+    if (!src) return;
+    if (!reorderIngestSelectedKeys(mapping, src, "")) return;
+    normalizeIngestMappingForFile(fileInfo, mapping);
+    renderIngestKeysDialog();
+  });
+  els.ingestSelectedKeysList.appendChild(tail);
+}
+
+function renderIngestStokesQuickList(fileInfo, mapping) {
+  if (!els.ingestStokesQuickList) return;
+  els.ingestStokesQuickList.innerHTML = "";
+  const stacks = ingestStokesStackCandidates(fileInfo);
+  if (!stacks.length) {
+    els.ingestStokesQuickList.hidden = true;
+    return;
+  }
+  const selectedPaths = ingestSelectedDatasetPaths(fileInfo, mapping);
+  const selected = new Set(selectedPaths);
+  const stackAxis = selectedPaths.length > 1 ? ingestStackAxisForMapping(mapping) : "";
+  let rendered = 0;
+  for (const cand of stacks) {
+    const memberPaths = ingestStokesMemberPathsFromCandidate(fileInfo, cand);
+    if (memberPaths.length < 2) continue;
+    rendered += 1;
+    const selectedCount = memberPaths.reduce((count, path) => count + (selected.has(path) ? 1 : 0), 0);
+    const allSelected = selectedCount === memberPaths.length;
+    const isSelected = allSelected && stackAxis === "pol";
+    const isPartial = selectedCount > 0 && !isSelected;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ingestKeyGroupBtn ingestKeyGroupBtn--stokes";
+    btn.textContent = ingestStokesStackQuickLabel(cand, memberPaths);
+    btn.classList.toggle("isSelected", isSelected);
+    btn.classList.toggle("isPartial", isPartial);
+    btn.setAttribute("aria-pressed", isSelected ? "true" : "false");
+    btn.addEventListener("click", () => {
+      ingestSetSelectedDatasetPaths(mapping, fileInfo, memberPaths);
+      mapping.keyStackAxis = "pol";
+      normalizeIngestMappingForFile(fileInfo, mapping, { forceResetAxes: true });
+      renderIngestKeysDialog();
+    });
+    els.ingestStokesQuickList.appendChild(btn);
+  }
+  els.ingestStokesQuickList.hidden = rendered === 0;
+}
+
+function renderIngestKeyGroupList(fileInfo, mapping) {
+  if (!els.ingestKeyGroupList) return;
+  els.ingestKeyGroupList.innerHTML = "";
+  const groups = ingestDatasetPrefixGroups(fileInfo, mapping);
+  if (!groups.length) {
+    els.ingestKeyGroupList.hidden = true;
+    return;
+  }
+  els.ingestKeyGroupList.hidden = false;
+  const selected = new Set(ingestSelectedDatasetPaths(fileInfo, mapping));
+  for (const group of groups) {
+    const paths = [...group.paths];
+    const selectedCount = paths.reduce((count, path) => count + (selected.has(path) ? 1 : 0), 0);
+    const allSelected = selectedCount === paths.length;
+    const partiallySelected = selectedCount > 0 && selectedCount < paths.length;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ingestKeyGroupBtn";
+    btn.textContent = `${group.prefix}/... (${paths.length})`;
+    btn.classList.toggle("isSelected", allSelected);
+    btn.classList.toggle("isPartial", partiallySelected);
+    btn.setAttribute("aria-pressed", allSelected ? "true" : "false");
+    btn.addEventListener("click", () => {
+      const next = new Set(ingestSelectedDatasetPaths(fileInfo, mapping));
+      if (allSelected) {
+        for (const path of paths) next.delete(path);
+      } else {
+        for (const path of paths) next.add(path);
+      }
+      ingestSetSelectedDatasetPaths(mapping, fileInfo, [...next]);
+      renderIngestKeysDialog();
+    });
+    els.ingestKeyGroupList.appendChild(btn);
+  }
+}
+
+function renderIngestStackAxisButtons(mapping, { show = false } = {}) {
+  if (!els.ingestKeysStackAxisButtons) return;
+  const stackAxis = ingestStackAxisForMapping(mapping);
+  const buttons = els.ingestKeysStackAxisButtons.querySelectorAll("button[data-stack-axis]");
+  for (const btn of buttons) {
+    const axis = String(btn.dataset.stackAxis || "");
+    const selected = show && axis === stackAxis;
+    btn.textContent = ingestAxisLabel(axis);
+    btn.classList.toggle("isSelected", selected);
+    btn.setAttribute("aria-pressed", selected ? "true" : "false");
+    btn.disabled = !show;
+    applyIngestAxisTheme(btn, axis);
+  }
+}
+
+function renderIngestKeysDialog() {
+  const files = ingestFiles();
+  if (!files.length) return;
+  const single = files.length <= 1;
+  if (els.ingestKeysStepPills) els.ingestKeysStepPills.hidden = single;
+  if (els.ingestKeysFileSelect) {
+    els.ingestKeysFileSelect.innerHTML = "";
+    for (let i = 0; i < files.length; i += 1) {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = files[i].raw_input?.name || `File ${i + 1}`;
+      els.ingestKeysFileSelect.appendChild(opt);
+    }
+    ingestWizard.activeFileIndex = clamp(ingestWizard.activeFileIndex, 0, files.length - 1);
+    els.ingestKeysFileSelect.value = String(ingestWizard.activeFileIndex);
+    if (els.ingestKeysFileLabel) {
+      els.ingestKeysFileLabel.hidden = single;
+      els.ingestKeysFileLabel.style.display = single ? "none" : "";
+    }
+  }
+
+  const mapping = activeMapping();
+  const fileInfo = files[ingestWizard.activeFileIndex];
+  if (!mapping || !fileInfo) return;
+  normalizeIngestMappingForFile(fileInfo, mapping);
+  renderIngestStokesQuickList(fileInfo, mapping);
+  renderIngestKeyGroupList(fileInfo, mapping);
+
+  if (els.ingestKeyCandidatesList) {
+    els.ingestKeyCandidatesList.innerHTML = "";
+    const candidates = ingestDisplayDatasetCandidates(fileInfo, mapping);
+    const selected = new Set(ingestSelectedDatasetPaths(fileInfo, mapping));
+    if (!candidates.length) {
+      const msg = document.createElement("div");
+      msg.className = "ingestKeyEmpty";
+      msg.textContent = "No candidate keys found for this file.";
+      els.ingestKeyCandidatesList.appendChild(msg);
+    } else {
+      for (const cand of candidates) {
+        const path = String(cand.path || "");
+        const isSelected = selected.has(path);
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "ingestKeyCandidateBtn";
+        row.classList.toggle("isSelected", isSelected);
+        row.setAttribute("aria-pressed", isSelected ? "true" : "false");
+        row.addEventListener("click", () => {
+          toggleIngestKeySelection(mapping, fileInfo, path, !isSelected);
+          renderIngestKeysDialog();
+        });
+
+        const text = document.createElement("span");
+        text.className = "ingestKeyCandidateTitle";
+        text.textContent = ingestDatasetCandidateLabel(cand);
+        row.appendChild(text);
+
+        const detail = document.createElement("span");
+        detail.className = "ingestKeyCandidateMeta";
+        const shape = Array.isArray(cand.shape) ? cand.shape.join("x") : "?";
+        const dims = Array.isArray(cand.dims_attr) && cand.dims_attr.length ? ` | dims=${cand.dims_attr.join(",")}` : "";
+        const coord = cand.coordinate_like ? " | coord-like" : "";
+        detail.textContent = `${shape}, ${cand.dtype || "?"}${dims}${coord}`;
+        row.appendChild(detail);
+        els.ingestKeyCandidatesList.appendChild(row);
+      }
+    }
+  }
+
+  renderIngestSelectedKeysList(fileInfo, mapping);
+
+  const selectedCount = ingestSelectedDatasetPaths(fileInfo, mapping).length;
+  if (els.ingestKeysStackAxisLabel) {
+    const show = selectedCount > 1;
+    els.ingestKeysStackAxisLabel.hidden = !show;
+    renderIngestStackAxisButtons(mapping, { show });
+  }
+  if (els.ingestKeysBackBtn) {
+    els.ingestKeysBackBtn.hidden = single;
+    els.ingestKeysBackBtn.disabled = single;
+  }
+  if (els.ingestKeysContinueBtn) {
+    const needsSelection = ingestSupportsKeySelection(fileInfo);
+    const blocked = needsSelection && selectedCount < 1;
+    els.ingestKeysContinueBtn.disabled = blocked;
+  }
+  setIngestKeysStatus(
+    selectedCount > 1
+      ? `Stacking ${selectedCount} keys. Drag selected items to set stack order.`
+      : "Select one or more keys to continue."
+  );
+}
+
+function propagateIngestKeySelectionToCompatibleFiles({ onlyMissing = true } = {}) {
+  const files = ingestFiles();
+  if (files.length <= 1) return 0;
+  const current = activeMapping();
+  const currentFile = files[ingestWizard.activeFileIndex];
+  if (!current || !currentFile) return 0;
+
+  const selectedPaths = ingestSelectedDatasetPaths(currentFile, current);
+  if (!selectedPaths.length) return 0;
+  const stackAxis = selectedPaths.length > 1 ? ingestStackAxisForMapping(current) : null;
+  let applied = 0;
+
+  for (const mapping of ingestWizard.mappings) {
+    if (!mapping || mapping === current) continue;
+    const fileInfo = files.find((row) => String(row?.raw_input?.id || "") === String(mapping.raw_input_id || ""));
+    if (!fileInfo || !ingestSupportsKeySelection(fileInfo)) continue;
+    const targetPaths = ingestSelectedDatasetPaths(fileInfo, mapping);
+    if (onlyMissing && targetPaths.length) continue;
+    const resolvedPaths = ingestResolveDatasetSelectionForFile(fileInfo, selectedPaths, {
+      stackAxis,
+      allowDefaultFallback: true,
+    });
+    if (!resolvedPaths.length) continue;
+    mapping.datasetPaths = [...resolvedPaths];
+    mapping.datasetPath = resolvedPaths[0];
+    mapping.keyStackAxis = resolvedPaths.length > 1 ? stackAxis : null;
+    normalizeIngestMappingForFile(fileInfo, mapping);
+    applied += 1;
+  }
+  return applied;
+}
+
+function applyDroppedAxis(mapping, targetAxis, payload) {
+  if (!mapping || !Array.isArray(mapping.axisAssignments)) return;
+  ensureIngestAssignmentConfirmed(mapping, mapping.axisAssignments.length);
+  const target = clamp(targetAxis, 0, mapping.axisAssignments.length - 1);
+  const dim = String(payload?.dim || "");
+  if (!INGEST_UI_DIMS.includes(dim)) return;
+  const canonicalDim = canonicalIngestDim(dim);
+
+  const sourceType = String(payload?.sourceType || "palette");
+  const sourceAxis = Number(payload?.sourceAxis);
+  if (sourceType === "slot" && Number.isInteger(sourceAxis)) {
+    const src = clamp(sourceAxis, 0, mapping.axisAssignments.length - 1);
+    if (src === target) return;
+    const sourceDim = mapping.axisAssignments[src];
+    if (!sourceDim) return;
+    mapping.axisAssignments[target] = sourceDim;
+    mapping.axisAssignments[src] = null;
+    setIngestAxisAssignmentConfirmed(mapping, target, true);
+    setIngestAxisAssignmentConfirmed(mapping, src, false);
+    return;
+  }
+
+  const existingIdx = mapping.axisAssignments.findIndex((value) => canonicalIngestDim(value) === canonicalDim);
+  mapping.axisAssignments[target] = dim;
+  setIngestAxisAssignmentConfirmed(mapping, target, true);
+  if (existingIdx >= 0 && existingIdx !== target) {
+    mapping.axisAssignments[existingIdx] = null;
+    setIngestAxisAssignmentConfirmed(mapping, existingIdx, false);
+  }
+}
+
+function unassignedIngestDims(mapping, { excludeDims = [] } = {}) {
+  const assigned = new Set(
+    (Array.isArray(mapping?.axisAssignments) ? mapping.axisAssignments : [])
+      .filter((value) => INGEST_UI_DIMS.includes(value))
+      .map((value) => canonicalIngestDim(value))
+  );
+  for (const dim of excludeDims) {
+    const canonical = canonicalIngestDim(String(dim || ""));
+    if (canonical) assigned.add(canonical);
+  }
+  return INGEST_UI_DIMS.filter((dim) => !assigned.has(canonicalIngestDim(dim)));
+}
+
+function clearIngestDragTargets() {
+  if (els.ingestPalette) els.ingestPalette.classList.remove("isDragTarget");
+  if (!els.ingestSlotStrip) return;
+  for (const node of els.ingestSlotStrip.querySelectorAll(".ingestSlotCard.isDragTarget")) {
+    node.classList.remove("isDragTarget");
+  }
+}
+
+function makeIngestVacancyBlock(sourceBlock) {
+  const ghost = sourceBlock.cloneNode(true);
+  ghost.disabled = true;
+  ghost.draggable = false;
+  ghost.setAttribute("aria-hidden", "true");
+  ghost.classList.add("ingestAxisVacancy");
+  return ghost;
+}
+
+function collapseIngestDragVacancy() {
+  const ghost = ingestAxisDrag.vacancyBlock;
+  if (!ghost || ingestAxisDrag.vacancyCollapsed) return;
+  ingestAxisDrag.vacancyCollapsed = true;
+  ghost.classList.add("isCollapsed");
+}
+
+function ingestDropTargetFromPoint(clientX, clientY) {
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
+  const hit = document.elementFromPoint(clientX, clientY);
+  if (!hit) return null;
+  const slot = hit.closest?.(".ingestSlotCard[data-axis]");
+  if (slot && els.ingestSlotStrip?.contains(slot)) {
+    const axis = Number.parseInt(slot.dataset.axis || "", 10);
+    if (Number.isInteger(axis)) return { type: "slot", axis, slotEl: slot };
+  }
+  if (els.ingestPalette && (hit === els.ingestPalette || els.ingestPalette.contains(hit))) {
+    return { type: "palette" };
+  }
+  return null;
+}
+
+function setIngestDragTarget(target) {
+  clearIngestDragTargets();
+  if (!target) return;
+  if (target.type === "slot" && target.slotEl) {
+    target.slotEl.classList.add("isDragTarget");
+    return;
+  }
+  if (target.type === "palette" && els.ingestPalette) {
+    els.ingestPalette.classList.add("isDragTarget");
+  }
+}
+
+function dropIngestAxisAtPointer(clientX, clientY) {
+  const mapping = activeMapping();
+  const payload = ingestAxisDrag.payload;
+  if (!mapping || !payload || !Array.isArray(mapping.axisAssignments)) return false;
+  const target = ingestDropTargetFromPoint(clientX, clientY);
+  if (!target) return false;
+  if (target.type === "slot") {
+    applyDroppedAxis(mapping, target.axis, payload);
+    return true;
+  }
+  if (target.type === "palette") {
+    const sourceType = String(payload.sourceType || "palette");
+    if (sourceType !== "slot") return false;
+    const sourceAxis = Number(payload.sourceAxis);
+    if (!Number.isInteger(sourceAxis)) return false;
+    const src = clamp(sourceAxis, 0, mapping.axisAssignments.length - 1);
+    if (!mapping.axisAssignments[src]) return false;
+    mapping.axisAssignments[src] = null;
+    setIngestAxisAssignmentConfirmed(mapping, src, false);
+    return true;
+  }
+  return false;
+}
+
+function onIngestAxisPointerMove(ev) {
+  if (!ingestAxisDrag.activeBlock) return;
+  if (ingestAxisDrag.pointerId !== null && ev.pointerId !== ingestAxisDrag.pointerId) return;
+  ev.preventDefault();
+  updateIngestAxisDrag(ev);
+  setIngestDragTarget(ingestDropTargetFromPoint(Number(ev.clientX), Number(ev.clientY)));
+}
+
+function onIngestAxisPointerUp(ev) {
+  if (!ingestAxisDrag.activeBlock) return;
+  if (ingestAxisDrag.pointerId !== null && ev.pointerId !== ingestAxisDrag.pointerId) return;
+  ev.preventDefault();
+  const changed = dropIngestAxisAtPointer(Number(ev.clientX), Number(ev.clientY));
+  endIngestAxisDrag();
+  if (changed) renderIngestMappingStep();
+}
+
+function onIngestAxisPointerCancel(ev) {
+  if (!ingestAxisDrag.activeBlock) return;
+  if (ingestAxisDrag.pointerId !== null && ev.pointerId !== ingestAxisDrag.pointerId) return;
+  endIngestAxisDrag();
+}
+
+function startIngestAxisDrag(block, ev, payload) {
+  endIngestAxisDrag();
+  const rect = block.getBoundingClientRect();
+  const startX = Number(ev.clientX);
+  const startY = Number(ev.clientY);
+  const useEventPoint = Number.isFinite(startX) && Number.isFinite(startY) && !(startX === 0 && startY === 0);
+  const pointerX = useEventPoint ? startX : rect.left + rect.width / 2;
+  const pointerY = useEventPoint ? startY : rect.top + rect.height / 2;
+  ingestAxisDrag.activeBlock = block;
+  ingestAxisDrag.payload = payload;
+  ingestAxisDrag.pointerId = Number.isFinite(ev.pointerId) ? ev.pointerId : null;
+  ingestAxisDrag.pointerDx = Math.max(0, pointerX - rect.left);
+  ingestAxisDrag.pointerDy = Math.max(0, pointerY - rect.top);
+  ingestAxisDrag.sourceZone = block.parentElement || null;
+  ingestAxisDrag.vacancyCollapsed = false;
+  if (ingestAxisDrag.sourceZone) {
+    ingestAxisDrag.sourceZone.classList.add("isVacating");
+    const vacancy = makeIngestVacancyBlock(block);
+    ingestAxisDrag.sourceZone.insertBefore(vacancy, block);
+    ingestAxisDrag.vacancyBlock = vacancy;
+  }
+  block.classList.add("isDragging");
+  block.style.width = `${Math.round(rect.width)}px`;
+  block.style.height = `${Math.round(rect.height)}px`;
+  block.style.left = `${Math.round(rect.left)}px`;
+  block.style.top = `${Math.round(rect.top)}px`;
+  if (ingestAxisDrag.pointerId !== null && typeof block.setPointerCapture === "function") {
+    try {
+      block.setPointerCapture(ingestAxisDrag.pointerId);
+    } catch (_) {
+      // ignore capture failures
+    }
+  }
+  window.addEventListener("pointermove", onIngestAxisPointerMove, { capture: true });
+  window.addEventListener("pointerup", onIngestAxisPointerUp, { capture: true });
+  window.addEventListener("pointercancel", onIngestAxisPointerCancel, { capture: true });
+  updateIngestAxisDrag(ev);
+  setIngestDragTarget(ingestDropTargetFromPoint(pointerX, pointerY));
+  document.body.classList.add("isIngestAxisDragging");
+}
+
+function updateIngestAxisDrag(ev) {
+  const block = ingestAxisDrag.activeBlock;
+  if (!block) return;
+  const x = Number(ev.clientX);
+  const y = Number(ev.clientY);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  if (x === 0 && y === 0) return;
+  block.style.left = `${Math.round(x - ingestAxisDrag.pointerDx)}px`;
+  block.style.top = `${Math.round(y - ingestAxisDrag.pointerDy)}px`;
+}
+
+function endIngestAxisDrag() {
+  const block = ingestAxisDrag.activeBlock;
+  const pointerId = ingestAxisDrag.pointerId;
+  const sourceZone = ingestAxisDrag.sourceZone;
+  const vacancy = ingestAxisDrag.vacancyBlock;
+  ingestAxisDrag.activeBlock = null;
+  ingestAxisDrag.payload = null;
+  ingestAxisDrag.pointerId = null;
+  ingestAxisDrag.pointerDx = 0;
+  ingestAxisDrag.pointerDy = 0;
+  ingestAxisDrag.sourceZone = null;
+  ingestAxisDrag.vacancyBlock = null;
+  ingestAxisDrag.vacancyCollapsed = false;
+  window.removeEventListener("pointermove", onIngestAxisPointerMove, true);
+  window.removeEventListener("pointerup", onIngestAxisPointerUp, true);
+  window.removeEventListener("pointercancel", onIngestAxisPointerCancel, true);
+  if (block) {
+    if (pointerId !== null && typeof block.releasePointerCapture === "function") {
+      try {
+        block.releasePointerCapture(pointerId);
+      } catch (_) {
+        // ignore release failures
+      }
+    }
+    block.classList.remove("isDragging");
+    block.style.left = "";
+    block.style.top = "";
+    block.style.width = "";
+    block.style.height = "";
+  }
+  if (vacancy && vacancy.parentElement) vacancy.parentElement.removeChild(vacancy);
+  if (sourceZone) sourceZone.classList.remove("isVacating");
+  document.body.classList.remove("isIngestAxisDragging");
+  clearIngestDragTargets();
+}
+
+function makeIngestAxisBlock(
+  dim,
+  { sourceType = "palette", sourceAxis = -1, palette = false, fileAxis = null, keyAxis = null, draggable = true, prefilled = false } = {}
+) {
+  const block = document.createElement("button");
+  block.type = "button";
+  block.className = "ingestAxisBlock";
+  if (palette) block.classList.add("isPalette");
+  if (prefilled) block.classList.add("isPrefilled");
+  const canonical = canonicalIngestDim(String(dim));
+  if (fileAxis && canonical === fileAxis) block.classList.add("isFileAxis");
+  if (keyAxis && canonical === keyAxis) block.classList.add("isKeyAxis");
+  if (!draggable) block.classList.add("isLocked");
+  applyIngestAxisTheme(block, canonical);
+  block.textContent = ingestAxisLabel(dim);
+  block.title = ingestAxisLabel(dim);
+  block.dataset.dim = String(dim || "");
+  block.draggable = false;
+  if (draggable) {
+    block.addEventListener("selectstart", (ev) => {
+      ev.preventDefault();
+    });
+    block.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0 && ev.pointerType !== "touch" && ev.pointerType !== "pen") return;
+      ev.preventDefault();
+      const sel = window.getSelection?.();
+      if (sel && typeof sel.removeAllRanges === "function") sel.removeAllRanges();
+      startIngestAxisDrag(block, ev, { dim, sourceType, sourceAxis });
+    });
+  } else {
+    block.setAttribute("aria-disabled", "true");
+  }
+  return block;
+}
+
+function renderFileSelectorControls() {
+  const files = ingestFiles();
+  if (!els.ingestActiveFileSelect) return;
+  els.ingestActiveFileSelect.innerHTML = "";
+  for (let i = 0; i < files.length; i += 1) {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = files[i].raw_input?.name || `File ${i + 1}`;
+    els.ingestActiveFileSelect.appendChild(opt);
+  }
+  if (files.length) {
+    ingestWizard.activeFileIndex = clamp(ingestWizard.activeFileIndex, 0, files.length - 1);
+    els.ingestActiveFileSelect.value = String(ingestWizard.activeFileIndex);
+  }
+  const multi = files.length > 1;
+  if (els.ingestActiveFileLabel) {
+    els.ingestActiveFileLabel.hidden = !multi;
+    els.ingestActiveFileLabel.style.display = multi ? "" : "none";
+  }
+  if (els.ingestPrevFileBtn) els.ingestPrevFileBtn.disabled = !multi;
+  if (els.ingestNextFileBtn) els.ingestNextFileBtn.disabled = !multi;
+  if (els.ingestApplyToAllBtn) {
+    const show = multi && ingestWizard.intent === "tabs";
+    els.ingestApplyToAllBtn.hidden = !show;
+    els.ingestApplyToAllBtn.disabled = !show;
+  }
+}
+
+function renderIngestInspectStep() {
+  if (!ingestWizard.inspection) return;
+  const files = ingestFiles();
+  if (els.ingestInspectSummary) {
+    els.ingestInspectSummary.textContent = `Parsed ${files.length} file(s). Review inferred mappings before building plan.`;
+  }
+  if (els.ingestInspectWarnings) {
+    els.ingestInspectWarnings.innerHTML = "";
+    const warnings = Array.isArray(ingestWizard.inspection.global_warnings) ? ingestWizard.inspection.global_warnings : [];
+    for (const warning of warnings) {
+      const row = document.createElement("div");
+      row.textContent = warning;
+      els.ingestInspectWarnings.appendChild(row);
+    }
+  }
+  if (els.ingestInspectFiles) {
+    els.ingestInspectFiles.innerHTML = "";
+    for (const file of files) {
+      const item = document.createElement("div");
+      item.className = "ingestFileRow";
+
+      const title = document.createElement("div");
+      title.className = "ingestFileTitle";
+      title.textContent = file.raw_input?.name || file.raw_input?.id || "input";
+      item.appendChild(title);
+
+      const meta = document.createElement("div");
+      meta.className = "ingestFileMeta";
+      const selectedPath = String(file?.parsed?.format_metadata?.dataset_path || "");
+      const candidateCount = ingestDatasetCandidates(file).length;
+      const selectedCandidate = ingestDatasetCandidates(file).find((row) => String(row.path || "") === selectedPath);
+      const keyMeta =
+        String(file?.raw_input?.format || "").toLowerCase() === "hdf5"
+          ? ` | key=${selectedCandidate ? ingestDatasetCandidateLabel(selectedCandidate) : selectedPath || "?"}${
+              candidateCount > 1 ? ` (${candidateCount} candidates)` : ""
+            }`
+          : "";
+      meta.textContent =
+        `format=${file.raw_input?.format || "unknown"} | shape=${(file.parsed?.shape || []).join("x")} | ` +
+        `inferred dims=${(file.recommended_dims || []).join(", ")}${keyMeta}`;
+      item.appendChild(meta);
+
+      const conf = document.createElement("div");
+      conf.className = "ingestFileMeta";
+      conf.textContent = `confidence: ${ingestConfidenceLabel(file)}`;
+      item.appendChild(conf);
+
+      els.ingestInspectFiles.appendChild(item);
+    }
+  }
+}
+
+function renderIngestMappingStep() {
+  if (!ingestWizard.inspection) return;
+  const files = ingestFiles();
+  renderFileSelectorControls();
+
+  const mapping = activeMapping();
+  const fileInfo = files[ingestWizard.activeFileIndex];
+  if (!mapping || !fileInfo) return;
+  normalizeIngestMappingForFile(fileInfo, mapping);
+  ensureIngestAssignmentConfirmed(mapping, mapping.axisAssignments.length);
+  if (els.ingestStepPills) els.ingestStepPills.hidden = files.length <= 1;
+  if (els.ingestBackBtn) {
+    const canGoBack = ingestHasKeySelectionStep();
+    els.ingestBackBtn.hidden = !canGoBack;
+    els.ingestBackBtn.disabled = !canGoBack;
+  }
+  const validationIssues = ingestMappingValidationIssues(mapping, fileInfo);
+  if (els.ingestMapperBoard) els.ingestMapperBoard.hidden = false;
+
+  if (els.ingestSlotStrip) {
+    els.ingestSlotStrip.innerHTML = "";
+    const shape = ingestShapeForMapping(fileInfo, mapping);
+    const includeFileAxisSlot = files.length > 1 && ingestWizard.intent === "axis";
+    const fileAxis = files.length > 1 && ingestWizard.intent === "axis" ? canonicalIngestDim(ingestWizard.fileAxis) : null;
+    const selectedPaths = ingestSelectedDatasetPaths(fileInfo, mapping);
+    const keyAxis = selectedPaths.length > 1 ? ingestStackAxisForMapping(mapping) : null;
+    const displaySlots = [];
+    if (includeFileAxisSlot && fileAxis) {
+      displaySlots.push({
+        finalAxis: 0,
+        sourceAxis: -1,
+        size: files.length,
+        assigned: fileAxis,
+        locked: true,
+        lockReason: "file identity",
+        prefilled: !Boolean(mapping.fileAxisConfirmed),
+      });
+    }
+    for (let axis = 0; axis < shape.length; axis += 1) {
+      const assigned = mapping.axisAssignments[axis] || "";
+      const assignedCanonical = assigned ? canonicalIngestDim(String(assigned)) : "";
+      const lockAsKeyAxis = Boolean(keyAxis && axis === 0 && assignedCanonical === keyAxis);
+      const confirmed = isIngestAxisAssignmentConfirmed(mapping, axis);
+      displaySlots.push({
+        finalAxis: axis + (includeFileAxisSlot ? 1 : 0),
+        sourceAxis: axis,
+        size: shape[axis],
+        assigned,
+        locked: lockAsKeyAxis,
+        lockReason: lockAsKeyAxis ? "key stack" : "",
+        prefilled: Boolean(assigned) && !confirmed,
+      });
+    }
+    for (const slotDef of displaySlots) {
+      const slot = document.createElement("div");
+      slot.className = "ingestSlotCard";
+      if (!slotDef.locked) slot.dataset.axis = String(slotDef.sourceAxis);
+      if (slotDef.locked) slot.classList.add("isLocked");
+      const assigned = slotDef.assigned;
+      slot.classList.toggle("isFilled", Boolean(assigned));
+      slot.classList.toggle("isPrefilled", Boolean(slotDef.prefilled));
+      const assignedCanonical = assigned ? canonicalIngestDim(String(assigned)) : "";
+      slot.classList.toggle("isFileAxisHint", Boolean(fileAxis && assignedCanonical === fileAxis));
+      slot.classList.toggle("isKeyAxisHint", Boolean(keyAxis && assignedCanonical === keyAxis));
+      applyIngestAxisTheme(slot, assignedCanonical);
+
+      const label = document.createElement("div");
+      label.className = "ingestSlotLabel";
+      const labelMain = document.createElement("span");
+      labelMain.className = "ingestSlotLabelMain";
+      labelMain.textContent = `Axis ${slotDef.finalAxis}`;
+      const labelMeta = document.createElement("span");
+      labelMeta.className = "ingestSlotLabelMeta";
+      labelMeta.textContent = slotDef.lockReason ? `N=${slotDef.size} • ${slotDef.lockReason}` : `N=${slotDef.size}`;
+      label.appendChild(labelMain);
+      label.appendChild(labelMeta);
+      slot.appendChild(label);
+
+      const zone = document.createElement("div");
+      zone.className = "ingestSlotDropZone";
+      zone.classList.toggle("isPrefilled", Boolean(slotDef.prefilled));
+      if (assigned) {
+        zone.appendChild(
+          makeIngestAxisBlock(assigned, {
+            sourceType: slotDef.locked ? "fixed" : "slot",
+            sourceAxis: slotDef.sourceAxis,
+            palette: false,
+            fileAxis,
+            keyAxis,
+            draggable: !slotDef.locked,
+            prefilled: Boolean(slotDef.prefilled),
+          })
+        );
+      } else {
+        const empty = document.createElement("span");
+        empty.className = "ingestSlotLabel";
+        empty.textContent = "Drop axis";
+        zone.appendChild(empty);
+      }
+      slot.appendChild(zone);
+      if (slotDef.prefilled && assigned) {
+        slot.title = "Click to confirm this prefilled assignment";
+        slot.addEventListener("click", () => {
+          if (ingestAxisDrag.activeBlock) return;
+          if (slotDef.sourceAxis >= 0) setIngestAxisAssignmentConfirmed(mapping, slotDef.sourceAxis, true);
+          else mapping.fileAxisConfirmed = true;
+          renderIngestMappingStep();
+        });
+      }
+
+      els.ingestSlotStrip.appendChild(slot);
+    }
+  }
+
+  if (els.ingestPalette) {
+    els.ingestPalette.innerHTML = "";
+    const fileAxis = files.length > 1 && ingestWizard.intent === "axis" ? canonicalIngestDim(ingestWizard.fileAxis) : null;
+    const paletteDims = unassignedIngestDims(mapping, { excludeDims: fileAxis ? [fileAxis] : [] });
+    els.ingestPalette.classList.toggle("isEmpty", !paletteDims.length);
+    const keyAxis = ingestSelectedDatasetPaths(fileInfo, mapping).length > 1 ? ingestStackAxisForMapping(mapping) : null;
+    for (const dim of paletteDims) {
+      els.ingestPalette.appendChild(
+        makeIngestAxisBlock(dim, {
+          sourceType: "palette",
+          sourceAxis: -1,
+          palette: true,
+          fileAxis,
+          keyAxis,
+        })
+      );
+    }
+  }
+
+  if (els.ingestMapperLegend) {
+    const selectedKey = ingestSelectedDatasetCandidate(fileInfo, mapping);
+    const selectedPaths = ingestSelectedDatasetPaths(fileInfo, mapping);
+    const next = nextUnfilledSlot(mapping, 0);
+    const axisOffset = files.length > 1 && ingestWizard.intent === "axis" ? 1 : 0;
+    const nextTxt = next >= 0 ? `next empty axis label: Axis ${next + axisOffset}` : "all axis labels filled";
+    const combineTxt =
+      files.length > 1 && ingestWizard.intent === "axis" ? ` | file-axis (${ingestAxisLabel(ingestWizard.fileAxis)}) prefilled` : "";
+    const keyTxt =
+      selectedPaths.length > 1
+        ? ` | key-stack axis (${ingestAxisLabel(ingestStackAxisForMapping(mapping))}), keys=${selectedPaths.length}`
+        : selectedKey
+          ? ` | data key: ${ingestDatasetCandidateLabel(selectedKey)}`
+          : "";
+    const validationTxt = validationIssues.length ? ` | validation: ${validationIssues[0]}` : "";
+    els.ingestMapperLegend.textContent =
+      `Drag axes into labels. Drag assigned axes between labels or back to Axes to unassign (${nextTxt}).${combineTxt}${keyTxt}${validationTxt}`;
+    els.ingestMapperLegend.classList.toggle("hasError", validationIssues.length > 0);
+  }
+
+  if (els.ingestPresetRow && els.ingestPresetLabel) {
+    const presets = Array.isArray(ingestWizard.inspection.preset_suggestions)
+      ? ingestWizard.inspection.preset_suggestions
+      : [];
+    if (!presets.length) {
+      els.ingestPresetRow.hidden = true;
+    } else {
+      const top = presets[0];
+      els.ingestPresetRow.hidden = false;
+      const isApplied = ingestWizard.selectedPresetId && ingestWizard.selectedPresetId === top.preset_id;
+      const verb = isApplied ? "Applied preset" : "Suggested preset";
+      els.ingestPresetLabel.textContent = `${verb}: ${top.name} (${Number(top.confidence || 0).toFixed(2)})`;
+    }
+  }
+}
+
+function renderIngestPreviewStep() {
+  const plan = ingestWizard.plan;
+  if (!plan) return;
+  if (els.ingestPreviewSummary) {
+    els.ingestPreviewSummary.textContent = plan.is_valid
+      ? "Plan is valid. Commit will materialize datasets and tabs."
+      : "Plan has strict validation errors. Resolve mapping/grouping first.";
+  }
+
+  if (els.ingestPreviewDatasets) {
+    els.ingestPreviewDatasets.innerHTML = "";
+    const datasets = Array.isArray(plan.datasets) ? plan.datasets : [];
+    for (const ds of datasets) {
+      const row = document.createElement("div");
+      row.className = "ingestPreviewItem";
+      row.textContent =
+        `${ds.dataset_id} | shape=${(ds.projected_shape || []).join("x")} | ` +
+        `sources=${(ds.source_input_ids || []).length}`;
+      els.ingestPreviewDatasets.appendChild(row);
+    }
+  }
+
+  if (els.ingestPreviewWarnings) {
+    els.ingestPreviewWarnings.innerHTML = "";
+    const warnings = Array.isArray(plan.warnings) ? plan.warnings : [];
+    for (const warning of warnings) {
+      const row = document.createElement("div");
+      row.textContent = warning;
+      els.ingestPreviewWarnings.appendChild(row);
+    }
+  }
+
+  if (els.ingestPreviewErrors) {
+    els.ingestPreviewErrors.innerHTML = "";
+    const errors = Array.isArray(plan.errors) ? plan.errors : [];
+    for (const err of errors) {
+      const row = document.createElement("div");
+      row.textContent = err;
+      els.ingestPreviewErrors.appendChild(row);
+    }
+  }
+}
+
+function applySuggestedPreset({ silent = false, render = true } = {}) {
+  if (!ingestWizard.inspection) return;
+  const presets = Array.isArray(ingestWizard.inspection.preset_suggestions)
+    ? ingestWizard.inspection.preset_suggestions
+    : [];
+  if (!presets.length) return false;
+  const preset = presets[0];
+  ingestWizard.selectedPresetId = preset.preset_id || null;
+  const mode = String(preset.default_grouping_mode || "separate");
+  if (mode === "separate") {
+    ingestWizard.intent = "tabs";
+  } else {
+    ingestWizard.intent = "axis";
+    ingestWizard.fileAxis = fileAxisFromGrouping(mode);
+  }
+  for (const mapping of ingestWizard.mappings) {
+    if (Array.isArray(preset.default_dims) && preset.default_dims.length === mapping.axisAssignments.length) {
+      mapping.axisAssignments = [...preset.default_dims];
+      mapping.axisAssignmentsConfirmed = new Array(mapping.axisAssignments.length).fill(false);
+      mapping.fileAxisConfirmed = false;
+    }
+  }
+  if (render) renderIngestMappingStep();
+  if (!silent) setIngestStatus(`Applied preset '${preset.name}'.`);
+  return true;
+}
+
+function openIngestDialog() {
+  if (!els.ingestDialog) return;
+  setIngestStep("map");
+  if (typeof els.ingestDialog.showModal === "function") {
+    if (!els.ingestDialog.open) els.ingestDialog.showModal();
+  }
+}
+
+function closeIngestDialog() {
+  if (!els.ingestDialog?.open) return;
+  endIngestAxisDrag();
+  els.ingestDialog.close();
+}
+
+async function startIngestInspect({ paths = [], files = [] } = {}) {
+  resetIngestWizardState();
+  closeAllIngestDialogs();
+  setIngestStatus("Inspecting inputs...");
+  setIngestStep("intent");
+  try {
+    const body = new FormData();
+    if (Array.isArray(paths) && paths.length) {
+      body.append("paths_json", JSON.stringify(paths));
+    }
+    for (const file of files) {
+      body.append("files", file, file.name || "dataset");
+    }
+    const inspection = await fetchJson("/api/ingest/inspect", { method: "POST", body });
+    ingestWizard.inspection = inspection;
+    const defaults = defaultIntentFromInspection(inspection);
+    ingestWizard.intent = defaults.intent;
+    ingestWizard.fileAxis = defaults.fileAxis;
+    ingestWizard.mappings = ingestFiles().map((file) => {
+      const selectedPaths = ingestShouldAutoselectDatasets(file) ? ingestDefaultDatasetSelectionPaths(file) : [];
+      const mapping = {
+        raw_input_id: file.raw_input?.id,
+        datasetPath: selectedPaths[0] || null,
+        datasetPaths: [...selectedPaths],
+        keyStackAxis: null,
+        axisAssignments: [],
+        axisAssignmentsConfirmed: [],
+        fileAxisConfirmed: false,
+      };
+      normalizeIngestMappingForFile(file, mapping, { forceResetAxes: true });
+      return mapping;
+    });
+    ingestWizard.activeFileIndex = 0;
+    const inspectedFiles = ingestFiles();
+    const isSingleFile = inspectedFiles.length <= 1;
+    const activeFile = inspectedFiles[ingestWizard.activeFileIndex] || null;
+    const activeFormat = String(activeFile?.raw_input?.format || "").toLowerCase();
+    const needsHdf5KeySelection = activeFormat === "hdf5";
+    const autoPresetApplied = isSingleFile ? false : applySuggestedPreset({ silent: true, render: false });
+
+    if (isSingleFile) {
+      ingestWizard.intent = "tabs";
+      if (needsHdf5KeySelection) {
+        setIngestStep("keys");
+        openIngestKeysDialog();
+      } else {
+        setIngestStep("map");
+        openIngestDialog();
+        renderIngestMappingStep();
+      }
+    } else {
+      renderIntentDialogControls();
+      openIngestIntentDialog();
+    }
+    if (autoPresetApplied) setIngestStatus(`Applied suggested preset.`);
+    else setIngestStatus("");
+  } catch (err) {
+    setIngestStatus(`Inspect failed: ${err.message}`, true);
+  }
+}
+
+function buildIngestPlanDecision() {
+  if (!ingestWizard.inspection) throw new Error("No inspection session is active.");
+  propagateIngestKeySelectionToCompatibleFiles({ onlyMissing: true });
+  const files = ingestFiles();
+  const fileByInputId = new Map(files.map((file) => [String(file.raw_input?.id || ""), file]));
+  const isMulti = files.length > 1;
+  const fileMappings = [];
+  for (const mapping of ingestWizard.mappings) {
+    const fileInfo = fileByInputId.get(String(mapping.raw_input_id || ""));
+    if (!fileInfo) throw new Error(`Unknown file mapping '${mapping.raw_input_id}'.`);
+    normalizeIngestMappingForFile(fileInfo, mapping);
+    let dimsRaw = Array.isArray(mapping.axisAssignments) ? mapping.axisAssignments : [];
+    let selectedPaths = ingestSelectedDatasetPaths(fileInfo, mapping);
+    if (ingestSupportsKeySelection(fileInfo) && selectedPaths.length < 1) {
+      const fallbackPaths = ingestResolveDatasetSelectionForFile(fileInfo, [], { allowDefaultFallback: true });
+      if (fallbackPaths.length) {
+        ingestSetSelectedDatasetPaths(mapping, fileInfo, fallbackPaths);
+        normalizeIngestMappingForFile(fileInfo, mapping);
+        dimsRaw = Array.isArray(mapping.axisAssignments) ? mapping.axisAssignments : [];
+        selectedPaths = ingestSelectedDatasetPaths(fileInfo, mapping);
+      }
+    }
+    if (ingestSupportsKeySelection(fileInfo) && selectedPaths.length < 1) {
+      throw new Error(`'${fileInfo?.raw_input?.name || mapping.raw_input_id}': select at least one data key.`);
+    }
+    if (!dimsRaw.length || dimsRaw.some((dim) => !dim)) throw new Error("One or more files are missing axis assignments.");
+    for (const dim of dimsRaw) {
+      if (!INGEST_UI_DIMS.includes(dim)) {
+        throw new Error(`Invalid axis assignment '${dim}'.`);
+      }
+    }
+    const dims = dimsRaw.map((dim) => canonicalIngestDim(String(dim)));
+    if (new Set(dims).size !== dims.length) {
+      throw new Error("Duplicate axis assignment detected within a file.");
+    }
+
+    const shape = ingestShapeForMapping(fileInfo, mapping);
+    if (selectedPaths.length > 1) {
+      if (!shape.length) {
+        throw new Error(`'${fileInfo?.raw_input?.name || mapping.raw_input_id}': selected data keys must share the same shape.`);
+      }
+      const stackAxis = ingestStackAxisForMapping(mapping);
+      if (!dimsRaw.length || canonicalIngestDim(String(dimsRaw[0] || "")) !== stackAxis) {
+        throw new Error(`'${fileInfo?.raw_input?.name || mapping.raw_input_id}': axis 0 must be assigned to key-stack axis '${stackAxis}'.`);
+      }
+    }
+    if (shape.length && dimsRaw.length !== shape.length) {
+      const name = fileInfo?.raw_input?.name || mapping.raw_input_id;
+      throw new Error(`'${name}': selected data key rank (${shape.length}) does not match assigned axes (${dimsRaw.length}).`);
+    }
+    if (shape.length === dimsRaw.length) {
+      const polAxis = dims.indexOf("pol");
+      if (polAxis >= 0) {
+        const polSize = Number(shape[polAxis] || 0);
+        if (polSize !== 1 && polSize !== 3 && polSize !== 4) {
+          throw new Error(`'${fileInfo?.raw_input?.name || mapping.raw_input_id}': pol axis size must be 1, 3, or 4 (got ${polSize}).`);
+        }
+      }
+    }
+
+    const sphereAxis = dimsRaw.findIndex((dim) => dim === INGEST_SPHERE_ALIAS_DIM);
+    if (sphereAxis >= 0) {
+      const npix = Number(shape[sphereAxis] || 0);
+      const nside = healpixNsideFromNpix(npix);
+      if (nside === null) {
+        throw new Error(
+          `'${fileInfo?.raw_input?.name || mapping.raw_input_id}': sphere axis requires HEALPix npix=12*nside^2 with power-of-two nside (got N=${npix}).`
+        );
+      }
+    }
+
+    const mappingPayload = {
+      raw_input_id: mapping.raw_input_id,
+      dims,
+      ignore: false,
+    };
+    if (selectedPaths.length) {
+      mappingPayload.dataset_path = selectedPaths.length > 1 ? ingestHdf5StackToken(selectedPaths) : selectedPaths[0];
+      mappingPayload.dataset_paths = [...selectedPaths];
+    }
+    if (selectedPaths.length > 1) {
+      mappingPayload.key_stack_axis = ingestStackAxisForMapping(mapping);
+    }
+    if (sphereAxis >= 0) mappingPayload.sphere_axis = sphereAxis;
+    fileMappings.push(mappingPayload);
+  }
+
+  const groupingMode = isMulti && ingestWizard.intent === "axis" ? groupingFromFileAxis(ingestWizard.fileAxis) : "separate";
+  const tabMode = isMulti && ingestWizard.intent === "tabs" ? "multiple_tabs" : "single_tab";
+
+  return {
+    inspection_id: ingestWizard.inspection.inspection_id,
+    decision: {
+      grouping_mode: groupingMode,
+      tab_mode: tabMode,
+      use_preset_id: ingestWizard.selectedPresetId,
+      file_mappings: fileMappings,
+    },
+  };
+}
+
+async function buildIngestPreview() {
+  try {
+    setIngestStatus("Building ingest plan preview...");
+    const req = buildIngestPlanDecision();
+    const plan = await fetchJson("/api/ingest/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+    ingestWizard.plan = plan;
+    renderIngestPreviewStep();
+    setIngestStep("map");
+    setIngestStatus(plan.is_valid ? "Preview is valid." : "Preview contains strict errors.", !plan.is_valid);
+  } catch (err) {
+    setIngestStatus(`Preview failed: ${err.message}`, true);
+  }
+}
+
+async function loadDataIdIntoActiveTab(dataId) {
+  await refreshDatasetOptions(dataId);
+  els.datasetSelect.value = dataId;
+  await onDatasetChange();
+}
+
+async function materializeCommittedDatasets(dataIds, tabMode) {
+  if (!Array.isArray(dataIds) || !dataIds.length) return;
+  if (tabMode !== "multiple_tabs" || dataIds.length < 2) {
+    await loadDataIdIntoActiveTab(dataIds[0]);
+    return;
+  }
+  await loadDataIdIntoActiveTab(dataIds[0]);
+  for (let i = 1; i < dataIds.length; i += 1) {
+    await addDatasetTabAndActivate({ readyStatus: false });
+    await loadDataIdIntoActiveTab(dataIds[i]);
+  }
+}
+
+async function commitIngestPlan() {
+  try {
+    setIngestStatus("Validating ingest plan...");
+    const req = buildIngestPlanDecision();
+    const plan = await fetchJson("/api/ingest/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+    ingestWizard.plan = plan;
+    if (!plan?.plan_id) {
+      setIngestStatus("No ingest plan selected for commit.", true);
+      return;
+    }
+    if (!plan.is_valid) {
+      const firstErr = Array.isArray(plan.errors) && plan.errors.length ? plan.errors[0] : "Cannot commit invalid plan.";
+      setIngestStatus(firstErr, true);
+      return;
+    }
+
+    setIngestStatus("Committing ingest plan...");
+    const payload = await fetchJson("/api/ingest/commit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan_id: plan.plan_id }),
+    });
+    const created = Array.isArray(payload.created_data_ids) ? payload.created_data_ids : [];
+    await materializeCommittedDatasets(created, payload.tab_mode || "single_tab");
+    closeIngestDialog();
+    setSystemPickerStatus(`Imported ${created.length} dataset(s): ${created.join(", ")}`);
+  } catch (err) {
+    setIngestStatus(`Commit failed: ${err.message}`, true);
   }
 }
 
@@ -8757,152 +14710,13 @@ function installDatasetDropHandlers() {
       return;
     }
 
-    const startsEmpty = !state.dataId;
-    const keepFirstInCurrentTab = startsEmpty && validFiles.length > 0;
-    let createdTabs = 0;
-    let loadedCount = 0;
-    for (let i = 0; i < validFiles.length; i += 1) {
-      const file = validFiles[i];
-      const shouldCreateNewTab = !keepFirstInCurrentTab || i > 0;
-      if (shouldCreateNewTab) {
-        await addDatasetTabAndActivate({
-          readyStatus: false,
-        });
-        createdTabs += 1;
-      }
-      const loaded = await loadDatasetFromUpload(file);
-      if (loaded) loadedCount += 1;
-    }
-
+    await startIngestInspect({ files: validFiles });
     if (invalid.length) {
-      setSystemPickerStatus(
-        `Loaded ${loadedCount}/${validFiles.length} dropped file(s) into new tabs. Skipped ${invalid.length} file(s): ${invalid[0]}`,
-        loadedCount < 1
-      );
-      return;
-    }
-    if (createdTabs > 0) {
-      if (loadedCount === validFiles.length) {
-        if (keepFirstInCurrentTab) {
-          setSystemPickerStatus(
-            `Loaded ${loadedCount} dropped file(s): first in current tab, ${createdTabs} in new tab(s).`
-          );
-        } else {
-          setSystemPickerStatus(`Loaded ${loadedCount} dropped file(s) into ${createdTabs} new tab(s).`);
-        }
-      } else {
-        if (keepFirstInCurrentTab) {
-          setSystemPickerStatus(
-            `Loaded ${loadedCount}/${validFiles.length} dropped file(s): first in current tab, ${createdTabs} in new tab(s).`,
-            loadedCount < 1
-          );
-        } else {
-          setSystemPickerStatus(
-            `Loaded ${loadedCount}/${validFiles.length} dropped file(s) into new tabs.`,
-            loadedCount < 1
-          );
-        }
-      }
+      setSystemPickerStatus(`Ignored ${invalid.length} unsupported file(s): ${invalid[0]}`, false);
+    } else {
+      setSystemPickerStatus(`Inspecting ${validFiles.length} dropped file(s).`);
     }
   });
-}
-
-async function loadDatasetFromLocalPath(path, options = {}) {
-  const epoch = activeEpoch();
-  const dims = Array.isArray(options.dims) ? options.dims : null;
-  const padMissingDims = Boolean(options.padMissingDims);
-  if (dims && dims.length) {
-    setSystemPickerStatus(`Loading dataset with manual axes: ${dims.join(", ")}`);
-  } else {
-    setSystemPickerStatus(`Loading dataset: ${path}`);
-  }
-  try {
-    const body = { path };
-    if (dims && dims.length) {
-      body.dims = dims;
-      body.pad_missing_dims = padMissingDims;
-    }
-    const payload = await fetchJson("/api/load-local", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    assertEpoch(epoch);
-    await refreshDatasetOptions(payload.loaded);
-    assertEpoch(epoch);
-    els.datasetSelect.value = payload.loaded;
-    await onDatasetChange();
-    const padded = Array.isArray(payload.padded_dims) ? payload.padded_dims : [];
-    if (padded.length) {
-      setSystemPickerStatus(
-        `Loaded ${payload.loaded} (${payload.shape.join("x")}); padded axes: ${padded.join(", ")}`
-      );
-      return;
-    }
-    setSystemPickerStatus(`Loaded ${payload.loaded} (${payload.shape.join("x")})`);
-  } catch (err) {
-    if (isAbortError(err)) return;
-    if (!dims && shouldOfferAxisMapping(err.message)) {
-      const mapping = promptForAxisMapping();
-      if (mapping) {
-        await loadDatasetFromLocalPath(path, { dims: mapping, padMissingDims: true });
-        return;
-      }
-      setSystemPickerStatus("Load canceled (manual axis mapping not provided).", true);
-      return;
-    }
-    setSystemPickerStatus(`Load failed: ${err.message}`, true);
-  }
-}
-
-async function loadDatasetFromUpload(file, options = {}) {
-  const epoch = activeEpoch();
-  const dims = Array.isArray(options.dims) ? options.dims : null;
-  const padMissingDims = Boolean(options.padMissingDims);
-  if (dims && dims.length) {
-    setSystemPickerStatus(`Loading dataset with manual axes: ${dims.join(", ")}`);
-  } else {
-    setSystemPickerStatus(`Uploading dataset: ${file.name}`);
-  }
-  try {
-    const body = new FormData();
-    body.append("file", file, file.name || "dataset");
-    if (dims && dims.length) {
-      body.append("dims", dims.join(","));
-      body.append("pad_missing_dims", String(padMissingDims));
-    }
-
-    const payload = await fetchJson("/api/upload-local", {
-      method: "POST",
-      body,
-    });
-    assertEpoch(epoch);
-    await refreshDatasetOptions(payload.loaded);
-    assertEpoch(epoch);
-    els.datasetSelect.value = payload.loaded;
-    await onDatasetChange();
-    const padded = Array.isArray(payload.padded_dims) ? payload.padded_dims : [];
-    if (padded.length) {
-      setSystemPickerStatus(
-        `Loaded ${payload.loaded} (${payload.shape.join("x")}); padded axes: ${padded.join(", ")}`
-      );
-      return true;
-    }
-    setSystemPickerStatus(`Loaded ${payload.loaded} (${payload.shape.join("x")})`);
-    return true;
-  } catch (err) {
-    if (isAbortError(err)) return false;
-    if (!dims && shouldOfferAxisMapping(err.message)) {
-      const mapping = promptForAxisMapping();
-      if (mapping) {
-        return loadDatasetFromUpload(file, { dims: mapping, padMissingDims: true });
-      }
-      setSystemPickerStatus("Load canceled (manual axis mapping not provided).", true);
-      return false;
-    }
-    setSystemPickerStatus(`Load failed: ${err.message}`, true);
-    return false;
-  }
 }
 
 async function pickPathWithSystemDialog() {
@@ -8923,7 +14737,8 @@ async function pickPathWithSystemDialog() {
     }
 
     if (payload.loadable) {
-      await loadDatasetFromLocalPath(payload.path);
+      await startIngestInspect({ paths: [payload.path] });
+      setSystemPickerStatus(`Inspecting selected path: ${payload.path}`);
       return;
     }
 
@@ -8945,6 +14760,10 @@ async function onDatasetChange() {
       state.dataId = null;
       state.meta = null;
       resetForDatasetChange(state);
+      state.axisSettings = createDefaultAxisSettings();
+      state.axisPlaneSwap = createDefaultAxisPlaneSwap();
+      state.colorNormValueWindow = { min: null, max: null };
+      state.colorNormWindowsByQuantity = {};
       resetSampleMorphState();
       resetView();
       updateControlCaps();
@@ -8963,6 +14782,10 @@ async function onDatasetChange() {
     state.meta = await fetchJson(`/api/datasets/${state.dataId}/meta`);
     assertEpoch(expectedEpoch);
     resetForDatasetChange(state);
+    state.axisSettings = createDefaultAxisSettings();
+    state.axisPlaneSwap = createDefaultAxisPlaneSwap();
+    state.colorNormValueWindow = { min: null, max: null };
+    state.colorNormWindowsByQuantity = {};
     state.sphereMeta = detectSphereMeta(state.meta);
     state.sphereVectorKey = "";
     state.sphereVectors = null;
@@ -8974,8 +14797,7 @@ async function onDatasetChange() {
     state.sphereRayGridKey = "";
     state.sphereRayGrid = null;
     state.sphereInsideScale = SPHERE_INSIDE_SCALE;
-    state.sphereYaw = 0;
-    state.spherePitch = 0;
+    setSphereOrientationFromYawPitch(0, 0, { resetAxis: true });
     state.sphereDrag = null;
     state.sphereProjection = "mollweide";
     if (isSphereDataset()) {
@@ -9024,9 +14846,204 @@ async function init() {
   installDatasetDropHandlers();
   els.datasetSelect.addEventListener("change", onDatasetChange);
   els.systemPickerBtn.addEventListener("click", () => pickPathWithSystemDialog());
+  if (els.ingestCancelBtn) {
+    els.ingestCancelBtn.addEventListener("click", () => {
+      closeAllIngestDialogs();
+      resetIngestWizardState();
+    });
+  }
+  if (els.ingestBackBtn) {
+    els.ingestBackBtn.addEventListener("click", () => {
+      closeIngestDialog();
+      setIngestStep("keys");
+      openIngestKeysDialog();
+    });
+  }
+  if (els.ingestPreviewBtn) {
+    els.ingestPreviewBtn.addEventListener("click", () => {
+      void buildIngestPreview();
+    });
+  }
+  if (els.ingestCommitBtn) {
+    els.ingestCommitBtn.addEventListener("click", () => {
+      void commitIngestPlan();
+    });
+  }
+  if (els.ingestApplyPresetBtn) {
+    els.ingestApplyPresetBtn.addEventListener("click", () => applySuggestedPreset());
+  }
+  if (els.ingestIntentAxisBtn) {
+    els.ingestIntentAxisBtn.addEventListener("click", () => {
+      if (ingestFiles().length <= 1) return;
+      ingestWizard.intent = "axis";
+      for (const mapping of ingestWizard.mappings) mapping.fileAxisConfirmed = false;
+      renderIntentDialogControls();
+    });
+  }
+  if (els.ingestIntentTabsBtn) {
+    els.ingestIntentTabsBtn.addEventListener("click", () => {
+      ingestWizard.intent = "tabs";
+      for (const mapping of ingestWizard.mappings) mapping.fileAxisConfirmed = false;
+      renderIntentDialogControls();
+    });
+  }
+  const intentAxisButtons = [
+    els.ingestIntentFileAxisSampleBtn,
+    els.ingestIntentFileAxisPolBtn,
+    els.ingestIntentFileAxisTimeBtn,
+    els.ingestIntentFileAxisFreqBtn,
+  ];
+  for (const btn of intentAxisButtons) {
+    if (!btn) continue;
+    btn.addEventListener("click", () => {
+      const dim = String(btn.dataset.fileAxis || "");
+      if (!["sample", "pol", "t", "nu"].includes(dim)) return;
+      ingestWizard.fileAxis = dim;
+      for (const mapping of ingestWizard.mappings) mapping.fileAxisConfirmed = false;
+      renderIntentDialogControls();
+    });
+  }
+  if (els.ingestIntentCancelBtn) {
+    els.ingestIntentCancelBtn.addEventListener("click", () => {
+      closeAllIngestDialogs();
+      resetIngestWizardState();
+    });
+  }
+  if (els.ingestIntentContinueBtn) {
+    els.ingestIntentContinueBtn.addEventListener("click", () => {
+      closeIngestIntentDialog();
+      setIngestStep("keys");
+      openIngestKeysDialog();
+    });
+  }
+  if (els.ingestActiveFileSelect) {
+    els.ingestActiveFileSelect.addEventListener("change", () => {
+      const idx = Number.parseInt(els.ingestActiveFileSelect.value, 10);
+      if (!Number.isFinite(idx)) return;
+      ingestWizard.activeFileIndex = clamp(idx, 0, Math.max(0, ingestWizard.mappings.length - 1));
+      renderIngestMappingStep();
+    });
+  }
+  if (els.ingestKeysFileSelect) {
+    els.ingestKeysFileSelect.addEventListener("change", () => {
+      const idx = Number.parseInt(els.ingestKeysFileSelect.value, 10);
+      if (!Number.isFinite(idx)) return;
+      ingestWizard.activeFileIndex = clamp(idx, 0, Math.max(0, ingestWizard.mappings.length - 1));
+      renderIngestKeysDialog();
+    });
+  }
+  if (els.ingestKeysStackAxisButtons) {
+    const buttons = els.ingestKeysStackAxisButtons.querySelectorAll("button[data-stack-axis]");
+    for (const btn of buttons) {
+      btn.addEventListener("click", () => {
+        const mapping = activeMapping();
+        const fileInfo = ingestFiles()[ingestWizard.activeFileIndex];
+        if (!mapping || !fileInfo) return;
+        const axis = String(btn.dataset.stackAxis || "").trim().toLowerCase();
+        if (!INGEST_CANONICAL_DIMS.includes(axis)) return;
+        mapping.keyStackAxis = axis;
+        normalizeIngestMappingForFile(fileInfo, mapping, { forceResetAxes: true });
+        renderIngestKeysDialog();
+      });
+    }
+  }
+  if (els.ingestKeysCancelBtn) {
+    els.ingestKeysCancelBtn.addEventListener("click", () => {
+      closeAllIngestDialogs();
+      resetIngestWizardState();
+    });
+  }
+  if (els.ingestKeysBackBtn) {
+    els.ingestKeysBackBtn.addEventListener("click", () => {
+      closeIngestKeysDialog();
+      setIngestStep("intent");
+      openIngestIntentDialog();
+    });
+  }
+  if (els.ingestKeysContinueBtn) {
+    els.ingestKeysContinueBtn.addEventListener("click", () => {
+      const mapping = activeMapping();
+      const fileInfo = ingestFiles()[ingestWizard.activeFileIndex];
+      let propagated = 0;
+      if (mapping && fileInfo) {
+        const selectedCount = ingestSelectedDatasetPaths(fileInfo, mapping).length;
+        if (ingestSupportsKeySelection(fileInfo) && selectedCount < 1) {
+          setIngestKeysStatus("Select at least one key before continuing.", true);
+          return;
+        }
+        normalizeIngestMappingForFile(fileInfo, mapping);
+        propagated = propagateIngestKeySelectionToCompatibleFiles({ onlyMissing: true });
+      }
+      closeIngestKeysDialog();
+      setIngestStep("map");
+      openIngestDialog();
+      renderIngestMappingStep();
+      if (propagated > 0) {
+        setIngestStatus(`Copied key selection to ${propagated} compatible file(s).`);
+      }
+    });
+  }
+  if (els.ingestPrevFileBtn) {
+    els.ingestPrevFileBtn.addEventListener("click", () => {
+      ingestWizard.activeFileIndex = clamp(ingestWizard.activeFileIndex - 1, 0, Math.max(0, ingestWizard.mappings.length - 1));
+      renderIngestMappingStep();
+    });
+  }
+  if (els.ingestNextFileBtn) {
+    els.ingestNextFileBtn.addEventListener("click", () => {
+      ingestWizard.activeFileIndex = clamp(ingestWizard.activeFileIndex + 1, 0, Math.max(0, ingestWizard.mappings.length - 1));
+      renderIngestMappingStep();
+    });
+  }
+  if (els.ingestApplyToAllBtn) {
+    els.ingestApplyToAllBtn.addEventListener("click", () => {
+      const current = activeMapping();
+      const files = ingestFiles();
+      const currentFile = files[ingestWizard.activeFileIndex];
+      if (!current || !Array.isArray(current.axisAssignments)) return;
+      const currentPaths = ingestSelectedDatasetPaths(currentFile, current);
+      const currentStackAxis = ingestStackAxisForMapping(current);
+      let applied = 0;
+      for (const mapping of ingestWizard.mappings) {
+        if (mapping === current) continue;
+        if (!Array.isArray(mapping.axisAssignments) || mapping.axisAssignments.length !== current.axisAssignments.length) continue;
+        mapping.axisAssignments = [...current.axisAssignments];
+        mapping.axisAssignmentsConfirmed = Array.isArray(current.axisAssignmentsConfirmed)
+          ? [...current.axisAssignmentsConfirmed]
+          : new Array(mapping.axisAssignments.length).fill(false);
+        mapping.fileAxisConfirmed = Boolean(current.fileAxisConfirmed);
+        const fileInfo = files.find((row) => String(row.raw_input?.id || "") === String(mapping.raw_input_id || ""));
+        const resolvedPaths = ingestResolveDatasetSelectionForFile(fileInfo, currentPaths, {
+          stackAxis: currentStackAxis,
+          allowDefaultFallback: false,
+        });
+        if (resolvedPaths.length) {
+          mapping.datasetPaths = [...resolvedPaths];
+          mapping.datasetPath = resolvedPaths[0];
+          mapping.keyStackAxis = resolvedPaths.length > 1 ? currentStackAxis : null;
+        }
+        normalizeIngestMappingForFile(fileInfo, mapping);
+        applied += 1;
+      }
+      normalizeIngestMappingForFile(currentFile, current);
+      renderIngestMappingStep();
+      setIngestStatus(applied > 0 ? `Applied mapping to ${applied} additional tab(s).` : "No compatible tabs for apply-all.");
+    });
+  }
+  if (els.ingestDialog) {
+    els.ingestDialog.addEventListener("close", () => {
+      endIngestAxisDrag();
+      setIngestStatus("");
+    });
+  }
+  if (els.ingestKeysDialog) {
+    els.ingestKeysDialog.addEventListener("close", () => {
+      setIngestKeysStatus("");
+    });
+  }
 
   els.colorMapSelect.addEventListener("change", async () => {
-    state.colorMap = els.colorMapSelect.value;
+    state.colorMap = normalizeColorMapKey(els.colorMapSelect.value);
     await refreshSlice();
     if (state.selection) await refreshSelectionAnalytics();
   });
@@ -9062,6 +15079,61 @@ async function init() {
     await refreshSlice();
     if (state.selection) await refreshSelectionAnalytics();
   });
+  if (els.spatialResolutionSelect) {
+    els.spatialResolutionSelect.addEventListener("change", async () => {
+      const factor = normalizeDomainScaleFactor(els.spatialResolutionSelect.value);
+      if (factor === spatialScaleFactor()) return;
+      state.renderScale.spatial = factor;
+      updateControlCaps();
+      if (!state.dataId) {
+        requestResizeRedraw(false);
+        return;
+      }
+      await refreshSlice();
+      if (state.selection) await refreshSelectionAnalytics();
+    });
+  }
+  if (els.temporalResolutionSelect) {
+    els.temporalResolutionSelect.addEventListener("change", () => {
+      const factor = normalizeDomainScaleFactor(els.temporalResolutionSelect.value);
+      if (factor === temporalScaleFactor()) return;
+      state.renderScale.temporal = factor;
+      updateControlCaps();
+      drawNavigationGraphs();
+      drawSelectionGraphs();
+    });
+  }
+  if (els.spectralResolutionSelect) {
+    els.spectralResolutionSelect.addEventListener("change", () => {
+      const factor = normalizeDomainScaleFactor(els.spectralResolutionSelect.value);
+      if (factor === spectralScaleFactor()) return;
+      state.renderScale.spectral = factor;
+      updateControlCaps();
+      drawNavigationGraphs();
+      drawSelectionGraphs();
+    });
+  }
+  if (els.axisSettingsBtn) {
+    els.axisSettingsBtn.addEventListener("click", () => {
+      if (els.axisSettingsBtn.disabled) return;
+      openAxisSettingsDialog();
+    });
+  }
+  if (els.axisSettingsResetBtn) {
+    els.axisSettingsResetBtn.addEventListener("click", () => {
+      void resetAxisSettings();
+    });
+  }
+  if (els.axisSettingsCloseBtn) {
+    els.axisSettingsCloseBtn.addEventListener("click", () => {
+      closeAxisSettingsDialog();
+    });
+  }
+  if (els.axisSettingsDialog) {
+    els.axisSettingsDialog.addEventListener("close", () => {
+      updateAxisSettingsButtonState();
+    });
+  }
 
   els.fluxScaleLinearBtn.addEventListener("click", () => setFluxScale("linear"));
   els.fluxScaleSqrtBtn.addEventListener("click", () => setFluxScale("sqrt"));
@@ -9104,6 +15176,32 @@ async function init() {
   if (els.sphereProjOutsideBtn) {
     els.sphereProjOutsideBtn.addEventListener("click", () => setSphereProjection("outside"));
   }
+  if (els.viewRotateNegBtn) {
+    els.viewRotateNegBtn.addEventListener("click", () => {
+      if (!viewRotateModeActive()) return;
+      stepViewRotateRate(-1);
+      updateViewRotateControls();
+      if (isVolumeMode()) rerenderVolumeFrame();
+      if (isSphereMode()) rerenderSphereFrame();
+    });
+  }
+  if (els.viewRotatePosBtn) {
+    els.viewRotatePosBtn.addEventListener("click", () => {
+      if (!viewRotateModeActive()) return;
+      stepViewRotateRate(1);
+      updateViewRotateControls();
+      if (isVolumeMode()) rerenderVolumeFrame();
+      if (isSphereMode()) rerenderSphereFrame();
+    });
+  }
+  if (els.viewRotateRebaseBtn) {
+    els.viewRotateRebaseBtn.addEventListener("click", () => {
+      if (!isSphereMode()) return;
+      resetSphereRotateAxisToViewerZ();
+      rerenderSphereFrame();
+      updateViewRotateControls();
+    });
+  }
   els.volumeQualitySelect.addEventListener("change", onVolumeRenderControlChange);
   els.volumeRenderModeSelect.addEventListener("change", onVolumeRenderControlChange);
   if (els.volumeSphereProjectionSelect) {
@@ -9144,6 +15242,7 @@ async function init() {
 
   els.multiSpectralBtn.addEventListener("click", async () => {
     if (els.multiSpectralBtn.disabled) return;
+    const quantityBefore = intensityQuantityKey();
     state.multiSpectral = !state.multiSpectral;
     if (state.multiSpectral && isPlaying() && state.playbackAxis === "nu") {
       stopPlayback(false);
@@ -9151,6 +15250,7 @@ async function init() {
     if (state.multiSpectral && state.navDrag && axisFromNavKind(state.navDrag.kind) === "nu") {
       state.navDrag = null;
     }
+    applyIntensityQuantityTransition(quantityBefore, intensityQuantityKey());
     updateControlCaps();
     await refreshSlice();
   });
@@ -9159,6 +15259,8 @@ async function init() {
       if (!canUseMultiSpectral()) return;
       state.multiSpectralNuAxisScale = state.multiSpectralNuAxisScale === "log" ? "linear" : "log";
       updateControlCaps();
+      drawNavigationGraphs();
+      drawSelectionGraphs();
       await refreshMultispectralControlsFromServer();
     });
   }
@@ -9177,6 +15279,44 @@ async function init() {
       setSliderFill(els.msDeslopeRange);
       await refreshMultispectralControlsFromServer();
     });
+  }
+  if (els.msNormalizeBtn) {
+    els.msNormalizeBtn.addEventListener("click", async () => {
+      if (!canUseMultiSpectral()) return;
+      state.multiSpectralNormalizeSpectrum = !state.multiSpectralNormalizeSpectrum;
+      updateControlCaps();
+      await refreshMultispectralControlsFromServer();
+    });
+  }
+  if (els.msNormalizeBoostRange) {
+    els.msNormalizeBoostRange.addEventListener("input", () => {
+      state.multiSpectralNormalizeBoost = normalizeMultispectralNormalizeBoost(els.msNormalizeBoostRange.value);
+      if (els.msNormalizeBoostValue) els.msNormalizeBoostValue.textContent = multispectralNormalizeBoostLabel();
+      setSliderFill(els.msNormalizeBoostRange);
+      if (state.multiSpectralNormalizeSpectrum) {
+        scheduleMultispectralLocalRerender();
+      }
+    });
+    els.msNormalizeBoostRange.addEventListener("change", async () => {
+      state.multiSpectralNormalizeBoost = normalizeMultispectralNormalizeBoost(els.msNormalizeBoostRange.value);
+      if (els.msNormalizeBoostValue) els.msNormalizeBoostValue.textContent = multispectralNormalizeBoostLabel();
+      setSliderFill(els.msNormalizeBoostRange);
+      if (state.multiSpectralNormalizeSpectrum) {
+        await refreshMultispectralControlsFromServer();
+      }
+    });
+  }
+  if (els.msChannelRangeMinRange && els.msChannelRangeMaxRange) {
+    els.msChannelRangeMinRange.addEventListener("pointerdown", () => setMultispectralRangeActiveHandle("min"));
+    els.msChannelRangeMaxRange.addEventListener("pointerdown", () => setMultispectralRangeActiveHandle("max"));
+    els.msChannelRangeMinRange.addEventListener("focus", () => setMultispectralRangeActiveHandle("min"));
+    els.msChannelRangeMaxRange.addEventListener("focus", () => setMultispectralRangeActiveHandle("max"));
+    els.msChannelRangeMinRange.addEventListener("input", () => onMultispectralRangeInput("min", false));
+    els.msChannelRangeMaxRange.addEventListener("input", () => onMultispectralRangeInput("max", false));
+    els.msChannelRangeMinRange.addEventListener("change", () => onMultispectralRangeInput("min", true));
+    els.msChannelRangeMaxRange.addEventListener("change", () => onMultispectralRangeInput("max", true));
+    els.msChannelRangeMinRange.addEventListener("blur", () => setMultispectralRangeActiveHandle(null));
+    els.msChannelRangeMaxRange.addEventListener("blur", () => setMultispectralRangeActiveHandle(null));
   }
 
   els.timePlayBtn.addEventListener("click", () => toggleAxisPlayback("t"));
@@ -9201,8 +15341,10 @@ async function init() {
   els.polButtons.forEach((btn, idx) => {
     btn.addEventListener("click", async () => {
       if (idx >= axisSize("pol")) return;
+      const quantityBefore = intensityQuantityKey();
       state.values.pol = idx;
       state.derivedPolMode = "none";
+      applyIntensityQuantityTransition(quantityBefore, intensityQuantityKey());
       updateControlCaps();
       await refreshSlice();
       if (state.selection) await refreshSelectionAnalytics();
@@ -9219,7 +15361,7 @@ async function init() {
   els.evpaDensitySelect.addEventListener("change", async () => {
     const step = Number.parseInt(els.evpaDensitySelect.value, 10);
     if (Number.isFinite(step)) {
-      state.evpaStep = clamp(step, 4, 32);
+      state.evpaStep = clamp(step, 1, 32);
       updatePolButtonState();
       if (state.showEvpa) await refreshSlice();
     }
@@ -9242,7 +15384,9 @@ async function init() {
   for (const [btn, mode] of derivedButtonModes) {
     btn.addEventListener("click", async () => {
       if (!derivedPolSupported(mode)) return;
+      const quantityBefore = intensityQuantityKey();
       state.derivedPolMode = state.derivedPolMode === mode ? "none" : mode;
+      applyIntensityQuantityTransition(quantityBefore, intensityQuantityKey());
       updateControlCaps();
       await refreshSlice();
       if (state.selection) await refreshSelectionAnalytics();
@@ -9261,6 +15405,22 @@ async function init() {
 
   window.addEventListener("keydown", syncDragModeModifierFromEvent);
   window.addEventListener("keyup", syncDragModeModifierFromEvent);
+  window.addEventListener("keydown", async (ev) => {
+    if (ev.key !== "Escape") return;
+    if (renderJob.running) {
+      ev.preventDefault();
+      requestRenderCancel();
+      return;
+    }
+    if (!(isMovieRecordingActive() || movieRecording.stopping)) return;
+    ev.preventDefault();
+    try {
+      await stopMovieRecordingForExport();
+    } catch (err) {
+      const message = err && err.message ? err.message : String(err);
+      setSystemPickerStatus(`Record failed: ${message}`, true);
+    }
+  });
   window.addEventListener("mousedown", syncDragModeModifierFromEvent);
   window.addEventListener("mouseup", syncDragModeModifierFromEvent);
   window.addEventListener("blur", () => setDragModeModifier(null));
@@ -9290,6 +15450,163 @@ async function init() {
     els.saveImagesBtn.addEventListener("click", async () => {
       if (els.saveImagesBtn.disabled) return;
       openSaveImagesDialog();
+    });
+  }
+
+  if (els.recordMovieBtn) {
+    els.recordMovieBtn.addEventListener("click", async () => {
+      if (els.recordMovieBtn.disabled) return;
+      try {
+        if (isMovieRecordingActive() || movieRecording.stopping) {
+          await stopMovieRecordingForExport();
+        } else {
+          await startMovieRecordingFromToolbar();
+        }
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        setSystemPickerStatus(`Record failed: ${message}`, true);
+      }
+    });
+  }
+
+  if (els.mediaQualitySelect) {
+    els.mediaQualitySelect.addEventListener("change", () => {
+      if (els.mediaQualitySelect.disabled) return;
+      const next = normalizeRecordQuality(els.mediaQualitySelect.value);
+      state.recordMoviePrefs.quality = next;
+      updateExportButtonState();
+      setSystemPickerStatus(`Recording quality set to ${recordQualityConfig(next).label}.`);
+    });
+  }
+
+  if (els.renderMovieBtn) {
+    els.renderMovieBtn.addEventListener("click", () => {
+      if (els.renderMovieBtn.disabled) return;
+      openRenderMovieDialog();
+    });
+  }
+
+  const renderChoiceButtons = [
+    [els.renderAxisTimeBtn, "axis", "t"],
+    [els.renderAxisFreqBtn, "axis", "nu"],
+    [els.renderAxisHiddenBtn, "axis", RENDER_AXIS_HIDDEN],
+    [els.renderAxisSampleMorphBtn, "axis", SAMPLE_MORPH_AXIS],
+    [els.renderAxisRotateBtn, "axis", RENDER_AXIS_ROTATE],
+    [els.renderFormatMp4Btn, "format", "mp4"],
+    [els.renderFormatWebmBtn, "format", "webm"],
+    [els.renderFormatGifBtn, "format", "gif"],
+    [els.renderQualityLowBtn, "quality", "low"],
+    [els.renderQualityMedBtn, "quality", "balanced"],
+    [els.renderQualityHighBtn, "quality", "high"],
+    [els.renderResCanvasBtn, "resolution", "canvas"],
+    [els.renderRes720Btn, "resolution", "720p"],
+    [els.renderRes1080Btn, "resolution", "1080p"],
+    [els.renderRes1440Btn, "resolution", "1440p"],
+    [els.renderRes2160Btn, "resolution", "2160p"],
+  ];
+  for (const [btn, key, value] of renderChoiceButtons) {
+    if (!btn) continue;
+    btn.addEventListener("click", () => {
+      if (btn.disabled) return;
+      state.renderMoviePrefs[key] = value;
+      state.renderMoviePrefs.filename = normalizeRenderMovieFilename(
+        state.renderMoviePrefs.filename,
+        state.renderMoviePrefs.format
+      );
+      updateRenderMovieDialogFields();
+      updateRenderSettingsFields();
+      updateExportButtonState();
+    });
+  }
+  if (els.renderFpsInput) {
+    els.renderFpsInput.addEventListener("change", () => {
+      readRenderSettingsFromUi();
+      updateRenderMovieDialogFields();
+      updateRenderSettingsFields();
+      updateExportButtonState();
+    });
+  }
+  if (els.renderLoopInput) {
+    els.renderLoopInput.addEventListener("change", () => {
+      readRenderSettingsFromUi();
+      updateRenderMovieDialogFields();
+      updateRenderSettingsFields();
+      updateExportButtonState();
+    });
+  }
+  const renderOverlayToggles = [
+    [els.renderIncludeColorbarBtn, "includeColorbar"],
+    [els.renderIncludeSkyDirectionsBtn, "includeSkyDirections"],
+    [els.renderIncludeLengthScaleBtn, "includeLengthScale"],
+    [els.renderIncludeSampleLabelsBtn, "includeSampleLabels"],
+  ];
+  for (const [btn, key] of renderOverlayToggles) {
+    if (!btn) continue;
+    btn.addEventListener("click", () => {
+      if (btn.disabled) return;
+      const current = normalizeRenderOverlayOption(state.renderMoviePrefs[key]);
+      state.renderMoviePrefs[key] = !current;
+      updateRenderSettingsFields();
+      updateRenderMovieDialogFields();
+      updateExportButtonState();
+    });
+  }
+
+  if (els.renderProgressCancelBtn) {
+    els.renderProgressCancelBtn.addEventListener("click", () => {
+      requestRenderCancel();
+    });
+  }
+
+  if (els.renderMovieFilenameInput) {
+    els.renderMovieFilenameInput.addEventListener("input", () => {
+      state.renderMoviePrefs.filename = els.renderMovieFilenameInput.value;
+      setRenderMovieStatus("");
+    });
+  }
+
+  if (els.renderMovieOverwriteChk) {
+    els.renderMovieOverwriteChk.addEventListener("change", () => {
+      state.renderMoviePrefs.overwrite = Boolean(els.renderMovieOverwriteChk.checked);
+    });
+  }
+
+  if (els.renderMovieBrowseBtn) {
+    els.renderMovieBrowseBtn.addEventListener("click", async () => {
+      try {
+        await chooseRenderMovieFolder();
+        setRenderMovieStatus("");
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        setRenderMovieStatus(message, true);
+      }
+    });
+  }
+
+  if (els.renderMovieCancelBtn) {
+    els.renderMovieCancelBtn.addEventListener("click", () => {
+      closeRenderMovieDialog();
+    });
+  }
+
+  if (els.renderMovieConfirmBtn) {
+    els.renderMovieConfirmBtn.addEventListener("click", async () => {
+      try {
+        await runOfflineRenderFromDialog();
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        setSystemPickerStatus(`Render failed: ${message}`, true);
+        setRenderMovieStatus(`Render failed: ${message}`, true);
+      }
+    });
+  }
+
+  if (els.renderMovieDialog) {
+    els.renderMovieDialog.addEventListener("cancel", () => {
+      closeRenderMovieDialog();
+    });
+    els.renderMovieDialog.addEventListener("close", () => {
+      setRenderMovieStatus("");
     });
   }
 
@@ -9363,9 +15680,33 @@ async function init() {
     });
   }
 
+  const saveImagesToggleButtons = [
+    [els.saveImagesIncludeViewerBtn, "includeViewer"],
+    [els.saveImagesIncludeColorbarBtn, "includeColorbar"],
+    [els.saveImagesIncludeSampleLabelsBtn, "includeSampleLabels"],
+    [els.saveImagesIncludeTimeProfileBtn, "includeTimeProfile"],
+    [els.saveImagesIncludeSpectralProfileBtn, "includeSpectralProfile"],
+    [els.saveImagesIncludeSpatialProfileBtn, "includeSpatialProfile"],
+  ];
+  for (const [btn, key] of saveImagesToggleButtons) {
+    if (!btn) continue;
+    btn.addEventListener("click", () => {
+      if (btn.disabled) return;
+      const current = normalizeRenderOverlayOption(state.saveImagesPrefs[key]);
+      state.saveImagesPrefs[key] = !current;
+      updateSaveImagesSelectionButtons();
+      setSaveImagesStatus("");
+    });
+  }
+
   if (els.saveImagesOverwriteChk) {
     els.saveImagesOverwriteChk.addEventListener("change", () => {
       state.saveImagesPrefs.overwrite = Boolean(els.saveImagesOverwriteChk.checked);
+    });
+  }
+  if (els.saveImagesTransparentBgChk) {
+    els.saveImagesTransparentBgChk.addEventListener("change", () => {
+      state.saveImagesPrefs.transparentBackground = Boolean(els.saveImagesTransparentBgChk.checked);
     });
   }
 
@@ -9407,6 +15748,78 @@ async function init() {
     });
   }
 
+  if (els.recordMovieFilenameInput) {
+    els.recordMovieFilenameInput.addEventListener("input", () => {
+      state.recordMoviePrefs.filename = els.recordMovieFilenameInput.value;
+      setRecordMovieStatus("");
+    });
+  }
+
+  const recordFormatButtons = [
+    [els.recordMovieFormatWebmBtn, "webm"],
+    [els.recordMovieFormatMp4Btn, "mp4"],
+    [els.recordMovieFormatGifBtn, "gif"],
+  ];
+  for (const [btn, format] of recordFormatButtons) {
+    if (!btn) continue;
+    btn.addEventListener("click", () => {
+      state.recordMoviePrefs.format = format;
+      const currentName = els.recordMovieFilenameInput ? els.recordMovieFilenameInput.value : state.recordMoviePrefs.filename;
+      state.recordMoviePrefs.filename = normalizeRecordMovieFilename(currentName, format);
+      updateRecordMovieDialogFields();
+      setRecordMovieStatus("");
+    });
+  }
+
+  if (els.recordMovieOverwriteChk) {
+    els.recordMovieOverwriteChk.addEventListener("change", () => {
+      state.recordMoviePrefs.overwrite = Boolean(els.recordMovieOverwriteChk.checked);
+    });
+  }
+
+  if (els.recordMovieBrowseBtn) {
+    els.recordMovieBrowseBtn.addEventListener("click", async () => {
+      try {
+        await chooseRecordMovieFolder();
+        setRecordMovieStatus("");
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        setRecordMovieStatus(message, true);
+      }
+    });
+  }
+
+  if (els.recordMovieCancelBtn) {
+    els.recordMovieCancelBtn.addEventListener("click", async () => {
+      try {
+        discardPendingMovieRecording();
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        setRecordMovieStatus(`Record failed: ${message}`, true);
+      }
+    });
+  }
+
+  if (els.recordMovieConfirmBtn) {
+    els.recordMovieConfirmBtn.addEventListener("click", async () => {
+      try {
+        await savePendingMovieFromDialog();
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        setRecordMovieStatus(`Save failed: ${message}`, true);
+      }
+    });
+  }
+
+  if (els.recordMovieDialog) {
+    els.recordMovieDialog.addEventListener("cancel", () => {
+      discardPendingMovieRecording();
+    });
+    els.recordMovieDialog.addEventListener("close", () => {
+      setRecordMovieStatus("");
+    });
+  }
+
   els.resetZoomBtn.addEventListener("click", async () => {
     state.navDrag = null;
     state.profileZoomDrag = null;
@@ -9415,11 +15828,12 @@ async function init() {
     state.volumeYaw = 0.65;
     state.volumePitch = -0.45;
     state.volumeZoom = 1.0;
+    state.viewRotateRate = 0;
     state.volumeDrag = null;
-    state.sphereYaw = 0;
-    state.spherePitch = 0;
+    setSphereOrientationFromYawPitch(0, 0, { resetAxis: true });
     state.sphereDrag = null;
     updateVolumeControlReadouts();
+    updateViewRotateControls();
     resetView();
     clearHoverProbe();
     updateExportButtonState();
@@ -9440,6 +15854,7 @@ async function init() {
     axisFromNavKind,
     axisFromProfileKind,
     axisSize,
+    applySphereDragRotation,
     applyZoomBox,
     clamp,
     clampIndexToWindow,
@@ -9482,6 +15897,7 @@ async function init() {
     updateHoverReadout();
   });
 
+  updateRenderSettingsFields();
   updatePlayUi();
   await onDatasetChange();
 }

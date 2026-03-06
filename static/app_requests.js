@@ -71,6 +71,11 @@ export function createRequestBuilders(deps) {
     const p = planeDims();
     const axisScale = state.multiSpectralNuAxisScale === "log" ? "log" : "linear";
     const deslope = Number.isFinite(state.multiSpectralDeslope) ? state.multiSpectralDeslope : 0;
+    const intensityScale = ["linear", "sqrt", "log"].includes(state.fluxScale) ? state.fluxScale : "linear";
+    const winMinRaw = Number.parseFloat(state.colorNormValueWindow?.min);
+    const winMaxRaw = Number.parseFloat(state.colorNormValueWindow?.max);
+    const rangeMin = Number.isFinite(winMinRaw) ? Math.max(0, Math.min(100, winMinRaw)) : 0;
+    const rangeMax = Number.isFinite(winMaxRaw) ? Math.max(0, Math.min(100, winMaxRaw)) : 100;
     const params = new URLSearchParams({
       sample: String(sampleOverride !== undefined ? sampleOverride : state.values.sample),
       pol: String(state.values.pol),
@@ -83,6 +88,9 @@ export function createRequestBuilders(deps) {
       plane_y: p.planeY,
       nu_axis_scale: axisScale,
       deslope: String(deslope),
+      intensity_scale: intensityScale,
+      range_min: String(rangeMin),
+      range_max: String(rangeMax),
     });
     if (state.axisWindow.nu) {
       params.set("nu0", String(state.axisWindow.nu.start));

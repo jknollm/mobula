@@ -1,7 +1,20 @@
 .venv/
 __pycache__/
 .pytest_cache/
+.coverage
+build/
+*.egg-info/
 *.pyc
 *.pyo
 .DS_Store
 data/seeded/
+
+# LaTeX build artifacts (publication draft)
+publication/paper/main.aux
+publication/paper/main.bbl
+publication/paper/main.blg
+publication/paper/main.fdb_latexmk
+publication/paper/main.fls
+publication/paper/main.log
+publication/paper/main.out
+publication/paper/main.pdf

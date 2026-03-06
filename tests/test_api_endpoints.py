@@ -10,7 +10,7 @@ from astropy.io import fits
 
 from mobula.data.mock_cube import MockCubeConfig, generate_mock_dataset
 from mobula.data.schema import CubeDataset
-from mobula.service import api_routes_core
+from mobula.service import api_routes_core, api_routes_views, view_service
 
 
 def _data_id(base_dataset) -> str:
@@ -557,6 +557,233 @@ def test_save_images_rejects_invalid_payload(client, base_dataset, tmp_path: Pat
     assert "invalid image payload" in res.json()["detail"]
 
 
+def test_save_movie_writes_webm_file(client, base_dataset, tmp_path: Path) -> None:
+    payload = "d2VibS10ZXN0LXBheWxvYWQ="
+    res = client.post(
+        f"/api/datasets/{_data_id(base_dataset)}/save-movie",
+        json={
+            "format": "webm",
+            "output_dir": str(tmp_path),
+            "filename": "session_capture.webm",
+            "overwrite": True,
+            "data_url": f"data:video/webm;base64,{payload}",
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["saved"] is True
+    out_path = Path(body["path"])
+    assert out_path.exists()
+    assert out_path.name == "session_capture.webm"
+    assert out_path.read_bytes() == b"webm-test-payload"
+
+
+def test_save_movie_rejects_invalid_payload(client, base_dataset, tmp_path: Path) -> None:
+    res = client.post(
+        f"/api/datasets/{_data_id(base_dataset)}/save-movie",
+        json={
+            "format": "webm",
+            "output_dir": str(tmp_path),
+            "filename": "broken.webm",
+            "data_url": "data:video/webm;base64,not-base64",
+        },
+    )
+    assert res.status_code == 400
+    assert "invalid movie payload" in res.json()["detail"]
+
+
+def test_save_movie_rejects_non_webm_payload(client, base_dataset, tmp_path: Path) -> None:
+    res = client.post(
+        f"/api/datasets/{_data_id(base_dataset)}/save-movie",
+        json={
+            "format": "webm",
+            "output_dir": str(tmp_path),
+            "filename": "movie.mp4",
+            "data_url": "data:video/mp4;base64,AAECAwQ=",
+        },
+    )
+    assert res.status_code == 400
+    assert "unsupported movie format" in res.json()["detail"]
+
+
+def test_save_movie_transcodes_webm_to_mp4(client, base_dataset, tmp_path: Path, monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, capture_output, text, check):
+        calls.append(cmd)
+        out_path = Path(cmd[-1])
+        out_path.write_bytes(b"mp4-transcoded")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(api_routes_views.subprocess, "run", fake_run)
+
+    payload = "d2VibS10ZXN0LXBheWxvYWQ="
+    res = client.post(
+        f"/api/datasets/{_data_id(base_dataset)}/save-movie",
+        json={
+            "format": "mp4",
+            "output_dir": str(tmp_path),
+            "filename": "session_capture.mp4",
+            "overwrite": True,
+            "data_url": f"data:video/webm;base64,{payload}",
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["saved"] is True
+    assert body["filename"] == "session_capture.mp4"
+    assert body["mime_type"] == "video/mp4"
+    assert body["format"] == "mp4"
+    out_path = Path(body["path"])
+    assert out_path.exists()
+    assert out_path.read_bytes() == b"mp4-transcoded"
+    assert calls
+    assert Path(calls[0][0]).name.startswith("ffmpeg")
+    assert "-vf" in calls[0]
+    vf_idx = calls[0].index("-vf")
+    assert calls[0][vf_idx + 1] == "pad=ceil(iw/2)*2:ceil(ih/2)*2"
+
+
+def test_save_movie_mp4_transcode_failure_returns_500(client, base_dataset, tmp_path: Path, monkeypatch) -> None:
+    def fake_run(cmd, capture_output, text, check):
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="ffmpeg failed")
+
+    monkeypatch.setattr(api_routes_views.subprocess, "run", fake_run)
+
+    payload = "d2VibS10ZXN0LXBheWxvYWQ="
+    res = client.post(
+        f"/api/datasets/{_data_id(base_dataset)}/save-movie",
+        json={
+            "format": "mp4",
+            "output_dir": str(tmp_path),
+            "filename": "session_capture.mp4",
+            "overwrite": True,
+            "data_url": f"data:video/webm;base64,{payload}",
+        },
+    )
+    assert res.status_code == 500
+    assert "ffmpeg transcode" in res.json()["detail"]
+
+
+def test_save_movie_transcodes_webm_to_gif(client, base_dataset, tmp_path: Path, monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, capture_output, text, check):
+        calls.append(cmd)
+        out_path = Path(cmd[-1])
+        out_path.write_bytes(b"gif-transcoded")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(api_routes_views.subprocess, "run", fake_run)
+
+    payload = "d2VibS10ZXN0LXBheWxvYWQ="
+    res = client.post(
+        f"/api/datasets/{_data_id(base_dataset)}/save-movie",
+        json={
+            "format": "gif",
+            "output_dir": str(tmp_path),
+            "filename": "session_capture.gif",
+            "overwrite": True,
+            "data_url": f"data:video/webm;base64,{payload}",
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["saved"] is True
+    assert body["filename"] == "session_capture.gif"
+    assert body["mime_type"] == "image/gif"
+    assert body["format"] == "gif"
+    out_path = Path(body["path"])
+    assert out_path.exists()
+    assert out_path.read_bytes() == b"gif-transcoded"
+    assert calls
+    assert Path(calls[0][0]).name.startswith("ffmpeg")
+
+
+def test_save_movie_gif_transcode_failure_returns_500(client, base_dataset, tmp_path: Path, monkeypatch) -> None:
+    def fake_run(cmd, capture_output, text, check):
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="ffmpeg failed")
+
+    monkeypatch.setattr(api_routes_views.subprocess, "run", fake_run)
+
+    payload = "d2VibS10ZXN0LXBheWxvYWQ="
+    res = client.post(
+        f"/api/datasets/{_data_id(base_dataset)}/save-movie",
+        json={
+            "format": "gif",
+            "output_dir": str(tmp_path),
+            "filename": "session_capture.gif",
+            "overwrite": True,
+            "data_url": f"data:video/webm;base64,{payload}",
+        },
+    )
+    assert res.status_code == 500
+    assert "ffmpeg transcode" in res.json()["detail"]
+
+
+def test_save_render_movie_encodes_png_frame_sequence(client, base_dataset, tmp_path: Path, monkeypatch) -> None:
+    tiny_png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9W7QkW8AAAAASUVORK5CYII="
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, capture_output, text, check):
+        calls.append(cmd)
+        out_path = Path(cmd[-1])
+        out_path.write_bytes(b"rendered-mp4")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(api_routes_views.subprocess, "run", fake_run)
+
+    res = client.post(
+        f"/api/datasets/{_data_id(base_dataset)}/save-render-movie",
+        json={
+            "format": "mp4",
+            "quality": "high",
+            "fps": 30,
+            "output_dir": str(tmp_path),
+            "filename": "axis_sweep.mp4",
+            "overwrite": True,
+            "frames": [
+                {"data_url": f"data:image/png;base64,{tiny_png}"},
+                {"data_url": f"data:image/png;base64,{tiny_png}"},
+            ],
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["saved"] is True
+    assert body["filename"] == "axis_sweep.mp4"
+    assert body["format"] == "mp4"
+    assert body["frame_count"] == 2
+    assert body["fps"] == 30
+    out_path = Path(body["path"])
+    assert out_path.exists()
+    assert out_path.read_bytes() == b"rendered-mp4"
+    assert calls
+    assert Path(calls[0][0]).name.startswith("ffmpeg")
+    assert "-framerate" in calls[0]
+    fps_idx = calls[0].index("-framerate")
+    assert calls[0][fps_idx + 1] == "30"
+
+
+def test_save_render_movie_rejects_invalid_frame_payload(client, base_dataset, tmp_path: Path) -> None:
+    res = client.post(
+        f"/api/datasets/{_data_id(base_dataset)}/save-render-movie",
+        json={
+            "format": "mp4",
+            "quality": "balanced",
+            "fps": 30,
+            "output_dir": str(tmp_path),
+            "filename": "axis_sweep.mp4",
+            "overwrite": True,
+            "frames": [
+                {"data_url": "data:image/png;base64,not-base64"},
+            ],
+        },
+    )
+    assert res.status_code == 400
+    assert "invalid frame payload" in res.json()["detail"]
+
+
 def test_export_cutout_save_healpix_pixel_indices_to_fits_is_temporarily_disabled(client_factory, tmp_path: Path) -> None:
     ds = generate_mock_dataset(
         "healpix-export-fits",
@@ -758,7 +985,7 @@ def test_evpa_rejects_invalid_sample_mode(client, base_dataset) -> None:
 
 
 def test_evpa_query_validation_for_step(client, base_dataset) -> None:
-    res = client.get(f"/api/datasets/{_data_id(base_dataset)}/evpa", params={"step": 2})
+    res = client.get(f"/api/datasets/{_data_id(base_dataset)}/evpa", params={"step": 0})
     assert res.status_code == 422
 
 
@@ -918,6 +1145,8 @@ def test_multispectral_success(client, base_dataset) -> None:
     assert body["bands"]["unit"] == base_dataset.units["nu"]
     assert body["bands"]["axis_scale"] in {"linear", "log"}
     assert body["bands"]["deslope"] == pytest.approx(0.0)
+    assert body["bands"]["normalize_spectrum"] is False
+    assert body["bands"]["brightness_mode"] == "total_flux"
 
 
 def test_multispectral_downsamples(client, base_dataset) -> None:
@@ -954,6 +1183,120 @@ def test_multispectral_accepts_log_nu_axis_and_deslope(client, base_dataset) -> 
     assert len(body["values"]["r"]) == body["shape"][0] * body["shape"][1]
 
 
+def test_multispectral_accepts_intensity_scale_and_range_window(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"intensity_scale": "log", "range_min": 5, "range_max": 90},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["bands"]["intensity_scale"] == "log"
+    assert body["bands"]["range_min"] == pytest.approx(5.0)
+    assert body["bands"]["range_max"] == pytest.approx(90.0)
+
+
+def test_multispectral_accepts_compute_backend_cpu(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"compute_backend": "cpu"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["bands"]["compute_backend_requested"] == "cpu"
+    assert body["bands"]["compute_backend"] == "cpu"
+
+
+def test_multispectral_gpu_backend_unavailable_returns_400(client, base_dataset, monkeypatch) -> None:
+    real_convert = view_service.convert_mf_to_rgb_new
+
+    def fake_convert(*args, **kwargs):
+        if kwargs.get("backend") == "gpu":
+            raise RuntimeError("GPU unavailable")
+        return real_convert(*args, **kwargs)
+
+    monkeypatch.setattr(view_service, "convert_mf_to_rgb_new", fake_convert)
+
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"compute_backend": "gpu"},
+    )
+    assert res.status_code == 400
+    assert "gpu backend unavailable" in res.json()["detail"].lower()
+
+
+def test_multispectral_accepts_normalize_spectrum(client, base_dataset) -> None:
+    base = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"normalize_spectrum": False},
+    )
+    assert base.status_code == 200
+    base_body = base.json()
+
+    norm = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"normalize_spectrum": True},
+    )
+    assert norm.status_code == 200
+    norm_body = norm.json()
+    assert norm_body["bands"]["normalize_spectrum"] is True
+
+    base_r = np.asarray(base_body["values"]["r"], dtype=np.float64)
+    norm_r = np.asarray(norm_body["values"]["r"], dtype=np.float64)
+    assert base_r.shape == norm_r.shape
+    assert np.any(np.abs(base_r - norm_r) > 1.0e-6)
+
+
+def test_multispectral_accepts_normalize_spectrum_boost(client, base_dataset) -> None:
+    base = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"normalize_spectrum": True, "normalize_spectrum_boost": 1.0},
+    )
+    assert base.status_code == 200
+    base_body = base.json()
+    assert base_body["bands"]["normalize_spectrum"] is True
+    assert base_body["bands"]["normalize_spectrum_boost"] == pytest.approx(1.0)
+
+    boosted = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"normalize_spectrum": True, "normalize_spectrum_boost": 2.0},
+    )
+    assert boosted.status_code == 200
+    boosted_body = boosted.json()
+    assert boosted_body["bands"]["normalize_spectrum"] is True
+    assert boosted_body["bands"]["normalize_spectrum_boost"] == pytest.approx(2.0)
+
+    base_r = np.asarray(base_body["values"]["r"], dtype=np.float64)
+    boost_r = np.asarray(boosted_body["values"]["r"], dtype=np.float64)
+    assert base_r.shape == boost_r.shape
+    assert np.any(np.abs(base_r - boost_r) > 1.0e-6)
+
+
+def test_multispectral_boost_with_clipping_is_finite(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={
+            "normalize_spectrum": True,
+            "normalize_spectrum_boost": 2.0,
+            "intensity_scale": "log",
+            "range_min": 5.0,
+            "range_max": 95.0,
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    r = np.asarray(body["values"]["r"], dtype=np.float64)
+    g = np.asarray(body["values"]["g"], dtype=np.float64)
+    b = np.asarray(body["values"]["b"], dtype=np.float64)
+    assert np.all(np.isfinite(r))
+    assert np.all(np.isfinite(g))
+    assert np.all(np.isfinite(b))
+    assert np.all((r >= 0.0) & (r <= 1.0))
+    assert np.all((g >= 0.0) & (g <= 1.0))
+    assert np.all((b >= 0.0) & (b <= 1.0))
+    rgb = np.stack([r, g, b], axis=1)
+    assert np.any(np.max(rgb, axis=1) > 1.0e-3)
+
+
 def test_multispectral_rejects_invalid_nu_axis_scale(client, base_dataset) -> None:
     res = client.get(
         f"/api/datasets/{_data_id(base_dataset)}/multispectral",
@@ -963,6 +1306,24 @@ def test_multispectral_rejects_invalid_nu_axis_scale(client, base_dataset) -> No
     assert "nu_axis_scale" in res.json()["detail"]
 
 
+def test_multispectral_rejects_invalid_intensity_scale(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"intensity_scale": "weird"},
+    )
+    assert res.status_code == 400
+    assert "intensity_scale" in res.json()["detail"]
+
+
+def test_multispectral_rejects_invalid_compute_backend(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"compute_backend": "weird"},
+    )
+    assert res.status_code == 400
+    assert "compute_backend" in res.json()["detail"]
+
+
 def test_multispectral_rejects_too_narrow_nu_window(client, base_dataset) -> None:
     res = client.get(
         f"/api/datasets/{_data_id(base_dataset)}/multispectral",
@@ -970,6 +1331,15 @@ def test_multispectral_rejects_too_narrow_nu_window(client, base_dataset) -> Non
     )
     assert res.status_code == 400
     assert "at least 3 spectral channels" in res.json()["detail"]
+
+
+def test_multispectral_rejects_invalid_range_window(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"range_min": 80, "range_max": 20},
+    )
+    assert res.status_code == 400
+    assert "range_max" in res.json()["detail"]
 
 
 def test_multispectral_rejects_plane_with_nu_axis(client, base_dataset) -> None:

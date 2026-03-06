@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Michroma&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=20260302u" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260305m" />
   </head>
   <body>
     <main class="layout">
@@ -45,7 +45,7 @@
               <option value="viridis">Viridis</option>
               <option value="plasma">Plasma</option>
               <option value="inferno">Inferno</option>
-              <option value="ehtplot">ehtplot</option>
+              <option value="afmhot_u">afmhot_u</option>
               <option value="gray">Gray</option>
               <option value="diverging">Diverging</option>
               <option value="circular">Circular</option>
@@ -92,6 +92,9 @@
               <button id="fluxScaleSqrtBtn" class="tinyBtn" type="button">Sqrt</button>
               <button id="fluxScaleLogBtn" class="tinyBtn" type="button">Log</button>
             </div>
+          </div>
+          <div class="buttonRow">
+            <button id="axisSettingsBtn" class="tinyBtn" type="button">Axis Settings</button>
           </div>
           <div id="sampleModeBlock" class="sampleModeBlock">
             <span class="sampleModeTitle">Sample Mode</span>
@@ -153,6 +156,19 @@
 
         <div id="spatialControlGroup" class="controlGroup">
           <h2>Spatial</h2>
+          <label>
+            Resolution Scale
+            <select id="spatialResolutionSelect">
+              <option value="0.25">0.25x</option>
+              <option value="0.5">0.5x</option>
+              <option value="1" selected>1x</option>
+              <option value="2">2x</option>
+              <option value="4">4x</option>
+              <option value="8">8x</option>
+              <option value="16">16x</option>
+              <option value="32">32x</option>
+            </select>
+          </label>
           <div id="spatialViewRow" class="toggleRow">
             <span>Spatial View</span>
             <div class="miniGroup">
@@ -169,6 +185,33 @@
               <button id="sphereProjMollweideBtn" class="tinyBtn" type="button">Mollweide</button>
               <button id="sphereProjInsideBtn" class="tinyBtn" type="button">Inside</button>
               <button id="sphereProjOutsideBtn" class="tinyBtn" type="button">Outside</button>
+            </div>
+          </div>
+          <div id="viewRotateControls" class="toggleRow">
+            <span>3D Rotate</span>
+            <div class="miniGroup">
+              <div id="viewRotateRateControl" class="viewRotateRateControl" role="group" aria-label="3D rotate speed">
+                <button
+                  id="viewRotateNegBtn"
+                  class="tinyBtn viewRotateRateStepBtn"
+                  type="button"
+                  aria-label="Increase negative rotation speed"
+                  title="Increase negative rotation speed"
+                >
+                  +
+                </button>
+                <span id="viewRotateSpeedValue" class="viewRotateSpeedValue" aria-live="polite">0x</span>
+                <button
+                  id="viewRotatePosBtn"
+                  class="tinyBtn viewRotateRateStepBtn"
+                  type="button"
+                  aria-label="Increase positive rotation speed"
+                  title="Increase positive rotation speed"
+                >
+                  +
+                </button>
+              </div>
+              <button id="viewRotateRebaseBtn" class="tinyBtn" type="button">Rebase</button>
             </div>
           </div>
           <label id="planeLabel">
@@ -292,6 +335,19 @@
 
         <div id="temporalControlGroup" class="controlGroup">
           <h2>Temporal</h2>
+          <label>
+            Resolution Scale
+            <select id="temporalResolutionSelect">
+              <option value="0.25">0.25x</option>
+              <option value="0.5">0.5x</option>
+              <option value="1" selected>1x</option>
+              <option value="2">2x</option>
+              <option value="4">4x</option>
+              <option value="8">8x</option>
+              <option value="16">16x</option>
+              <option value="32">32x</option>
+            </select>
+          </label>
           <div class="navPanel">
             <div class="navTitle">
               <span>Time</span>
@@ -311,6 +367,19 @@
 
         <div id="spectralControlGroup" class="controlGroup">
           <h2>Spectral</h2>
+          <label>
+            Resolution Scale
+            <select id="spectralResolutionSelect">
+              <option value="0.25">0.25x</option>
+              <option value="0.5">0.5x</option>
+              <option value="1" selected>1x</option>
+              <option value="2">2x</option>
+              <option value="4">4x</option>
+              <option value="8">8x</option>
+              <option value="16">16x</option>
+              <option value="32">32x</option>
+            </select>
+          </label>
           <div class="toggleRow">
             <span>Multi-spectral</span>
             <button id="multiSpectralBtn" class="tinyBtn" type="button">Off</button>
@@ -318,7 +387,7 @@
           <div id="spectralMapControls" class="spectralMapControls">
             <div class="spectralMapAxisRow">
               <span>Frequency Axis</span>
-              <button id="msNuAxisLogBtn" class="tinyBtn" type="button" aria-pressed="false">Linear</button>
+              <button id="msNuAxisLogBtn" class="tinyBtn" type="button" aria-pressed="false">Log</button>
             </div>
             <label class="volumeSlider" for="msDeslopeRange">
               <div class="volumeSliderHeader">
@@ -326,6 +395,17 @@
                 <span id="msDeslopeValue">0.0</span>
               </div>
               <input id="msDeslopeRange" type="range" min="-4" max="4" step="0.1" value="0" />
+            </label>
+            <div class="spectralMapAxisRow">
+              <span>Normalize Spectrum</span>
+              <button id="msNormalizeBtn" class="tinyBtn" type="button" aria-pressed="false">Off</button>
+            </div>
+            <label id="msNormalizeBoostLabel" class="volumeSlider" for="msNormalizeBoostRange">
+              <div class="volumeSliderHeader">
+                <span>Normalization Boost</span>
+                <span id="msNormalizeBoostValue">1.00x</span>
+              </div>
+              <input id="msNormalizeBoostRange" type="range" min="0.25" max="8" step="0.05" value="1" />
             </label>
           </div>
           <div id="spectralNavPanel" class="navPanel">
@@ -346,7 +426,7 @@
         </div>
 
         <div id="polarizationControlGroup" class="controlGroup">
-          <h2>Polarization</h2>
+          <h2>Polarisation</h2>
           <div class="polJump">
             <div class="pillRow stokesRow">
               <button id="polBtn0" type="button" data-pol="0">I</button>
@@ -363,6 +443,8 @@
                 <option value="8" selected>Sparse</option>
                 <option value="6">Medium</option>
                 <option value="4">Dense</option>
+                <option value="2">Very Dense</option>
+                <option value="1">Ultra Dense</option>
               </select>
             </div>
             <div class="evpaThresholdRow">
@@ -373,6 +455,8 @@
                 <option value="3">3%</option>
                 <option value="5">5%</option>
                 <option value="10">10%</option>
+                <option value="15">15%</option>
+                <option value="20">20%</option>
               </select>
             </div>
             <div class="pillRow derivedRow">
@@ -402,6 +486,7 @@
           <div class="viewerToolbarLeft">
             <button id="exportZoomBtn" class="tinyBtn toolbarExport" type="button" disabled>Export Zoom</button>
             <button id="saveImagesBtn" class="tinyBtn toolbarSaveImages" type="button" disabled>Save Images</button>
+            <button id="renderMovieBtn" class="tinyBtn toolbarRenderBtn" type="button" disabled>Render</button>
           </div>
           <div class="viewerToolbarRight">
             <div class="modeButtons">
@@ -409,6 +494,15 @@
               <button id="modeZoomBtn" type="button">Zoom</button>
             </div>
             <button id="resetZoomBtn" class="tinyBtn toolbarReset" type="button">Reset</button>
+          </div>
+        </div>
+        <div id="renderProgressOverlay" class="renderProgressOverlay" hidden>
+          <div class="renderProgressCard">
+            <div class="renderProgressTitle">Rendering Movie</div>
+            <div id="renderProgressPrimary" class="renderProgressPrimary">0%</div>
+            <div id="renderProgressSecondary" class="renderProgressSecondary">Frame 0 / 0</div>
+            <div id="renderProgressEta" class="renderProgressSecondary">ETA --</div>
+            <button id="renderProgressCancelBtn" class="tinyBtn" type="button">Cancel</button>
           </div>
         </div>
       </section>
@@ -434,6 +528,143 @@
       </section>
       </div>
     </main>
+
+    <dialog id="axisSettingsDialog" class="exportDialog">
+      <form method="dialog" class="exportDialogForm">
+        <h2>Axis Settings</h2>
+        <div id="axisSettingsSummary" class="axisSettingsSummary"></div>
+        <div id="axisSwapRows" class="axisSwapRows"></div>
+        <div id="axisSettingsRows" class="axisSettingsRows"></div>
+        <div class="exportDialogActions">
+          <button id="axisSettingsResetBtn" class="tinyBtn" type="button">Reset</button>
+          <button id="axisSettingsCloseBtn" class="tinyBtn" type="button">Close</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="ingestDialog" class="ingestDialog">
+      <form method="dialog" class="ingestDialogForm">
+        <div class="ingestDialogHeader">
+          <h2>Data Ingestion</h2>
+          <div id="ingestStepPills" class="ingestStepPills">
+            <span id="ingestStepPillMap" class="ingestStepPill isActive">Map</span>
+          </div>
+        </div>
+
+        <div id="ingestStatus" class="ingestStatus"></div>
+
+        <section id="ingestStepMap" class="ingestStep">
+          <div id="ingestPresetRow" class="ingestPresetRow" hidden>
+            <span id="ingestPresetLabel"></span>
+          </div>
+          <div class="ingestMapperToolbar">
+            <label id="ingestActiveFileLabel">
+              File
+              <select id="ingestActiveFileSelect"></select>
+            </label>
+            <button id="ingestApplyToAllBtn" class="tinyBtn" type="button">Apply To All Tabs</button>
+          </div>
+
+          <div id="ingestMapperBoard" class="ingestMapperBoard">
+            <div class="ingestMapperSection">
+              <h3>Axes</h3>
+              <div id="ingestPalette" class="ingestPalette"></div>
+            </div>
+            <div class="ingestMapperSection">
+              <h3>Axis Labels</h3>
+              <div id="ingestSlotStrip" class="ingestSlotStrip"></div>
+            </div>
+            <div id="ingestMapperLegend" class="ingestMapperLegend"></div>
+          </div>
+        </section>
+
+        <div class="ingestDialogActions">
+          <button id="ingestCancelBtn" class="tinyBtn" type="button">Cancel</button>
+          <button id="ingestBackBtn" class="tinyBtn" type="button">Back</button>
+          <button id="ingestCommitBtn" class="tinyBtn" type="button">Commit Import</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="ingestIntentDialog" class="exportDialog">
+      <form method="dialog" class="exportDialogForm">
+        <h2>Multi-File Intent</h2>
+        <section class="ingestChoiceSection">
+          <h3>How should files be interpreted?</h3>
+          <div id="ingestIntentModeButtons" class="ingestChoiceButtons" role="group" aria-label="Multi-file import intent">
+            <button id="ingestIntentAxisBtn" class="ingestChoiceBtn" type="button" data-intent-choice="axis">
+              Combine files into one dataset
+            </button>
+            <button id="ingestIntentTabsBtn" class="ingestChoiceBtn" type="button" data-intent-choice="tabs">
+              Create separate datasets (multi-tab)
+            </button>
+          </div>
+        </section>
+        <section id="ingestIntentFileAxisFieldset" class="ingestChoiceSection" hidden>
+          <h3>File Identity Axis</h3>
+          <div class="ingestChoiceButtons ingestChoiceButtons--axis" role="group" aria-label="File identity axis">
+            <button id="ingestIntentFileAxisSampleBtn" class="ingestAxisChoiceBtn" type="button" data-file-axis="sample" data-axis-dim="sample">Sample</button>
+            <button id="ingestIntentFileAxisPolBtn" class="ingestAxisChoiceBtn" type="button" data-file-axis="pol" data-axis-dim="pol">Polarisation</button>
+            <button id="ingestIntentFileAxisTimeBtn" class="ingestAxisChoiceBtn" type="button" data-file-axis="t" data-axis-dim="t">Time</button>
+            <button id="ingestIntentFileAxisFreqBtn" class="ingestAxisChoiceBtn" type="button" data-file-axis="nu" data-axis-dim="nu">Frequency</button>
+          </div>
+          <div id="ingestIntentFileAxisHint" class="ingestFileAxisHint"></div>
+        </section>
+        <div class="exportDialogActions">
+          <button id="ingestIntentCancelBtn" class="tinyBtn" type="button">Cancel</button>
+          <button id="ingestIntentContinueBtn" class="tinyBtn" type="button">Continue</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="ingestKeysDialog" class="ingestDialog">
+      <form method="dialog" class="ingestDialogForm">
+        <div class="ingestDialogHeader">
+          <h2>HDF5 Key Selection</h2>
+          <div id="ingestKeysStepPills" class="ingestStepPills">
+            <span class="ingestStepPill">Intent</span>
+            <span class="ingestStepPill isActive">Keys</span>
+            <span class="ingestStepPill">Map</span>
+          </div>
+        </div>
+        <div id="ingestKeysStatus" class="ingestStatus"></div>
+        <div class="ingestMapperToolbar">
+          <label id="ingestKeysFileLabel">
+            File
+            <select id="ingestKeysFileSelect"></select>
+          </label>
+          <div id="ingestKeysStackAxisLabel" class="ingestStackAxisGroup" hidden>
+            <span class="ingestChoiceLabel">Key Stack Axis</span>
+            <div id="ingestKeysStackAxisButtons" class="ingestChoiceButtons ingestChoiceButtons--key" role="group" aria-label="Key stack axis">
+              <button class="ingestAxisChoiceBtn ingestAxisChoiceBtn--key" type="button" data-stack-axis="pol" data-axis-dim="pol">Polarisation</button>
+              <button class="ingestAxisChoiceBtn ingestAxisChoiceBtn--key" type="button" data-stack-axis="sample" data-axis-dim="sample">Samples</button>
+              <button class="ingestAxisChoiceBtn ingestAxisChoiceBtn--key" type="button" data-stack-axis="t" data-axis-dim="t">Time</button>
+              <button class="ingestAxisChoiceBtn ingestAxisChoiceBtn--key" type="button" data-stack-axis="nu" data-axis-dim="nu">Frequency</button>
+              <button class="ingestAxisChoiceBtn ingestAxisChoiceBtn--key" type="button" data-stack-axis="x" data-axis-dim="x">X-Axis</button>
+              <button class="ingestAxisChoiceBtn ingestAxisChoiceBtn--key" type="button" data-stack-axis="y" data-axis-dim="y">Y-Axis</button>
+              <button class="ingestAxisChoiceBtn ingestAxisChoiceBtn--key" type="button" data-stack-axis="z" data-axis-dim="z">Z-Axis</button>
+            </div>
+          </div>
+        </div>
+        <div class="ingestKeysGrid">
+          <section class="ingestMapperSection">
+            <div id="ingestStokesQuickList" class="ingestKeyGroupList ingestKeyGroupList--quick" hidden></div>
+            <h3>Available Keys</h3>
+            <div id="ingestKeyGroupList" class="ingestKeyGroupList"></div>
+            <div id="ingestKeyCandidatesList" class="ingestKeyCandidatesList"></div>
+          </section>
+          <section class="ingestMapperSection">
+            <h3>Selected Key Order (Drag To Reorder)</h3>
+            <div id="ingestSelectedKeysList" class="ingestSelectedKeysList"></div>
+          </section>
+        </div>
+        <div class="ingestDialogActions">
+          <button id="ingestKeysCancelBtn" class="tinyBtn" type="button">Cancel</button>
+          <button id="ingestKeysBackBtn" class="tinyBtn" type="button">Back</button>
+          <button id="ingestKeysContinueBtn" class="tinyBtn" type="button">Continue</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="exportDialog" class="exportDialog">
       <form method="dialog" class="exportDialogForm">
@@ -472,6 +703,52 @@
     <dialog id="saveImagesDialog" class="exportDialog">
       <form method="dialog" class="exportDialogForm">
         <h2>Save Current Images</h2>
+        <span id="saveImagesSummary" class="exportFormatNote"></span>
+        <div class="renderSettingsGrid renderSettingsGridInDialog">
+          <div class="renderChoiceGroup renderOverlayGroup">
+            <span class="renderChoiceLabel">Include</span>
+            <div class="renderChoiceButtons renderOverlayButtons" role="group" aria-label="Images to include">
+              <button id="saveImagesIncludeViewerBtn" class="tinyBtn activeRecordFormat" type="button" aria-pressed="true">
+                Viewer
+              </button>
+              <button id="saveImagesIncludeColorbarBtn" class="tinyBtn activeRecordFormat" type="button" aria-pressed="true">
+                Color bar
+              </button>
+              <button id="saveImagesIncludeSampleLabelsBtn" class="tinyBtn activeRecordFormat" type="button" aria-pressed="true">
+                Sample labels
+              </button>
+            </div>
+          </div>
+          <div class="renderChoiceGroup renderOverlayGroup">
+            <span class="renderChoiceLabel">Inspect Profiles</span>
+            <div class="renderChoiceButtons renderOverlayButtons" role="group" aria-label="Inspect profiles to include">
+              <button
+                id="saveImagesIncludeTimeProfileBtn"
+                class="tinyBtn activeRecordFormat"
+                type="button"
+                aria-pressed="true"
+              >
+                Time
+              </button>
+              <button
+                id="saveImagesIncludeSpectralProfileBtn"
+                class="tinyBtn activeRecordFormat"
+                type="button"
+                aria-pressed="true"
+              >
+                Spectral
+              </button>
+              <button
+                id="saveImagesIncludeSpatialProfileBtn"
+                class="tinyBtn activeRecordFormat"
+                type="button"
+                aria-pressed="true"
+              >
+                Spatial
+              </button>
+            </div>
+          </div>
+        </div>
         <label>
           Save Location
           <div class="exportLocationRow">
@@ -487,6 +764,10 @@
           <input id="saveImagesOverwriteChk" type="checkbox" checked />
           Overwrite existing files
         </label>
+        <label class="exportOverwriteRow">
+          <input id="saveImagesTransparentBgChk" type="checkbox" />
+          Transparent background
+        </label>
         <div id="saveImagesStatus" class="exportStatus"></div>
         <div class="exportDialogActions">
           <button id="saveImagesCancelBtn" class="tinyBtn" type="button">Cancel</button>
@@ -495,6 +776,124 @@
       </form>
     </dialog>
 
-    <script type="module" src="/static/app.js?v=20260302u"></script>
+    <dialog id="recordMovieDialog" class="exportDialog">
+      <form method="dialog" class="exportDialogForm">
+        <h2>Record Viewer Movie</h2>
+        <div class="recordFormatGroup">
+          <span class="recordFormatLabel">Movie Format</span>
+          <div class="recordFormatButtons" role="group" aria-label="Record movie format">
+            <button id="recordMovieFormatWebmBtn" class="tinyBtn" type="button">WebM</button>
+            <button id="recordMovieFormatMp4Btn" class="tinyBtn" type="button">MP4</button>
+            <button id="recordMovieFormatGifBtn" class="tinyBtn" type="button">GIF</button>
+          </div>
+          <span class="exportFormatNote">MP4/GIF export uses backend ffmpeg transcoding.</span>
+        </div>
+        <label>
+          Save Location
+          <div class="exportLocationRow">
+            <input id="recordMovieLocationInput" type="text" readonly placeholder="Choose a destination folder" />
+            <button id="recordMovieBrowseBtn" class="tinyBtn" type="button">Browse</button>
+          </div>
+        </label>
+        <label>
+          File Name
+          <input id="recordMovieFilenameInput" type="text" placeholder="dataset_recording.webm" />
+        </label>
+        <label class="exportOverwriteRow">
+          <input id="recordMovieOverwriteChk" type="checkbox" checked />
+          Overwrite existing file
+        </label>
+        <span class="exportFormatNote">Recording captures the main viewer canvas and colorbar.</span>
+        <div id="recordMovieStatus" class="exportStatus"></div>
+        <div class="exportDialogActions">
+          <button id="recordMovieCancelBtn" class="tinyBtn" type="button">Discard</button>
+          <button id="recordMovieConfirmBtn" class="tinyBtn" type="button">Save Movie</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="renderMovieDialog" class="exportDialog">
+      <form method="dialog" class="exportDialogForm">
+        <h2>Render Viewer Movie</h2>
+        <span id="renderMovieSummary" class="exportFormatNote"></span>
+        <div class="renderSettingsGrid renderSettingsGridInDialog">
+          <div class="renderChoiceGroup">
+            <span class="renderChoiceLabel">Axis</span>
+            <div class="renderChoiceButtons" role="group" aria-label="Render axis">
+              <button id="renderAxisTimeBtn" class="tinyBtn" type="button">Time</button>
+              <button id="renderAxisFreqBtn" class="tinyBtn" type="button">Frequency</button>
+              <button id="renderAxisHiddenBtn" class="tinyBtn" type="button">Hidden</button>
+              <button id="renderAxisSampleMorphBtn" class="tinyBtn" type="button">Sample Morph</button>
+            </div>
+          </div>
+          <div class="renderChoiceGroup">
+            <span class="renderChoiceLabel">Format</span>
+            <div class="renderChoiceButtons" role="group" aria-label="Render format">
+              <button id="renderFormatMp4Btn" class="tinyBtn" type="button">MP4</button>
+              <button id="renderFormatWebmBtn" class="tinyBtn" type="button">WebM</button>
+              <button id="renderFormatGifBtn" class="tinyBtn" type="button">GIF</button>
+            </div>
+          </div>
+          <div class="renderChoiceGroup">
+            <span class="renderChoiceLabel">Quality</span>
+            <div class="renderChoiceButtons" role="group" aria-label="Render quality">
+              <button id="renderQualityLowBtn" class="tinyBtn" type="button">Low</button>
+              <button id="renderQualityMedBtn" class="tinyBtn" type="button">Medium</button>
+              <button id="renderQualityHighBtn" class="tinyBtn" type="button">High</button>
+            </div>
+          </div>
+          <label>
+            FPS
+            <input id="renderFpsInput" type="number" min="1" max="240" step="1" value="30" />
+          </label>
+          <label>
+            Loops
+            <input id="renderLoopInput" type="number" min="1" max="100" step="1" value="1" />
+          </label>
+          <div class="renderChoiceGroup">
+            <span class="renderChoiceLabel">Resolution</span>
+            <div class="renderChoiceButtons" role="group" aria-label="Render resolution">
+              <button id="renderResCanvasBtn" class="tinyBtn" type="button">Canvas</button>
+              <button id="renderRes720Btn" class="tinyBtn" type="button">720p</button>
+              <button id="renderRes1080Btn" class="tinyBtn" type="button">1080p</button>
+              <button id="renderRes1440Btn" class="tinyBtn" type="button">1440p</button>
+              <button id="renderRes2160Btn" class="tinyBtn" type="button">2160p</button>
+            </div>
+          </div>
+          <div class="renderChoiceGroup renderOverlayGroup">
+            <span class="renderChoiceLabel">Include</span>
+            <div class="renderChoiceButtons renderOverlayButtons" role="group" aria-label="Render overlays to include">
+              <button id="renderIncludeColorbarBtn" class="tinyBtn activeRecordFormat" type="button" aria-pressed="true">Color bar</button>
+              <button id="renderIncludeSkyDirectionsBtn" class="tinyBtn activeRecordFormat" type="button" aria-pressed="true">Sky directions</button>
+              <button id="renderIncludeLengthScaleBtn" class="tinyBtn activeRecordFormat" type="button" aria-pressed="true">Length scale</button>
+              <button id="renderIncludeSampleLabelsBtn" class="tinyBtn activeRecordFormat" type="button" aria-pressed="true">Sample labels</button>
+            </div>
+          </div>
+        </div>
+        <span class="exportFormatNote">Render uses full axis or active axis zoom window. Loops repeats the full sweep.</span>
+        <label>
+          Save Location
+          <div class="exportLocationRow">
+            <input id="renderMovieLocationInput" type="text" readonly placeholder="Choose a destination folder" />
+            <button id="renderMovieBrowseBtn" class="tinyBtn" type="button">Browse</button>
+          </div>
+        </label>
+        <label>
+          File Name
+          <input id="renderMovieFilenameInput" type="text" placeholder="dataset_render.mp4" />
+        </label>
+        <label class="exportOverwriteRow">
+          <input id="renderMovieOverwriteChk" type="checkbox" checked />
+          Overwrite existing file
+        </label>
+        <div id="renderMovieStatus" class="exportStatus"></div>
+        <div class="exportDialogActions">
+          <button id="renderMovieCancelBtn" class="tinyBtn" type="button">Cancel</button>
+          <button id="renderMovieConfirmBtn" class="tinyBtn" type="button">Start Render</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/static/app.js?v=20260306a"></script>
   </body>
 </html>

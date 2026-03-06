@@ -26,6 +26,56 @@ def _default_units(dims: tuple[str, ...]) -> dict[str, str]:
     return {dim: units.get(dim, "unknown") for dim in dims}
 
 
+def _normalize_stokes_iqu_to_iquv(
+    values: np.ndarray,
+    dims: tuple[str, ...],
+    coords: dict[str, np.ndarray],
+    provenance: dict[str, Any] | None = None,
+) -> tuple[np.ndarray, dict[str, np.ndarray], dict[str, Any]]:
+    """Expand 3-channel polarization axes to I,Q,U,V by assuming V=0."""
+    if "pol" not in dims:
+        return values, coords, dict(provenance or {})
+
+    pol_axis = dims.index("pol")
+    if int(values.shape[pol_axis]) != 3:
+        return values, coords, dict(provenance or {})
+
+    pad_shape = list(values.shape)
+    pad_shape[pol_axis] = 1
+    values = np.concatenate(
+        [values, np.zeros(tuple(pad_shape), dtype=values.dtype)],
+        axis=pol_axis,
+    )
+
+    out_coords = dict(coords)
+    pol_coords = np.asarray(out_coords.get("pol", np.arange(3, dtype=np.float64))).reshape(-1)
+    if pol_coords.shape[0] == 3:
+        if np.issubdtype(pol_coords.dtype, np.number):
+            step = pol_coords[-1] - pol_coords[-2] if pol_coords.shape[0] >= 2 else 1
+            try:
+                step_f = float(step)
+            except (TypeError, ValueError):
+                step_f = 1.0
+            if not np.isfinite(step_f) or step_f == 0:
+                step_f = 1.0
+            next_val: Any = pol_coords[-1] + step_f
+            if isinstance(next_val, np.generic):
+                next_val = next_val.item()
+            try:
+                out_coords["pol"] = np.concatenate([pol_coords, np.asarray([next_val], dtype=pol_coords.dtype)])
+            except (TypeError, ValueError):
+                out_coords["pol"] = np.arange(4, dtype=np.float64)
+        else:
+            out_coords["pol"] = np.arange(4, dtype=np.float64)
+    else:
+        out_coords["pol"] = np.arange(4, dtype=np.float64)
+
+    out_provenance = dict(provenance or {})
+    out_provenance["stokes_assumed_v_zero"] = True
+    out_provenance["pol_labels"] = ["I", "Q", "U", "V"]
+    return values, out_coords, out_provenance
+
+
 def _as_text(value: Any) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8")
@@ -164,7 +214,7 @@ def load_hdf5(
             if isinstance(dims_attr, str):
                 dims = tuple(x.strip() for x in dims_attr.split(",") if x.strip())
             else:
-                dims = tuple(str(x) for x in dims_attr)
+                dims = tuple(_as_text(x) for x in dims_attr)
 
         values, dims = reorder_to_canonical(values, dims)
         coords = _default_coords_from_shape(dims, values.shape)
@@ -186,6 +236,9 @@ def load_hdf5(
         if isinstance(intensity_unit, bytes):
             intensity_unit = intensity_unit.decode("utf-8")
 
+    provenance = {"source": "hdf5", "path": str(path), "dataset_path": dataset_path}
+    values, coords, provenance = _normalize_stokes_iqu_to_iquv(values, dims, coords, provenance)
+
     dataset = CubeDataset(
         data_id=data_id or path.stem,
         dims=dims,
@@ -198,7 +251,7 @@ def load_hdf5(
             "source": "hdf5",
             "axis_types": {dim: _axis_type_for_dim(dim) for dim in dims},
         },
-        provenance={"source": "hdf5", "path": str(path), "dataset_path": dataset_path},
+        provenance=provenance,
     )
     dataset.validate()
     return dataset
@@ -282,6 +335,9 @@ def load_fits(
                 if fv is not None:
                     fits_matrix[key] = fv
 
+    provenance = {"source": "fits", "path": str(path), "hdu_index": hdu_index}
+    values, coords, provenance = _normalize_stokes_iqu_to_iquv(values, dims, coords, provenance)
+
     dataset = CubeDataset(
         data_id=data_id or path.stem,
         dims=dims,
@@ -297,7 +353,7 @@ def load_fits(
             "fits_global": wcs_global,
             "fits_matrix": fits_matrix,
         },
-        provenance={"source": "fits", "path": str(path), "hdu_index": hdu_index},
+        provenance=provenance,
     )
     dataset.validate()
     return dataset
@@ -357,6 +413,9 @@ def load_zarr(
     if frame is None:
         frame = root.attrs.get("frame", "unknown")
 
+    provenance = {"source": "zarr", "path": str(path), "data_key": data_key}
+    values, coords, provenance = _normalize_stokes_iqu_to_iquv(values, dims, coords, provenance)
+
     dataset = CubeDataset(
         data_id=data_id or path.stem,
         dims=dims,
@@ -369,7 +428,7 @@ def load_zarr(
             "source": "zarr",
             "axis_types": {dim: _axis_type_for_dim(dim) for dim in dims},
         },
-        provenance={"source": "zarr", "path": str(path), "data_key": data_key},
+        provenance=provenance,
     )
     dataset.validate()
     return dataset

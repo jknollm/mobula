@@ -567,6 +567,43 @@ button:focus-visible {
   min-width: 54px;
 }
 
+.viewRotateRateControl {
+  display: inline-grid;
+  grid-template-columns: auto minmax(54px, auto) auto;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  overflow: hidden;
+  background: #0f1520;
+}
+
+.viewRotateRateControl > * + * {
+  border-left: 1px solid var(--line);
+}
+
+.viewRotateRateControl .tinyBtn {
+  min-width: 30px;
+  width: 30px;
+  border: 0;
+  border-radius: 0;
+  padding: 5px 0;
+}
+
+.viewRotateSpeedValue {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px;
+  font-size: 0.8rem;
+  color: #d7e8f8;
+  white-space: nowrap;
+}
+
+.viewRotateRateControl.isActive {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.28), 0 0 14px rgba(var(--accent-rgb), 0.2);
+}
+
 .sphereProjectionButtons {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -784,7 +821,7 @@ button:hover {
 }
 
 .viewer::before {
-  content: "Drop dataset file to load";
+  content: "Drop dataset files to inspect";
   position: absolute;
   top: 50%;
   left: 50%;
@@ -809,6 +846,731 @@ button:hover {
 
 .viewer.isDropActive::before {
   opacity: 1;
+}
+
+.ingestDialog {
+  width: min(920px, 96vw);
+  max-height: 92vh;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #111924;
+  color: #e8f1fb;
+  padding: 0;
+  --ingest-chip-width: 118px;
+  --ingest-chip-height: 34px;
+  --ingest-slot-width: 146px;
+}
+
+.ingestDialog::backdrop {
+  background: rgba(3, 9, 16, 0.6);
+}
+
+.ingestDialogForm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+.ingestDialogHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ingestDialogHeader h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.ingestStepPills {
+  display: flex;
+  gap: 8px;
+}
+
+.ingestStepPill {
+  border: 1px solid #30445f;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.73rem;
+  color: #b7c7db;
+}
+
+.ingestStepPill.isActive {
+  border-color: rgba(var(--accent-rgb), 0.9);
+  background: rgba(var(--accent-rgb), 0.12);
+  color: #f0f7ff;
+}
+
+.ingestStatus {
+  min-height: 1.1rem;
+  font-size: 0.78rem;
+  color: #9fc0df;
+}
+
+.ingestStatus.error {
+  color: #f1a4a4;
+}
+
+.ingestSectionSummary {
+  margin: 0;
+  color: #c9d9ea;
+  font-size: 0.83rem;
+}
+
+.ingestMessages {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 120px;
+  overflow: auto;
+}
+
+.ingestMessages > div {
+  font-size: 0.75rem;
+  color: #a8bfd6;
+}
+
+.ingestErrors > div {
+  color: #f1a4a4;
+}
+
+.ingestFileList {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.ingestFileRow {
+  border: 1px solid #2d3f59;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #0e1620;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ingestFileTitle {
+  font-size: 0.82rem;
+  color: #eaf3fd;
+}
+
+.ingestFileMeta {
+  font-size: 0.73rem;
+  color: #9fb7d0;
+}
+
+.ingestPresetRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #2e4864;
+  background: rgba(var(--accent-rgb), 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.76rem;
+  color: #cbe4fa;
+}
+
+.ingestModeFieldset {
+  border: 1px solid #2d3f59;
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ingestModeFieldset legend {
+  color: #cde0f3;
+  font-size: 0.74rem;
+  padding: 0 4px;
+}
+
+.ingestModeFieldset label {
+  font-size: 0.75rem;
+  color: #aac3da;
+}
+
+.ingestChoiceSection {
+  border: 1px solid #2d3f59;
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #0d1622;
+}
+
+.ingestChoiceSection h3 {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #c9ddf1;
+  font-weight: 600;
+}
+
+.ingestChoiceButtons {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.ingestChoiceButtons--axis,
+.ingestChoiceButtons--key {
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+}
+
+.ingestChoiceButtons--key {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.ingestChoiceBtn,
+.ingestAxisChoiceBtn {
+  border: 1px solid #2f4865;
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: #132233;
+  color: #c2d8eb;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  text-align: left;
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.ingestChoiceBtn:hover,
+.ingestAxisChoiceBtn:hover {
+  transform: translateY(-1px);
+}
+
+.ingestChoiceBtn.isSelected {
+  border-color: rgba(var(--accent-rgb), 0.9);
+  background: rgba(var(--accent-rgb), 0.2);
+  color: #f0f7ff;
+}
+
+.ingestAxisChoiceBtn {
+  text-align: center;
+  border-color: #2f4865;
+  background: #132233;
+  color: #c2d8eb;
+}
+
+.ingestAxisChoiceBtn--key {
+  flex: 0 0 var(--ingest-chip-width);
+  width: var(--ingest-chip-width);
+  min-height: var(--ingest-chip-height);
+  line-height: 1.1;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  padding: 6px 8px;
+}
+
+.ingestAxisChoiceBtn.isSelected {
+  border-color: var(--ingest-axis-border, #4f7aaa);
+  background: rgba(var(--ingest-axis-rgb, 64, 120, 176), 0.26);
+  color: var(--ingest-axis-text, #f0f7ff);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.ingestAxisChoiceBtn--key.isSelected {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 205, 128, 0.26),
+    0 0 0 1px rgba(255, 166, 66, 0.14);
+}
+
+.ingestChoiceBtn:disabled,
+.ingestAxisChoiceBtn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.ingestChoiceLabel {
+  font-size: 0.72rem;
+  color: #a9c2d8;
+}
+
+.ingestStackAxisGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.ingestFileAxisHint {
+  font-size: 0.72rem;
+  color: #9fb7d2;
+}
+
+.ingestMapperToolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ingestMapperToolbar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: #bdd2e6;
+}
+
+.ingestMapperToolbar label[hidden] {
+  display: none !important;
+}
+
+#ingestDatasetKeyLabel {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+#ingestDatasetKeySelect {
+  min-width: 260px;
+}
+
+.ingestControlHint {
+  font-size: 0.68rem;
+  color: #8eabc7;
+  max-width: 320px;
+}
+
+.ingestKeyOrderRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ingestKeysGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.ingestKeyCandidatesList,
+.ingestSelectedKeysList {
+  border: 1px solid #30445f;
+  border-radius: 8px;
+  background: #0e1722;
+  min-height: 180px;
+  max-height: 300px;
+  overflow: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ingestKeyGroupList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ingestKeyGroupList--quick {
+  margin-bottom: 4px;
+}
+
+.ingestKeyGroupBtn {
+  border: 1px solid #35516f;
+  border-radius: 999px;
+  background: #13273c;
+  color: #b8d0e6;
+  font-size: 0.69rem;
+  padding: 4px 9px;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.ingestKeyGroupBtn.isSelected {
+  border-color: rgba(var(--accent-rgb), 0.95);
+  background: rgba(var(--accent-rgb), 0.23);
+  color: #edf6ff;
+}
+
+.ingestKeyGroupBtn.isPartial {
+  border-style: dashed;
+  border-color: #6f95be;
+  color: #cde2f6;
+}
+
+.ingestKeyGroupBtn--stokes {
+  border-color: #836235;
+  background: rgba(213, 155, 53, 0.14);
+  color: #ffeecf;
+}
+
+.ingestKeyCandidateBtn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid #35516f;
+  border-radius: 8px;
+  background: #13273c;
+  color: #c6dcee;
+  font-size: 0.73rem;
+  padding: 7px 9px;
+  text-align: left;
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.ingestKeyCandidateBtn.isSelected {
+  border-color: rgba(var(--accent-rgb), 0.95);
+  background: rgba(var(--accent-rgb), 0.2);
+  color: #f1f8ff;
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.34);
+}
+
+.ingestKeyCandidateTitle {
+  font-weight: 600;
+}
+
+.ingestKeyCandidateMeta {
+  color: #9eb8d3;
+  font-size: 0.69rem;
+}
+
+.ingestKeyOrderItem {
+  border: 1px solid #3a597f;
+  border-radius: 7px;
+  background: #14304a;
+  color: #e3effb;
+  font-size: 0.74rem;
+  padding: 7px 9px;
+  cursor: grab;
+  user-select: none;
+}
+
+.ingestKeyOrderItem.isDragging {
+  opacity: 0.65;
+}
+
+.ingestKeyOrderItem.isDragTarget {
+  border-color: rgba(var(--accent-rgb), 0.95);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.45);
+}
+
+.ingestKeyOrderTail {
+  border: 1px dashed #3d587a;
+  border-radius: 7px;
+  color: #8ca8c4;
+  font-size: 0.71rem;
+  padding: 7px 9px;
+}
+
+.ingestKeyOrderTail.isDragTarget {
+  border-color: rgba(var(--accent-rgb), 0.95);
+  color: #cde4fa;
+}
+
+.ingestKeyEmpty {
+  font-size: 0.72rem;
+  color: #8ca8c4;
+  padding: 8px 4px;
+}
+
+.ingestMapperBoard {
+  border: 1px solid #2d3f59;
+  border-radius: 8px;
+  padding: 10px;
+  background: #0d151f;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  --ingest-block-width: var(--ingest-chip-width);
+  --ingest-block-height: var(--ingest-chip-height);
+  --ingest-slot-card-width: var(--ingest-slot-width);
+}
+
+.ingestMapperSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ingestMapperSection h3 {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #c9ddf1;
+  font-weight: 600;
+}
+
+.ingestSlotStrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--ingest-slot-card-width), var(--ingest-slot-card-width)));
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  justify-content: flex-start;
+}
+
+.ingestPalette {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+  border-radius: 8px;
+  transition: box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.ingestPalette.isDragTarget {
+  background: rgba(var(--accent-rgb), 0.1);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.55);
+}
+
+.ingestPalette.isEmpty::after {
+  content: "All axes assigned";
+  font-size: 0.72rem;
+  color: #7f9dbd;
+  padding: 10px 2px;
+  width: 100%;
+}
+
+.ingestSlotCard {
+  border: 1px solid #30445f;
+  border-radius: 8px;
+  background: #0f1b2a;
+  padding: 7px;
+  min-height: 68px;
+  width: var(--ingest-slot-card-width);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.ingestSlotCard {
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.ingestSlotCard.isFilled {
+  background: rgba(var(--ingest-axis-rgb, 28, 53, 82), 0.18);
+  border-color: var(--ingest-axis-border, #40628a);
+}
+
+.ingestSlotCard.isLocked {
+  opacity: 0.92;
+}
+
+.ingestSlotCard.isPrefilled {
+  border-style: dashed;
+}
+
+.ingestSlotCard.isFileAxisHint {
+  box-shadow: inset 0 0 0 1px rgba(80, 210, 145, 0.2);
+}
+
+.ingestSlotCard.isKeyAxisHint {
+  box-shadow: inset 0 0 0 1px rgba(255, 190, 78, 0.2);
+}
+
+.ingestSlotCard.isFileAxisHint.isKeyAxisHint {
+  box-shadow:
+    inset 0 0 0 1px rgba(80, 210, 145, 0.2),
+    inset 0 0 0 2px rgba(255, 190, 78, 0.2);
+}
+
+.ingestSlotCard.isDragTarget {
+  border-color: rgba(var(--accent-rgb), 0.85);
+  background: #162b42;
+  box-shadow: 0 8px 18px rgba(6, 16, 30, 0.32);
+  transform: translateY(-1px);
+}
+
+.ingestSlotLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 0.72rem;
+  color: #a7bfd6;
+}
+
+.ingestSlotLabelMain {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: #deebf8;
+}
+
+.ingestSlotLabelMeta {
+  font-size: 0.67rem;
+  color: #8ea9c6;
+}
+
+.ingestSlotDropZone {
+  border: 1px dashed #40628a;
+  border-radius: 7px;
+  min-height: var(--ingest-block-height);
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  background: rgba(20, 38, 60, 0.28);
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.ingestSlotDropZone.isPrefilled {
+  border-style: dashed;
+}
+
+.ingestSlotDropZone.isVacating {
+  background: rgba(18, 32, 50, 0.18);
+}
+
+.ingestSlotCard.isDragTarget .ingestSlotDropZone {
+  border-color: rgba(var(--accent-rgb), 0.95);
+  background: rgba(var(--accent-rgb), 0.14);
+}
+
+.ingestAxisBlock {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--ingest-axis-border, #3d5e84);
+  border-radius: 7px;
+  background: rgba(var(--ingest-axis-rgb, 46, 76, 110), 0.2);
+  color: var(--ingest-axis-text, #e3effb);
+  font-size: 0.76rem;
+  font-family: inherit;
+  text-align: left;
+  line-height: 1.1;
+  min-height: var(--ingest-block-height);
+  padding: 4px 9px;
+  display: inline-flex;
+  align-items: center;
+  width: var(--ingest-block-width);
+  min-width: var(--ingest-block-width);
+  max-width: var(--ingest-block-width);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  justify-content: center;
+  text-align: center;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  -webkit-user-drag: none;
+  touch-action: none;
+  box-sizing: border-box;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 3px 8px rgba(3, 10, 19, 0.32);
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+
+.ingestAxisVacancy {
+  opacity: 0.6;
+  transform-origin: center;
+  transition: transform 190ms cubic-bezier(0.24, 0.76, 0.24, 1), opacity 190ms ease;
+  filter: saturate(0.72);
+}
+
+.ingestAxisVacancy.isCollapsed {
+  transform: scale(0.76);
+  opacity: 0.25;
+}
+
+.ingestAxisBlock:hover {
+  border-color: #4f7aaa;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 7px 14px rgba(3, 10, 19, 0.35);
+  transform: translateY(-1px);
+}
+
+.ingestAxisBlock:active {
+  cursor: grabbing;
+}
+
+.ingestAxisBlock.isPalette {
+  background: rgba(var(--ingest-axis-rgb, 38, 71, 106), 0.14);
+  color: #d8ebfb;
+}
+
+.ingestAxisBlock.isPrefilled {
+  border-style: dashed;
+}
+
+.ingestAxisBlock.isFileAxis {
+  box-shadow:
+    inset 0 0 0 1px rgba(84, 222, 154, 0.28),
+    0 3px 8px rgba(3, 10, 19, 0.32);
+}
+
+.ingestAxisBlock.isKeyAxis {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 196, 102, 0.28),
+    0 3px 8px rgba(3, 10, 19, 0.32);
+}
+
+.ingestAxisBlock.isFileAxis.isKeyAxis {
+  box-shadow:
+    inset 0 0 0 1px rgba(84, 222, 154, 0.28),
+    inset 0 0 0 2px rgba(255, 196, 102, 0.2),
+    0 3px 8px rgba(3, 10, 19, 0.32);
+}
+
+.ingestAxisBlock.isLocked {
+  cursor: default;
+  pointer-events: none;
+}
+
+.ingestAxisBlock.isDragging {
+  position: fixed;
+  z-index: 3000;
+  margin: 0;
+  pointer-events: none;
+  cursor: grabbing;
+  transform: scale(1.03);
+  box-shadow: 0 14px 28px rgba(4, 12, 24, 0.56), 0 0 0 1px rgba(var(--accent-rgb), 0.7);
+}
+
+.isIngestAxisDragging,
+.isIngestAxisDragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+.ingestMapperLegend {
+  font-size: 0.72rem;
+  color: #9fb7d2;
+}
+
+.ingestMapperLegend.hasError {
+  color: #f4b9b9;
+}
+
+.ingestPreviewList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.ingestPreviewItem {
+  border: 1px solid #2d3f59;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #0e1620;
+  font-size: 0.75rem;
+  color: #b8cde2;
+}
+
+.ingestDialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .metrics {
@@ -1148,6 +1910,155 @@ canvas {
   font-size: 0.76rem;
 }
 
+.toolbarQualityWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #9fb6ce;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.toolbarQualitySelect {
+  min-width: 98px;
+  height: 30px;
+  padding: 4px 8px;
+  border: 1px solid #314766;
+  border-radius: 7px;
+  background: #101925;
+  color: #dce8f5;
+  font-size: 0.76rem;
+}
+
+.toolbarQualitySelect:disabled {
+  border-color: #2a3546;
+  background: #0b1118;
+  color: #7e8998;
+}
+
+.toolbarRenderBtn {
+  width: auto;
+  min-width: 118px;
+  font-size: 0.76rem;
+}
+
+.toolbarRecord {
+  width: 118px;
+  min-width: 118px;
+  font-size: 0.76rem;
+  position: relative;
+}
+
+.toolbarRecord.activeRecord {
+  border-color: #ef6a6a;
+  background: #3a1618;
+  color: #ffe4e4;
+}
+
+.toolbarRenderBtn.activeRecord {
+  border-color: #78b1ff;
+  background: #11253e;
+  color: #e5f0ff;
+}
+
+.toolbarRecord.activeRecord::after {
+  content: "...";
+  display: inline-block;
+  width: 3ch;
+  margin-left: 0.2ch;
+  opacity: 0.2;
+  animation: recordDots 1s linear infinite;
+}
+
+@keyframes recordDots {
+  0% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.2;
+  }
+}
+
+.toolbarRecord:disabled {
+  border-color: #2a3546;
+  background: #0b1118;
+  color: #7e8998;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.renderSettingsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(132px, 1fr));
+  gap: 8px 10px;
+}
+
+.renderSettingsGrid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: #9fb8d3;
+}
+
+.renderSettingsGrid input,
+.renderSettingsGrid select {
+  width: 100%;
+}
+
+.renderSettingsGridInDialog {
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+}
+
+.renderProgressOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  background: rgba(4, 8, 14, 0.58);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.renderProgressOverlay[hidden] {
+  display: none !important;
+}
+
+.renderProgressCard {
+  min-width: min(380px, calc(100vw - 56px));
+  border: 1px solid rgba(142, 177, 211, 0.5);
+  border-radius: 12px;
+  background: rgba(10, 18, 27, 0.95);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.36);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.renderProgressTitle {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #e6f2ff;
+}
+
+.renderProgressPrimary {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: #ecf5ff;
+}
+
+.renderProgressSecondary {
+  font-size: 0.82rem;
+  color: #9cb7d3;
+}
+
 .exportDialog {
   width: min(560px, 94vw);
   border: 1px solid var(--line);
@@ -1190,6 +2101,37 @@ canvas {
   min-width: 0;
 }
 
+.exportDialogForm input[type="text"],
+.exportDialogForm input[type="number"] {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #0f1520;
+  color: var(--text);
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+}
+
+.exportDialogForm input[type="text"]:focus,
+.exportDialogForm input[type="number"]:focus {
+  outline: none;
+}
+
+.exportDialogForm input[type="text"]:focus-visible,
+.exportDialogForm input[type="number"]:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.3), 0 0 12px rgba(var(--accent-rgb), 0.2);
+}
+
+.exportDialogForm input[type="text"][readonly] {
+  background: #0d131d;
+  color: #c7d8ea;
+}
+
+.exportDialogForm input[type="number"] {
+  appearance: textfield;
+}
+
 .exportOverwriteRow {
   display: flex;
   align-items: center;
@@ -1212,6 +2154,206 @@ canvas {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.recordFormatGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recordFormatLabel {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.recordFormatButtons {
+  display: flex;
+  gap: 8px;
+}
+
+.recordFormatButtons .tinyBtn {
+  min-width: 72px;
+}
+
+.recordFormatButtons .tinyBtn.activeRecordFormat {
+  border-color: var(--accent);
+  background: #142b45;
+}
+
+.renderChoiceButtons .tinyBtn.activeRecordFormat {
+  border-color: var(--accent);
+  background: #142b45;
+}
+
+.renderChoiceGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.renderChoiceLabel {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.renderChoiceButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.renderChoiceButtons .tinyBtn {
+  min-width: 78px;
+}
+
+.renderOverlayGroup {
+  gap: 4px;
+}
+
+.renderOverlayButtons .tinyBtn {
+  min-width: 0;
+  flex: 1 1 140px;
+}
+
+.axisSettingsSummary {
+  color: #a6bfd9;
+  font-size: 0.82rem;
+  min-height: 1.2em;
+}
+
+.axisSwapRows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.axisSwapRow {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 8px 10px;
+  font-size: 0.82rem;
+  color: #c7dbef;
+}
+
+.axisSwapRow.isCurrent {
+  color: #f0f8ff;
+}
+
+.axisSwapTitle {
+  font-weight: 600;
+}
+
+.axisSwapHint {
+  grid-column: 1 / -1;
+  font-size: 0.75rem;
+  color: #98b1cb;
+}
+
+.axisSettingsRows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(56vh, 480px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.axisSettingsRow {
+  border: 1px solid rgba(136, 170, 203, 0.32);
+  border-radius: 8px;
+  background: rgba(17, 32, 48, 0.42);
+  padding: 10px;
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(240px, 2.2fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.axisSettingsHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.axisSettingsAxis {
+  color: #e8f2ff;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.axisSettingsMeta {
+  color: #9bb4cd;
+  font-size: 0.8rem;
+}
+
+.axisSettingsFields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.axisSettingsLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #b7ccdf;
+  font-size: 0.78rem;
+}
+
+.axisSettingsLength,
+.axisSettingsUnit,
+.axisSettingsStart,
+.axisSettingsEnd {
+  width: 100%;
+}
+
+.axisSettingsActions {
+  display: flex;
+  align-items: center;
+}
+
+.axisToggleBtn {
+  border: 1px solid #38567a;
+  border-radius: 7px;
+  background: #12263c;
+  color: #cfe2f5;
+  font-size: 0.78rem;
+  padding: 7px 10px;
+  line-height: 1.15;
+}
+
+.axisToggleBtn.isActive {
+  border-color: rgba(var(--accent-rgb), 0.95);
+  background: rgba(var(--accent-rgb), 0.22);
+  color: #f0f7ff;
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.32);
+}
+
+.axisToggleBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.axisSettingsEmpty {
+  color: #9cb6d3;
+  font-size: 0.84rem;
+  padding: 4px 2px;
+}
+
+@media (max-width: 720px) {
+  .axisSettingsRow {
+    grid-template-columns: 1fr;
+  }
+
+  .axisSettingsFields {
+    grid-template-columns: 1fr;
+  }
+
+  .axisSettingsActions {
+    justify-content: flex-start;
+  }
 }
 
 .profileCanvas {
@@ -1294,9 +2436,17 @@ canvas {
   .viewerToolbar {
     flex-wrap: wrap;
   }
+  .renderSettingsGrid {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
+  .ingestDialog {
+    --ingest-chip-width: 104px;
+    --ingest-slot-width: 132px;
+  }
+
   .brandLockup {
     align-items: flex-start;
   }
@@ -1306,5 +2456,13 @@ canvas {
   .datasetTabItem {
     min-width: 94px;
     max-width: 160px;
+  }
+
+  .ingestSlotCard {
+    min-width: 0;
+  }
+
+  .ingestKeysGrid {
+    grid-template-columns: 1fr;
   }
 }

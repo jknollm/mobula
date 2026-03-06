@@ -48,6 +48,8 @@ export function resetForDatasetChange(state) {
   state.sphereInsideScale = 0.2;
   state.sphereYaw = 0;
   state.spherePitch = 0;
+  state.sphereRotationMatrix = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  state.sphereRotateAxisObject = [0, 0, 1];
   state.sphereVectorKey = "";
   state.sphereVectors = null;
   state.sphereSimplexKey = "";
@@ -79,6 +81,7 @@ export function resetForDatasetChange(state) {
   state.currentIntensityUnit = "";
   state.fixedColorRange = null;
   state.colorNormValueWindow = { min: null, max: null };
+  state.colorNormWindowsByQuantity = {};
   state.frameCanvas = null;
   state.frameTiles = null;
   state.frameGrid = 1;
@@ -91,6 +94,12 @@ export function resetForDatasetChange(state) {
   state.activeSampleTile = 0;
   if (state.exportPrefs) {
     state.exportPrefs.filename = "";
+  }
+  if (state.recordMoviePrefs) {
+    state.recordMoviePrefs.filename = "";
+  }
+  if (state.renderMoviePrefs) {
+    state.renderMoviePrefs.filename = "";
   }
   if (state.sampleMorph) {
     state.sampleMorph.token = (state.sampleMorph.token || 0) + 1;

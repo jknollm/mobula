@@ -50,9 +50,103 @@ Includes:
 - `dims`, `shape`, `coords`, `units`
 - `wcs`, `provenance`, `uncertainty`
 - `pol_labels` when available
-- `sphere` summary for HEALPix-like layouts
+- `sphere` summary for HEALPix-like layouts, including inferred `ordering`
 
-## Local File Loading
+## Ingest API (Inspect / Plan / Commit)
+
+### `POST /api/ingest/inspect`
+
+Parses one or many local paths and/or uploaded files, infers axis/grouping candidates, and opens a short-lived ingest session.
+
+Request format: multipart form data.
+
+- `paths_json`: JSON list of absolute local paths (optional)
+- `files`: uploaded files (`.h5`, `.hdf5`, `.fits`, `.fit`, `.fts`) (optional)
+
+At least one source is required.
+
+Notes:
+
+- Path-based inspect accepts `.zarr` folders; multipart upload does not.
+- HDF5 inspection metadata includes numeric dataset candidates and the currently preferred default key when available.
+
+Response includes:
+
+- `inspection_id`, `expires_at`
+- per-file parsed shape/dtype/native labels
+- inferred axis candidates and confidence
+- grouping candidates and warnings
+- optional preset suggestions
+
+### `POST /api/ingest/plan`
+
+Builds a deterministic plan from `inspection_id` and user mapping decisions.
+
+Request body:
+
+```json
+{
+  "inspection_id": "insp-abc123",
+  "decision": {
+    "grouping_mode": "separate",
+    "tab_mode": "single_tab",
+    "combined_data_id": "optional-combined-id",
+    "file_mappings": [
+      {
+        "raw_input_id": "raw-1",
+        "dims": ["pol", "x", "y"],
+        "ignore": false,
+        "dataset_paths": ["science/I", "science/Q", "science/U", "science/V"],
+        "key_stack_axis": "pol"
+      }
+    ]
+  }
+}
+```
+
+Optional per-file mapping fields:
+
+- `dataset_path`: selected data key for HDF5
+- `dataset_paths`: ordered HDF5 key list for same-shape key stacking
+- `key_stack_axis`: canonical axis used for stacked HDF5 keys; must also be mapped onto source axis 0
+- `sphere_axis`: source-axis index to validate and tag as a HEALPix pixel axis
+
+Response includes:
+
+- `plan_id`
+- projected canonical shapes per resulting dataset
+- `canonical_dims`, always the full internal 7D axis model
+- strict errors (for incompatible combine)
+- `is_valid` gating commit
+
+### `POST /api/ingest/commit`
+
+Materializes datasets for a previously validated `plan_id`.
+
+Request body:
+
+```json
+{"plan_id": "plan-xyz987"}
+```
+
+Response includes:
+
+- `created_data_ids`
+- `tab_mode` materialization hint
+- warnings
+
+### Ingest limits and TTL
+
+Environment variables:
+
+- `MOBULA_INGEST_MAX_TOTAL_BYTES` (default `8 GiB`)
+- `MOBULA_INGEST_MAX_FILE_BYTES` (default `8 GiB`)
+- `MOBULA_INGEST_MAX_FILES` (default `256`)
+- `MOBULA_INGEST_SESSION_TTL_SECONDS` (default `1800`)
+
+## Local File Loading (Legacy Direct Load)
+
+These endpoints still work, but the browser UI now uses the ingest flow above by default.
 
 ### `POST /api/fs/pick`
 
@@ -100,6 +194,7 @@ Request body:
 Notes:
 
 - `dims` is optional and used when source metadata is incomplete.
+- `dims` should follow the source array order; the server reorders internally.
 - `pad_missing_dims` inserts singleton canonical axes in order.
 
 ### `POST /api/upload-local`
@@ -113,7 +208,7 @@ Supported upload suffixes:
 Notes:
 
 - `.zarr` upload is not supported through multipart; use `POST /api/load-local` with a folder path.
-- `dims` is optional and must be comma-separated when provided.
+- `dims` is optional, must be comma-separated when provided, and should follow source array order.
 
 ## View Endpoints
 
@@ -168,7 +263,13 @@ Requirements:
 Response includes:
 
 - `bands.blue|green|red` coord ranges and `bands.unit`
+- `bands.compute_backend_requested` and `bands.compute_backend` (`cpu` or `gpu`)
 - flattened channel arrays at `values.r`, `values.g`, `values.b`
+
+Optional params:
+
+- `compute_backend`: `auto` (default), `cpu`, `gpu`
+  - `auto` prefers GPU conversion for larger multispectral requests and falls back to CPU if unavailable.
 
 ### `GET /api/datasets/{data_id}/evpa`
 

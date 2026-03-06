@@ -50,8 +50,8 @@ Symptom:
 
 Fix:
 
-- Provide dims manually during load.
-- In UI, enter mapping when prompted.
+- Provide dims manually during legacy direct load.
+- In the ingest UI, remap axes in source-file order.
 - In API, send `dims` in request body.
 
 Symptom:
@@ -68,7 +68,32 @@ Symptom:
 
 Fix:
 
-- Use unique names from canonical dim set only.
+- Use unique names from the supported axis set only: `sample`, `pol`, `t`, `nu`, `x`, `y`, `z`.
+- The order can match the source array; mobula reorders internally after load.
+
+Symptom:
+
+- `select at least one data key`
+
+Fix:
+
+- In the HDF5 key-selection step, choose a numeric dataset before continuing.
+
+Symptom:
+
+- `axis 0 must be assigned to key-stack axis ...`
+
+Fix:
+
+- When stacking multiple HDF5 dataset keys, map source axis 0 to the selected key-stack axis.
+
+Symptom:
+
+- `sphere axis requires HEALPix npix=12*nside^2 ...`
+
+Fix:
+
+- Only assign the `sphere` mapper label to axes whose size is a valid HEALPix pixel count.
 
 ## Slice/Volume Request Errors
 

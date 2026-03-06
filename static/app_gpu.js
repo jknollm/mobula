@@ -1626,7 +1626,7 @@ class GpuVolumeRenderer {
       outHeight = clamp(Math.round(Math.sqrt(area / Math.max(1.0e-6, aspect))), 64, 4096);
     }
     const sphereProjectionMode = sphereProjection === "inside" ? 1 : 0;
-    const sphereInsideScale = Math.max(0.1, Math.min(3.6, 0.45 * Math.max(0.5, Math.min(8.0, state.volumeZoom || 1))));
+    const sphereInsideScale = Math.max(0.1, Math.min(3.6, 0.45 * Math.max(0.35, Math.min(8.0, state.volumeZoom || 1))));
     const sphereNside = Math.max(1, Math.min(512, Math.round(Number.parseInt(state.volumeRender?.sphereNsite, 10) || 32)));
 
     this.canvas.width = outWidth;

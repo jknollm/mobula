@@ -14,6 +14,7 @@ This project ships a FastAPI backend and a browser-based viewer for local high-d
 
 - [API Reference](./API.md)
 - [Data Loading and Axis Mapping](./DATA_LOADING.md)
+- [Data Ingestion Implementation Plan](./DATA_INGESTION_PLAN.md)
 - [Architecture](./ARCHITECTURE.md)
 - [Development Guide](./DEVELOPMENT.md)
 

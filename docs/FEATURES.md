@@ -4,14 +4,19 @@ This page summarizes what mobula can do today.
 
 ## Data and Loading
 
-- Canonical cube model with dims drawn from: `sample, pol, t, nu, x, y, z`
+- Fixed internal axis model with dims drawn from: `sample, pol, t, nu, x, y, z`
 - Built-in demo datasets available at startup
+- Guided ingest wizard for local imports
 - Local loading from:
   - HDF5 (`.h5`, `.hdf5`)
   - FITS (`.fits`, `.fit`, `.fts`)
-  - Zarr folders (`.zarr`) via path-based loading
-- Optional manual dim mapping when source metadata is incomplete
-- Optional canonical singleton padding for missing dims
+  - Zarr folders (`.zarr`) via path-based loading / direct API
+- Automatic axis inference from embedded labels, FITS headers, and filename heuristics
+- Drag-and-drop axis mapping in source-file order when inference is incomplete
+- HDF5 data-key selection, including same-shape key stacking and Stokes quick-pick helpers
+- Multi-file import intent selection: combine into one dataset or create separate tabs
+- Suggested mapping presets for repeated import layouts
+- Internal singleton padding to the full 7D model during ingest commit or optional legacy direct load
 
 ## Interactive Visualization
 

@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-mobula is a local interactive viewer for high-dimensional cube data with canonical axes:
+mobula is a local interactive viewer for high-dimensional cube data built around a fixed internal axis model:
 
 ```text
 sample, pol, t, nu, x, y, z
@@ -49,6 +49,7 @@ mobula --host 127.0.0.1 --port 8000 --reload
 - [Troubleshooting](./docs/TROUBLESHOOTING.md)
 - [Architecture](./docs/ARCHITECTURE.md)
 - [Development Guide](./docs/DEVELOPMENT.md)
+- [Software Publication Package](./publication/README.md)
 - [Contributing](./CONTRIBUTING.md)
 
 ## Key Capabilities
@@ -60,7 +61,8 @@ mobula --host 127.0.0.1 --port 8000 --reload
 - Sample-aware views (`single`, `mean`, `std`, `rel_uncert`) and sample mosaics
 - Polarization tools (I/Q/U/V, EVPA overlay, derived polarization modes)
 - Color map/range controls and multiple flux scales
-- Local file loading via native picker, drag-and-drop (file datasets), and API
+- Ingest wizard with inferred axis mapping, multi-file combine/separate choices, HDF5 key selection, and preset reuse
+- Local file loading via native picker, drag-and-drop for file-based datasets, and legacy direct-load API
 
 ## Manual Startup
 
