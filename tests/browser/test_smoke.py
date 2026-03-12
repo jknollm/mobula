@@ -181,6 +181,34 @@ def _canvas_foreground_bounds(page: object, selector: str) -> dict[str, int]:
     )
 
 
+def _wait_for_canvas_foreground(page: object, selector: str, timeout_ms: int = 8000) -> None:
+    page.wait_for_function(
+        """(selector) => {
+          const canvas = document.querySelector(selector);
+          if (!canvas) return false;
+          const style = window.getComputedStyle(canvas);
+          if (style.display === 'none' || style.visibility === 'hidden') return false;
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          if (!ctx) return false;
+          const { width, height } = canvas;
+          if (!width || !height) return false;
+          const img = ctx.getImageData(0, 0, width, height);
+          for (let y = 0; y < height; y += 1) {
+            for (let x = 0; x < width; x += 1) {
+              const idx = (y * width + x) * 4;
+              const r = img.data[idx + 0];
+              const g = img.data[idx + 1];
+              const b = img.data[idx + 2];
+              if (r > 16 || g > 20 || b > 28) return true;
+            }
+          }
+          return false;
+        }""",
+        arg=selector,
+        timeout=timeout_ms,
+    )
+
+
 @pytest.mark.browser
 def test_app_loads(page: object, app_url: str) -> None:
     _wait_ui_ready(page, app_url)
@@ -537,14 +565,14 @@ def test_sphere_playback_keeps_outside_projection_circular(page: object, app_url
     _choose_dataset(page, "healpix-sky-time-nu-hd")
 
     page.locator("#sphereProjOutsideBtn:visible").first.click()
-    page.wait_for_timeout(800)
+    _wait_for_canvas_foreground(page, "#sliceCanvas")
     paused_bounds = _canvas_foreground_bounds(page, "#sliceCanvas")
     assert paused_bounds["width"] > 0
     assert paused_bounds["height"] > 0
 
     page.locator("#timePlayBtn:visible").first.click()
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().playback.active === true")
-    page.wait_for_timeout(1200)
+    _wait_for_canvas_foreground(page, "#sliceCanvas")
     playing_bounds = _canvas_foreground_bounds(page, "#sliceCanvas")
     page.locator("#timePlayBtn:visible").first.click()
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().playback.active === false")
