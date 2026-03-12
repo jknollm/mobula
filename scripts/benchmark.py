@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import random
 import statistics
 import time
 from typing import Any
 
 import httpx
+import numpy as np
 
 
 def pct(values: list[float], q: float) -> float:
@@ -18,11 +20,26 @@ def pct(values: list[float], q: float) -> float:
     return sorted_vals[max(0, min(len(sorted_vals) - 1, idx))]
 
 
-def timed_get(client: httpx.Client, url: str, params: dict[str, Any]) -> float:
+def decode_scalar_payload_binary(body: bytes) -> dict[str, Any]:
+    if len(body) < 4:
+        raise ValueError("binary payload is too short")
+    metadata_length = int.from_bytes(body[:4], byteorder="little", signed=False)
+    metadata_start = 4
+    padded_length = (metadata_length + 3) & ~3
+    values_start = metadata_start + padded_length
+    metadata = json.loads(body[metadata_start : metadata_start + metadata_length].decode("utf-8"))
+    values = np.frombuffer(body, dtype=np.float32, count=-1, offset=values_start)
+    return {**metadata, "values": values}
+
+
+def timed_get(client: httpx.Client, url: str, params: dict[str, Any], *, response_format: str) -> float:
     t0 = time.perf_counter()
     r = client.get(url, params=params, timeout=30.0)
     r.raise_for_status()
-    _ = r.json()
+    if response_format == "binary":
+        _ = decode_scalar_payload_binary(r.content)
+    else:
+        _ = r.json()
     return (time.perf_counter() - t0) * 1000.0
 
 
@@ -40,6 +57,12 @@ def main() -> None:
     parser.add_argument("--dataset", default="movie-2d-pol-hd", help="dataset id")
     parser.add_argument("--n", type=int, default=60, help="number of measured iterations")
     parser.add_argument("--warmup", type=int, default=15, help="number of warmup iterations")
+    parser.add_argument(
+        "--response-format",
+        default="json",
+        choices=["json", "binary"],
+        help="slice transport format to benchmark",
+    )
     args = parser.parse_args()
 
     rng = random.Random(123)
@@ -65,8 +88,9 @@ def main() -> None:
                 "t": rng.randrange(max(1, s_t)),
                 "nu": rng.randrange(max(1, s_nu)),
                 "z": rng.randrange(max(1, s_z)),
+                "response_format": args.response_format,
             }
-            timed_get(client, slice_url, params)
+            timed_get(client, slice_url, params, response_format=args.response_format)
 
         slice_lat: list[float] = []
         roi_lat: list[float] = []
@@ -77,8 +101,9 @@ def main() -> None:
                 "t": rng.randrange(max(1, s_t)),
                 "nu": rng.randrange(max(1, s_nu)),
                 "z": rng.randrange(max(1, s_z)),
+                "response_format": args.response_format,
             }
-            slice_lat.append(timed_get(client, slice_url, params))
+            slice_lat.append(timed_get(client, slice_url, params, response_format=args.response_format))
 
             roi_w = max(8, min(24, s_x // 4))
             roi_h = max(8, min(24, s_y // 4))
@@ -99,6 +124,7 @@ def main() -> None:
     print("mobula demo benchmark")
     print(f"dataset: {args.dataset}")
     print(f"iterations: {args.n}")
+    print(f"slice response format: {args.response_format}")
     print("slice latency (ms):")
     print(f"  p50={pct(slice_lat, 0.50):.2f} p95={pct(slice_lat, 0.95):.2f} mean={statistics.mean(slice_lat):.2f}")
     print("roi-stats latency (ms):")

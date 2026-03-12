@@ -8,6 +8,8 @@ This is the shortest path from clone to useful interaction.
 ./run_demo.sh
 ```
 
+`run_demo.sh` installs the host-native dependency set automatically. On Apple Silicon, that includes the Metal/MPS compute dependency.
+
 Open `http://127.0.0.1:8000`.
 
 ## 2. Load a dataset

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate Mobula brand banners for app (white text) and README (black text).
 
-Outputs in static/assets:
+Outputs in src/mobula/static/assets:
 - mobula_banner_black.png
 - mobula_banner_black.svg
 - mobula_banner_white.png
@@ -19,9 +19,7 @@ from pathlib import Path
 try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError as exc:  # pragma: no cover
-    raise SystemExit(
-        "Pillow is required to generate banners. Install it with: pip install Pillow"
-    ) from exc
+    raise SystemExit("Pillow is required to generate banners. Install it with: pip install Pillow") from exc
 
 
 WORDMARK = "MOBULA"
@@ -72,7 +70,7 @@ def _rgba_svg(color: tuple[int, int, int, int]) -> str:
 
 
 def generate(root: Path) -> None:
-    assets = root / "static" / "assets"
+    assets = root / "src" / "mobula" / "static" / "assets"
     fonts = assets / "fonts"
 
     logo_path = assets / "mobula_logo.png"
@@ -105,10 +103,7 @@ def generate(root: Path) -> None:
         image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
 
-        word_width = (
-            sum(draw.textlength(ch, font=word_font) for ch in WORDMARK)
-            + word_tracking * (len(WORDMARK) - 1)
-        )
+        word_width = sum(draw.textlength(ch, font=word_font) for ch in WORDMARK) + word_tracking * (len(WORDMARK) - 1)
         tag_width = draw.textbbox((0, 0), TAGLINE, font=tag_font)[2]
         tag_tracking = (word_width - tag_width) / max(1, len(TAGLINE) - 1)
 
@@ -121,11 +116,7 @@ def generate(root: Path) -> None:
         word_baseline = top + word_ascent
         tag_baseline = top + word_height + line_gap + tag_ascent - tagline_lift
 
-        logo = (
-            Image.open(logo_path)
-            .convert("RGBA")
-            .resize((logo_size, logo_size), Image.Resampling.LANCZOS)
-        )
+        logo = Image.open(logo_path).convert("RGBA").resize((logo_size, logo_size), Image.Resampling.LANCZOS)
         image.alpha_composite(logo, (logo_x, logo_y))
 
         _draw_tracked(

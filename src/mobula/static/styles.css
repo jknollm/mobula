@@ -1625,6 +1625,16 @@ canvas {
   overflow-x: auto;
 }
 
+#perfReadout {
+  min-height: 0;
+  max-height: 11.2em;
+  margin: 0 0 10px;
+  color: #bcd3e8;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
 .metrics h2 {
   margin: 0 0 6px;
   font-size: 1rem;
@@ -1787,9 +1797,11 @@ canvas {
   cursor: ew-resize;
 }
 
+.backendStatus,
 .volumeBackendStatus {
   color: #8ea1b5;
   font-size: 0.76rem;
+  line-height: 1.35;
   margin-top: -2px;
 }
 

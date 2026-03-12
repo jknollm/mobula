@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import base64
 import binascii
-from pathlib import Path
+import json
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
-from mobula.service.api_models import ExportCutoutSaveRequest, SaveImagesRequest, SaveMovieRequest, SaveRenderedMovieRequest
-from mobula.service.api_utils import _parse_range_mode, _parse_sample_mode, _safe_dataset
+from mobula.service.api_models import (
+    ExportCutoutSaveRequest,
+    SaveImagesRequest,
+    SaveMovieRequest,
+    SaveRenderedMovieRequest,
+)
+from mobula.service.api_utils import _parse_range_mode, _parse_sample_mode, _safe_dataset, _safe_dataset_with_perf
+from mobula.service.perf import timed_encoded_response, timed_json_response
 from mobula.service.registry import DatasetRegistry
 from mobula.service.view_service import (
     build_evpa_response,
@@ -18,9 +25,10 @@ from mobula.service.view_service import (
     build_export_cutout_hdf5,
     build_intensity_range_response,
     build_multispectral_response,
-    build_slice_response,
-    build_volume_response,
+    build_slice_payload,
+    build_volume_payload,
 )
+from mobula.service.views.serialization import RgbArrayPayload, encode_rgb_payload_binary, encode_scalar_payload_binary, serialize_scalar_payload_json
 
 try:
     import imageio_ffmpeg
@@ -77,6 +85,17 @@ def _parse_project_dims(project_dims: str | None) -> tuple[str, ...]:
     return tuple(out)
 
 
+def _parse_response_format(response_format: str) -> str:
+    fmt = str(response_format or "json").strip().lower()
+    if fmt not in {"json", "binary"}:
+        raise HTTPException(status_code=400, detail="response_format must be 'json' or 'binary'")
+    return fmt
+
+
+def _encode_scalar_payload_json_bytes(payload: Any) -> bytes:
+    return json.dumps(serialize_scalar_payload_json(payload), separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
 def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None:
     @router.get("/datasets/{data_id}/slice")
     def dataset_slice(
@@ -93,24 +112,42 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
         plane_x: str = Query(default="x"),
         plane_y: str = Query(default="y"),
         project_dims: str | None = Query(default=None),
-    ) -> dict[str, Any]:
-        ds = _safe_dataset(registry, data_id)
+        response_format: str = Query(default="json"),
+    ) -> Response:
+        ds, dataset_metrics = _safe_dataset_with_perf(registry, data_id)
         mode = _parse_sample_mode(sample_mode)
         project = _parse_project_dims(project_dims)
-        return build_slice_response(
-            ds,
-            sample=sample,
-            pol=pol,
-            t=t,
-            nu=nu,
-            x=x,
-            y=y,
-            z=z,
-            max_pixels=max_pixels,
-            sample_mode=mode,
-            plane_x=plane_x,
-            plane_y=plane_y,
-            project_dims=project,
+        fmt = _parse_response_format(response_format)
+
+        def build_payload() -> Any:
+            return build_slice_payload(
+                ds,
+                sample=sample,
+                pol=pol,
+                t=t,
+                nu=nu,
+                x=x,
+                y=y,
+                z=z,
+                max_pixels=max_pixels,
+                sample_mode=mode,
+                plane_x=plane_x,
+                plane_y=plane_y,
+                project_dims=project,
+            )
+
+        if fmt == "binary":
+            return timed_encoded_response(
+                build_payload,
+                encode_scalar_payload_binary,
+                media_type="application/vnd.mobula.scalar-array",
+                dataset_metrics=dataset_metrics,
+            )
+        return timed_encoded_response(
+            build_payload,
+            _encode_scalar_payload_json_bytes,
+            media_type="application/json",
+            dataset_metrics=dataset_metrics,
         )
 
     @router.get("/datasets/{data_id}/volume")
@@ -125,21 +162,39 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
         z: int | None = Query(default=None),
         sample_mode: str = Query(default="single"),
         project_dims: str | None = Query(default=None),
-    ) -> dict[str, Any]:
-        ds = _safe_dataset(registry, data_id)
+        response_format: str = Query(default="json"),
+    ) -> Response:
+        ds, dataset_metrics = _safe_dataset_with_perf(registry, data_id)
         mode = _parse_sample_mode(sample_mode)
         project = _parse_project_dims(project_dims)
-        return build_volume_response(
-            ds,
-            sample=sample,
-            pol=pol,
-            t=t,
-            nu=nu,
-            x=x,
-            y=y,
-            z=z,
-            sample_mode=mode,
-            project_dims=project,
+        fmt = _parse_response_format(response_format)
+
+        def build_payload() -> Any:
+            return build_volume_payload(
+                ds,
+                sample=sample,
+                pol=pol,
+                t=t,
+                nu=nu,
+                x=x,
+                y=y,
+                z=z,
+                sample_mode=mode,
+                project_dims=project,
+            )
+
+        if fmt == "binary":
+            return timed_encoded_response(
+                build_payload,
+                encode_scalar_payload_binary,
+                media_type="application/vnd.mobula.scalar-array",
+                dataset_metrics=dataset_metrics,
+            )
+        return timed_encoded_response(
+            build_payload,
+            _encode_scalar_payload_json_bytes,
+            media_type="application/json",
+            dataset_metrics=dataset_metrics,
         )
 
     @router.get("/datasets/{data_id}/intensity-range")
@@ -161,29 +216,32 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
         plane_x: str = Query(default="x"),
         plane_y: str = Query(default="y"),
         project_dims: str | None = Query(default=None),
-    ) -> dict[str, Any]:
-        ds = _safe_dataset(registry, data_id)
+    ) -> Response:
+        ds, dataset_metrics = _safe_dataset_with_perf(registry, data_id)
         mode = _parse_sample_mode(sample_mode)
         rmode = _parse_range_mode(range_mode)
         project = _parse_project_dims(project_dims)
-        return build_intensity_range_response(
-            ds,
-            sample=sample,
-            pol=pol,
-            t=t,
-            nu=nu,
-            x=x,
-            y=y,
-            z=z,
-            t0=t0,
-            t1=t1,
-            nu0=nu0,
-            nu1=nu1,
-            sample_mode=mode,
-            range_mode=rmode,
-            plane_x=plane_x,
-            plane_y=plane_y,
-            project_dims=project,
+        return timed_json_response(
+            lambda: build_intensity_range_response(
+                ds,
+                sample=sample,
+                pol=pol,
+                t=t,
+                nu=nu,
+                x=x,
+                y=y,
+                z=z,
+                t0=t0,
+                t1=t1,
+                nu0=nu0,
+                nu1=nu1,
+                sample_mode=mode,
+                range_mode=rmode,
+                plane_x=plane_x,
+                plane_y=plane_y,
+                project_dims=project,
+            ),
+            dataset_metrics=dataset_metrics,
         )
 
     @router.get("/datasets/{data_id}/evpa")
@@ -198,21 +256,24 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
         min_fraction: float = Query(default=0.05, ge=0.0, le=1.0),
         i_min_fraction: float = Query(default=0.0, ge=0.0, le=1.0),
         project_dims: str | None = Query(default=None),
-    ) -> dict[str, Any]:
-        ds = _safe_dataset(registry, data_id)
+    ) -> Response:
+        ds, dataset_metrics = _safe_dataset_with_perf(registry, data_id)
         mode = _parse_sample_mode(sample_mode)
         project = _parse_project_dims(project_dims)
-        return build_evpa_response(
-            ds,
-            sample=sample,
-            t=t,
-            nu=nu,
-            z=z,
-            sample_mode=mode,
-            step=step,
-            min_fraction=min_fraction,
-            i_min_fraction=i_min_fraction,
-            project_dims=project,
+        return timed_json_response(
+            lambda: build_evpa_response(
+                ds,
+                sample=sample,
+                t=t,
+                nu=nu,
+                z=z,
+                sample_mode=mode,
+                step=step,
+                min_fraction=min_fraction,
+                i_min_fraction=i_min_fraction,
+                project_dims=project,
+            ),
+            dataset_metrics=dataset_metrics,
         )
 
     @router.get("/datasets/{data_id}/multispectral")
@@ -239,33 +300,59 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
         range_max: float = Query(default=100.0, ge=0.0, le=100.0),
         compute_backend: str = Query(default="auto"),
         project_dims: str | None = Query(default=None),
-    ) -> dict[str, Any]:
-        ds = _safe_dataset(registry, data_id)
+        response_format: str = Query(default="json"),
+    ) -> Response:
+        ds, dataset_metrics = _safe_dataset_with_perf(registry, data_id)
         mode = _parse_sample_mode(sample_mode)
         project = _parse_project_dims(project_dims)
-        return build_multispectral_response(
-            ds,
-            sample=sample,
-            pol=pol,
-            t=t,
-            x=x,
-            y=y,
-            z=z,
-            nu0=nu0,
-            nu1=nu1,
-            max_pixels=max_pixels,
-            sample_mode=mode,
-            plane_x=plane_x,
-            plane_y=plane_y,
-            nu_axis_scale=nu_axis_scale,
-            deslope=deslope,
-            normalize_spectrum=normalize_spectrum,
-            normalize_spectrum_boost=normalize_spectrum_boost,
-            intensity_scale=intensity_scale,
-            range_min=range_min,
-            range_max=range_max,
-            compute_backend=compute_backend,
-            project_dims=project,
+        fmt = _parse_response_format(response_format)
+
+        def build_multispectral_json() -> dict[str, Any]:
+            return build_multispectral_response(
+                ds,
+                sample=sample,
+                pol=pol,
+                t=t,
+                x=x,
+                y=y,
+                z=z,
+                nu0=nu0,
+                nu1=nu1,
+                max_pixels=max_pixels,
+                sample_mode=mode,
+                plane_x=plane_x,
+                plane_y=plane_y,
+                nu_axis_scale=nu_axis_scale,
+                deslope=deslope,
+                normalize_spectrum=normalize_spectrum,
+                normalize_spectrum_boost=normalize_spectrum_boost,
+                intensity_scale=intensity_scale,
+                range_min=range_min,
+                range_max=range_max,
+                compute_backend=compute_backend,
+                project_dims=project,
+            )
+
+        def build_multispectral_binary() -> RgbArrayPayload:
+            payload = build_multispectral_json()
+            values = payload.get("values", {})
+            return RgbArrayPayload(
+                metadata={key: value for key, value in payload.items() if key != "values"},
+                red=values.get("r", ()),
+                green=values.get("g", ()),
+                blue=values.get("b", ()),
+            )
+
+        if fmt == "binary":
+            return timed_encoded_response(
+                build_multispectral_binary,
+                encode_rgb_payload_binary,
+                media_type="application/vnd.mobula.rgb-array",
+                dataset_metrics=dataset_metrics,
+            )
+        return timed_json_response(
+            build_multispectral_json,
+            dataset_metrics=dataset_metrics,
         )
 
     @router.get("/datasets/{data_id}/export-cutout")
@@ -434,7 +521,7 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
             prefix = "data:image/png;base64,"
             if not item.data_url.startswith(prefix):
                 raise HTTPException(status_code=400, detail=f"unsupported image data for '{file_name}'")
-            b64_data = item.data_url[len(prefix):]
+            b64_data = item.data_url[len(prefix) :]
             try:
                 payload = base64.b64decode(b64_data, validate=True)
             except (ValueError, binascii.Error) as exc:

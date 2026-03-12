@@ -1,7 +1,7 @@
 <p>
   <picture>
-    <source srcset="./static/assets/mobula_banner_black.svg" type="image/svg+xml" />
-    <img src="./static/assets/mobula_banner_black.png" alt="MOBULA - Navigating Domains" width="780" />
+    <source srcset="./src/mobula/static/assets/mobula_banner_black.svg" type="image/svg+xml" />
+    <img src="./src/mobula/static/assets/mobula_banner_black.png" alt="MOBULA - Navigating Domains" width="780" />
   </picture>
 </p>
 
@@ -31,6 +31,13 @@ python -m pip install .
 mobula
 ```
 
+For a host-native install that includes Apple Silicon Metal support when applicable:
+
+```bash
+python -m pip install ".[native]"
+mobula
+```
+
 Optional flags:
 
 ```bash
@@ -46,6 +53,8 @@ mobula --host 127.0.0.1 --port 8000 --reload
 - [User Guide](./docs/USER_GUIDE.md)
 - [API Reference](./docs/API.md)
 - [Data Loading and Axis Mapping](./docs/DATA_LOADING.md)
+- [Expected Behavior](./docs/EXPECTED_BEHAVIOR.md)
+- [Performance Baseline](./docs/PERFORMANCE_BASELINE.md)
 - [Troubleshooting](./docs/TROUBLESHOOTING.md)
 - [Architecture](./docs/ARCHITECTURE.md)
 - [Development Guide](./docs/DEVELOPMENT.md)
@@ -70,7 +79,7 @@ mobula --host 127.0.0.1 --port 8000 --reload
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install -e ".[dev,native]"
 PYTHONPATH=src uvicorn mobula.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
@@ -108,3 +117,15 @@ python scripts/generate_brand_banners.py
 - Local data workflows only
 - Python package install supported (`mobula` CLI)
 - Frontend served as static assets by FastAPI
+
+## Native Acceleration Install
+
+- `./run_demo.sh` and `requirements.txt` install `.[dev,native]`.
+- The `native` extra is host-aware:
+  - Apple Silicon macOS installs the Metal/MPS dependency set
+  - other currently supported hosts fall back to the base CPU dependency set
+- Existing environments can be upgraded with:
+
+```bash
+mobula install-acceleration --apply
+```

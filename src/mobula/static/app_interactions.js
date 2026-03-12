@@ -31,6 +31,7 @@ export function bindCanvasInteractions(ctx) {
     screenToData,
     setAxisIndex,
     setAxisWindow,
+    startVisibleUpdate,
     clearHoverProbe,
     state,
     updateHoverProbeFromEvent,
@@ -54,6 +55,7 @@ export function bindCanvasInteractions(ctx) {
     volumeDragTimer = 0;
     if (!state.volumeDrag) return;
     volumeDragLastRenderAt = performance.now();
+    if (typeof startVisibleUpdate === "function") startVisibleUpdate("volume-drag", { spatialMode: "volume" });
     rerenderVolumeFrame();
   };
   const scheduleVolumeDragRender = () => {
@@ -82,6 +84,7 @@ export function bindCanvasInteractions(ctx) {
         sphereDragTimer = 0;
         if (!state.sphereDrag) return;
         sphereDragLastRenderAt = performance.now();
+        if (typeof startVisibleUpdate === "function") startVisibleUpdate("sphere-drag", { spatialMode: "sphere" });
         rerenderSphereFrame();
       });
       return;
@@ -95,6 +98,7 @@ export function bindCanvasInteractions(ctx) {
         sphereDragRaf = 0;
         if (!state.sphereDrag) return;
         sphereDragLastRenderAt = performance.now();
+        if (typeof startVisibleUpdate === "function") startVisibleUpdate("sphere-drag", { spatialMode: "sphere" });
         rerenderSphereFrame();
       });
     }, waitMs);
@@ -221,10 +225,10 @@ export function bindCanvasInteractions(ctx) {
           startYaw: state.volumeYaw,
           startPitch: state.volumePitch,
         };
-        volumeDragLastRenderAt = 0;
-      }
-      return;
+      volumeDragLastRenderAt = 0;
     }
+    return;
+  }
 
     if (isSphereMode()) {
       state.activeSampleTile = p.tile || 0;
@@ -236,6 +240,7 @@ export function bindCanvasInteractions(ctx) {
         const mode = modeForEvent(ev);
         if (mode === "zoom") {
           state.zoomDrag = { startU: p.u, startV: p.v, lastU: p.u, lastV: p.v, moved: false, tile: p.tile || 0 };
+          if (typeof startVisibleUpdate === "function") startVisibleUpdate("zoom-drag", { spatialMode: "sphere" });
           drawFrameAndOverlays();
           return;
         }
@@ -244,6 +249,7 @@ export function bindCanvasInteractions(ctx) {
           const iv = Math.floor(p.v);
           state.selectionDrag = { startU: iu, startV: iv, lastU: iu, lastV: iv, moved: false, tile: p.tile || 0 };
           state.selection = { u0: iu, v0: iv, u1: iu, v1: iv };
+          if (typeof startVisibleUpdate === "function") startVisibleUpdate("selection-drag", { spatialMode: "sphere" });
           drawFrameAndOverlays();
           return;
         }
@@ -293,6 +299,7 @@ export function bindCanvasInteractions(ctx) {
     const mode = modeForEvent(ev);
     if (mode === "zoom") {
       state.zoomDrag = { startU: p.u, startV: p.v, lastU: p.u, lastV: p.v, moved: false, tile: p.tile || 0 };
+      if (typeof startVisibleUpdate === "function") startVisibleUpdate("zoom-drag", { spatialMode: "slice" });
       drawFrameAndOverlays();
       return;
     }
@@ -301,6 +308,7 @@ export function bindCanvasInteractions(ctx) {
       const iv = Math.floor(p.v);
       state.selectionDrag = { startU: iu, startV: iv, lastU: iu, lastV: iv, moved: false, tile: p.tile || 0 };
       state.selection = { u0: iu, v0: iv, u1: iu, v1: iv };
+      if (typeof startVisibleUpdate === "function") startVisibleUpdate("selection-drag", { spatialMode: "slice" });
       drawFrameAndOverlays();
       return;
     }
@@ -364,6 +372,7 @@ export function bindCanvasInteractions(ctx) {
       state.view.u = state.panDrag.startU - (dxCanvas / Math.max(1e-6, state.panDrag.drawW)) * state.panDrag.spanW;
       state.view.v = state.panDrag.startV - (dyCanvas / Math.max(1e-6, state.panDrag.drawH)) * state.panDrag.spanH;
       getViewRect();
+      if (typeof startVisibleUpdate === "function") startVisibleUpdate("pan-drag");
       drawFrameAndOverlays();
       return;
     }
@@ -376,6 +385,7 @@ export function bindCanvasInteractions(ctx) {
       if (Math.abs(p.u - state.zoomDrag.startU) + Math.abs(p.v - state.zoomDrag.startV) > 0.25) {
         state.zoomDrag.moved = true;
       }
+      if (typeof startVisibleUpdate === "function") startVisibleUpdate("zoom-drag");
       drawFrameAndOverlays();
       return;
     }
@@ -398,6 +408,7 @@ export function bindCanvasInteractions(ctx) {
         u1: iu,
         v1: iv,
       };
+      if (typeof startVisibleUpdate === "function") startVisibleUpdate("selection-drag");
       drawFrameAndOverlays();
       return;
     }
@@ -465,6 +476,7 @@ export function bindCanvasInteractions(ctx) {
         window.clearTimeout(volumeDragTimer);
         volumeDragTimer = 0;
       }
+      if (typeof startVisibleUpdate === "function") startVisibleUpdate("volume-release", { spatialMode: "volume" });
       rerenderVolumeFrame();
       return;
     }
@@ -479,6 +491,7 @@ export function bindCanvasInteractions(ctx) {
         window.clearTimeout(sphereDragTimer);
         sphereDragTimer = 0;
       }
+      if (typeof startVisibleUpdate === "function") startVisibleUpdate("sphere-release", { spatialMode: "sphere" });
       rerenderSphereFrame();
       await refreshSphereSelectionNow();
       updateHoverProbeFromEvent(ev);
@@ -493,6 +506,7 @@ export function bindCanvasInteractions(ctx) {
       const insideZoomClick = isSphereMode() && state.sphereProjection === "inside";
       if (z.moved || insideZoomClick) {
         applyZoomBox(z);
+        if (typeof startVisibleUpdate === "function") startVisibleUpdate("zoom-commit");
         drawFrameAndOverlays();
         await refreshViewProfiles();
       } else {
@@ -512,6 +526,7 @@ export function bindCanvasInteractions(ctx) {
         const iu = clamp(Math.floor(z.startU), 0, iuMax);
         const iv = clamp(Math.floor(z.startV), 0, ivMax);
         state.selection = { u0: iu, v0: iv, u1: iu, v1: iv };
+        if (typeof startVisibleUpdate === "function") startVisibleUpdate("selection-commit");
         drawFrameAndOverlays();
         await refreshSelectionAnalytics();
       }
@@ -528,6 +543,7 @@ export function bindCanvasInteractions(ctx) {
       state.selection = { u0: s.startU, v0: s.startV, u1: s.lastU, v1: s.lastV };
     }
 
+    if (typeof startVisibleUpdate === "function") startVisibleUpdate("selection-commit");
     drawFrameAndOverlays();
     await refreshSelectionAnalytics();
   });

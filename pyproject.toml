@@ -20,9 +20,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+metal = [
+  "torch>=2.6,<3.0; platform_system == 'Darwin' and platform_machine == 'arm64'",
+]
+native = [
+  "torch>=2.6,<3.0; platform_system == 'Darwin' and platform_machine == 'arm64'",
+]
 dev = [
   "pytest>=8.0,<9.0",
   "httpx>=0.27,<1.0",
+  "mypy>=1.11,<2.0",
+  "ruff>=0.11,<1.0",
+  "playwright>=1.52,<2.0",
 ]
 
 [project.scripts]
@@ -37,3 +46,37 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 mobula = ["static/*", "static/**/*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+pretty = true
+
+[[tool.mypy.overrides]]
+module = [
+  "mobula.data.schema",
+  "mobula.service.api_models",
+  "mobula.service.api_utils",
+]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = [
+  "astropy.io",
+  "h5py",
+  "zarr",
+]
+ignore_missing_imports = true

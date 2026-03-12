@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -52,6 +52,13 @@ class CubeDataset:
     provenance: dict[str, Any]
     mask: np.ndarray | None = None
     uncertainty: dict[str, Any] | None = None
+    _coord_list_cache: dict[str, list[float]] = field(default_factory=dict, init=False, repr=False, compare=False)
+    _serialized_axis_coords_cache: dict[tuple[str, ...], dict[str, Any]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def validate(self) -> None:
         if not self.dims:
@@ -87,4 +94,3 @@ class CubeDataset:
             return self.dims.index(name)
         except ValueError as exc:
             raise KeyError(f"dimension '{name}' not found") from exc
-

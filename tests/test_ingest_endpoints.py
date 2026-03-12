@@ -59,6 +59,8 @@ def test_ingest_inspect_plan_commit_separate(client, tmp_path: Path) -> None:
     plan = plan_res.json()
     assert plan["is_valid"] is True
     assert len(plan["datasets"]) == 1
+    planned_ids = {item["data_id"] for item in client.get("/api/datasets").json()["datasets"]}
+    assert planned_ids == before_ids
 
     commit_res = client.post("/api/ingest/commit", json={"plan_id": plan["plan_id"]})
     assert commit_res.status_code == 200
@@ -157,7 +159,7 @@ def test_ingest_plan_pol_axis_size_3_is_loaded_as_iqu_with_zero_v(client, tmp_pa
     p = tmp_path / "iqu-pol.h5"
     values = np.array(
         [
-            [1.0, 2.0, 3.0],   # I
+            [1.0, 2.0, 3.0],  # I
             [10.0, 20.0, 30.0],  # Q
             [100.0, 200.0, 300.0],  # U
         ],
@@ -545,7 +547,9 @@ def test_ingest_hdf5_dataset_path_overrides_stale_single_dataset_paths(client, t
     payload = inspect_res.json()
     file_info = payload["files"][0]
     raw_input_id = file_info["raw_input"]["id"]
-    stokes = next(row for row in file_info["parsed"]["format_metadata"]["dataset_candidates"] if row.get("kind") == "stokes_stack")
+    stokes = next(
+        row for row in file_info["parsed"]["format_metadata"]["dataset_candidates"] if row.get("kind") == "stokes_stack"
+    )
 
     plan_res = client.post(
         "/api/ingest/plan",
@@ -621,7 +625,9 @@ def test_ingest_hdf5_stack_token_recovers_stale_dataset_paths_single_entry(clien
     assert meta_res.json()["shape"] == [1, 4, 7, 1, 12, 20, 1]
 
 
-def test_ingest_hdf5_stack_token_resolves_member_shapes_from_file_when_not_in_top_candidates(client, tmp_path: Path) -> None:
+def test_ingest_hdf5_stack_token_resolves_member_shapes_from_file_when_not_in_top_candidates(
+    client, tmp_path: Path
+) -> None:
     p = tmp_path / "stack_token_member_shape_fallback.h5"
     h5py = pytest.importorskip("h5py")
     shape = (11, 22)
@@ -671,3 +677,74 @@ def test_ingest_hdf5_stack_token_resolves_member_shapes_from_file_when_not_in_to
     meta_res = client.get(f"/api/datasets/{created}/meta")
     assert meta_res.status_code == 200
     assert meta_res.json()["shape"] == [10, 1, 1, 11, 22, 1, 1]
+
+
+def test_ingest_inspect_rejects_malformed_paths_json(client) -> None:
+    res = client.post("/api/ingest/inspect", data={"paths_json": "{"})
+    assert res.status_code == 400
+    assert "invalid paths_json payload" in res.json()["detail"]
+
+
+def test_ingest_inspect_rejects_non_list_paths_json(client) -> None:
+    res = client.post("/api/ingest/inspect", data={"paths_json": json.dumps({"path": "/tmp/demo.h5"})})
+    assert res.status_code == 400
+    assert "json list" in res.json()["detail"].lower()
+
+
+def test_ingest_plan_missing_inspection_returns_404(client) -> None:
+    res = client.post(
+        "/api/ingest/plan",
+        json={
+            "inspection_id": "insp-missing",
+            "decision": {"grouping_mode": "separate", "tab_mode": "single_tab", "file_mappings": []},
+        },
+    )
+    assert res.status_code == 404
+    assert "inspection session not found" in res.json()["detail"].lower()
+
+
+def test_ingest_commit_missing_plan_returns_404(client) -> None:
+    res = client.post("/api/ingest/commit", json={"plan_id": "plan-missing"})
+    assert res.status_code == 404
+    assert "ingest plan not found" in res.json()["detail"].lower()
+
+
+def test_ingest_commit_persists_preset_suggestions_for_future_inspections(
+    client_factory, base_dataset, monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("MOBULA_DATA_DIR", str(tmp_path / "mobula-data"))
+    p1 = tmp_path / "preset_a.h5"
+    p2 = tmp_path / "preset_b.h5"
+    values = np.arange(12, dtype=np.float32).reshape(3, 4)
+    _write_h5(p1, values, "x,y")
+    _write_h5(p2, values + 10, "x,y")
+
+    with client_factory(base_dataset) as client:
+        first_inspect = client.post("/api/ingest/inspect", data={"paths_json": json.dumps([str(p1)])})
+        assert first_inspect.status_code == 200
+        first_payload = first_inspect.json()
+        raw_input_id = first_payload["files"][0]["raw_input"]["id"]
+
+        first_plan = client.post(
+            "/api/ingest/plan",
+            json={
+                "inspection_id": first_payload["inspection_id"],
+                "decision": {
+                    "grouping_mode": "separate",
+                    "tab_mode": "single_tab",
+                    "file_mappings": [{"raw_input_id": raw_input_id, "dims": ["x", "y"]}],
+                },
+            },
+        )
+        assert first_plan.status_code == 200
+        assert first_plan.json()["is_valid"] is True
+
+        commit_res = client.post("/api/ingest/commit", json={"plan_id": first_plan.json()["plan_id"]})
+        assert commit_res.status_code == 200
+
+        second_inspect = client.post("/api/ingest/inspect", data={"paths_json": json.dumps([str(p2)])})
+        assert second_inspect.status_code == 200
+        suggestions = second_inspect.json()["preset_suggestions"]
+        assert suggestions
+        assert suggestions[0]["default_dims"] == ["x", "y"]
+        assert suggestions[0]["default_grouping_mode"] == "separate"

@@ -1,9 +1,104 @@
+function extractPerfHeaders(res) {
+  return {
+    cache: res.headers.get("X-Mobula-Dataset-Cache"),
+    computeMs: res.headers.get("X-Mobula-Compute-Ms"),
+    loadMs: res.headers.get("X-Mobula-Dataset-Load-Ms"),
+    requestMs: res.headers.get("X-Mobula-Request-Ms"),
+    responseBytes: res.headers.get("X-Mobula-Response-Bytes"),
+    serializeMs: res.headers.get("X-Mobula-Serialize-Ms"),
+    serverTiming: res.headers.get("Server-Timing"),
+  };
+}
+
+const binaryTextDecoder = new TextDecoder();
+
+function decodeScalarPayload(buffer) {
+  if (!(buffer instanceof ArrayBuffer) || buffer.byteLength < 4) {
+    throw new Error("invalid Mobula scalar payload");
+  }
+  const view = new DataView(buffer);
+  const metadataLength = view.getUint32(0, true);
+  const metadataStart = 4;
+  const paddedMetadataLength = (metadataLength + 3) & ~3;
+  const valuesStart = metadataStart + paddedMetadataLength;
+  if (valuesStart > buffer.byteLength || (buffer.byteLength - valuesStart) % 4 !== 0) {
+    throw new Error("invalid Mobula scalar payload envelope");
+  }
+  const metadataBytes = new Uint8Array(buffer, metadataStart, metadataLength);
+  const metadata = JSON.parse(binaryTextDecoder.decode(metadataBytes));
+  return {
+    ...metadata,
+    values: new Float32Array(buffer, valuesStart),
+  };
+}
+
+function decodeRgbPayload(buffer) {
+  if (!(buffer instanceof ArrayBuffer) || buffer.byteLength < 4) {
+    throw new Error("invalid Mobula RGB payload");
+  }
+  const view = new DataView(buffer);
+  const metadataLength = view.getUint32(0, true);
+  const metadataStart = 4;
+  const paddedMetadataLength = (metadataLength + 3) & ~3;
+  const valuesStart = metadataStart + paddedMetadataLength;
+  if (valuesStart > buffer.byteLength || (buffer.byteLength - valuesStart) % 4 !== 0) {
+    throw new Error("invalid Mobula RGB payload envelope");
+  }
+  const metadataBytes = new Uint8Array(buffer, metadataStart, metadataLength);
+  const metadata = JSON.parse(binaryTextDecoder.decode(metadataBytes));
+  const valuesLength = Number.parseInt(metadata?.values_length, 10);
+  const channelCount = Number.parseInt(metadata?.values_channels, 10);
+  if (!Number.isFinite(valuesLength) || valuesLength < 0 || channelCount !== 3) {
+    throw new Error("invalid Mobula RGB payload metadata");
+  }
+  const values = new Float32Array(buffer, valuesStart);
+  if (values.length !== valuesLength * channelCount) {
+    throw new Error("invalid Mobula RGB payload data length");
+  }
+  return {
+    ...metadata,
+    values: {
+      r: values.subarray(0, valuesLength),
+      g: values.subarray(valuesLength, valuesLength * 2),
+      b: values.subarray(valuesLength * 2, valuesLength * 3),
+    },
+  };
+}
+
+function decodeBinaryPayload(buffer) {
+  if (!(buffer instanceof ArrayBuffer) || buffer.byteLength < 4) {
+    throw new Error("invalid Mobula payload");
+  }
+  const view = new DataView(buffer);
+  const metadataLength = view.getUint32(0, true);
+  const metadataStart = 4;
+  if (metadataStart + metadataLength > buffer.byteLength) {
+    throw new Error("invalid Mobula payload envelope");
+  }
+  const metadataBytes = new Uint8Array(buffer, metadataStart, metadataLength);
+  const metadata = JSON.parse(binaryTextDecoder.decode(metadataBytes));
+  const transport = String(metadata?.transport || "").trim().toLowerCase();
+  if (transport === "binary-v1") return decodeScalarPayload(buffer);
+  if (transport === "binary-rgb-v1") return decodeRgbPayload(buffer);
+  throw new Error(`unsupported Mobula transport: ${transport || "unknown"}`);
+}
+
 export async function fetchJson(url, options) {
-  const res = await fetch(url, options);
+  const opts = options ? { ...options } : {};
+  const onPerf = typeof opts.onPerf === "function" ? opts.onPerf : null;
+  delete opts.onPerf;
+
+  const fetchStartedAt = performance.now();
+  const res = await fetch(url, opts);
+  const fetchMs = performance.now() - fetchStartedAt;
+  const perfHeaders = extractPerfHeaders(res);
   if (!res.ok) {
     let detail = res.statusText;
+    let parseMs = 0;
     try {
+      const parseStartedAt = performance.now();
       const body = await res.json();
+      parseMs = performance.now() - parseStartedAt;
       const rawDetail = body.detail;
       if (Array.isArray(rawDetail)) {
         const first = rawDetail[0];
@@ -23,9 +118,86 @@ export async function fetchJson(url, options) {
     } catch (_) {
       // ignore parse failure
     }
+    if (onPerf) {
+      onPerf({
+        ...perfHeaders,
+        completedAt: performance.now(),
+        fetchMs,
+        ok: false,
+        parseMs,
+        status: res.status,
+        url,
+      });
+    }
     throw new Error(`${res.status}: ${detail}`);
   }
-  return res.json();
+  const parseStartedAt = performance.now();
+  const body = await res.json();
+  const parseMs = performance.now() - parseStartedAt;
+  if (onPerf) {
+    onPerf({
+      ...perfHeaders,
+      completedAt: performance.now(),
+      fetchMs,
+      ok: true,
+      parseMs,
+      status: res.status,
+      url,
+    });
+  }
+  return body;
+}
+
+export async function fetchBinaryPayload(url, options) {
+  const opts = options ? { ...options } : {};
+  const onPerf = typeof opts.onPerf === "function" ? opts.onPerf : null;
+  delete opts.onPerf;
+
+  const fetchStartedAt = performance.now();
+  const res = await fetch(url, opts);
+  const fetchMs = performance.now() - fetchStartedAt;
+  const perfHeaders = extractPerfHeaders(res);
+  if (!res.ok) {
+    let detail = res.statusText;
+    let parseMs = 0;
+    try {
+      const parseStartedAt = performance.now();
+      const body = await res.json();
+      parseMs = performance.now() - parseStartedAt;
+      detail = body?.detail ? String(body.detail) : detail;
+    } catch (_) {
+      // ignore parse failure
+    }
+    if (onPerf) {
+      onPerf({
+        ...perfHeaders,
+        completedAt: performance.now(),
+        fetchMs,
+        ok: false,
+        parseMs,
+        status: res.status,
+        url,
+      });
+    }
+    throw new Error(`${res.status}: ${detail}`);
+  }
+
+  const parseStartedAt = performance.now();
+  const buffer = await res.arrayBuffer();
+  const body = decodeBinaryPayload(buffer);
+  const parseMs = performance.now() - parseStartedAt;
+  if (onPerf) {
+    onPerf({
+      ...perfHeaders,
+      completedAt: performance.now(),
+      fetchMs,
+      ok: true,
+      parseMs,
+      status: res.status,
+      url,
+    });
+  }
+  return body;
 }
 
 export function createRequestBuilders(deps) {
@@ -94,6 +266,9 @@ export function createRequestBuilders(deps) {
     const rangeRawMax = Number.parseFloat(state.multiSpectralChannelRange?.max);
     const rangeMin = Number.isFinite(rangeRawMin) ? Math.max(0, Math.min(100, rangeRawMin)) : 0;
     const rangeMax = Number.isFinite(rangeRawMax) ? Math.max(0, Math.min(100, rangeRawMax)) : 100;
+    const computeBackend = ["auto", "cpu", "native", "cuda", "metal"].includes(state.multiSpectralComputeBackend)
+      ? state.multiSpectralComputeBackend
+      : "auto";
     const params = new URLSearchParams({
       sample: String(sampleOverride !== undefined ? sampleOverride : state.values.sample),
       pol: String(state.values.pol),
@@ -111,6 +286,7 @@ export function createRequestBuilders(deps) {
       intensity_scale: intensityScale,
       range_min: String(rangeMin),
       range_max: String(rangeMax),
+      compute_backend: computeBackend,
     });
     if (state.axisWindow.nu) {
       params.set("nu0", String(state.axisWindow.nu.start));

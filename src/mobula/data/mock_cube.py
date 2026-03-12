@@ -754,6 +754,99 @@ def _build_filamentary_time_signal(cfg: MockCubeConfig) -> np.ndarray:
     return base
 
 
+def describe_mock_dataset(dataset_id: str, cfg: MockCubeConfig | None = None) -> dict[str, object]:
+    cfg = cfg or MockCubeConfig()
+    nu_coords = (
+        _radio_frequency_axis(cfg.nu)
+        if cfg.model == "radio_galaxy"
+        else np.linspace(88.0e9, 112.0e9, cfg.nu, dtype=np.float64)
+    )
+    x = _physical_axis(-32.0, 32.0, cfg.x)
+    y = _physical_axis(-32.0, 32.0, cfg.y)
+    z = _physical_axis(-2.0, 2.0, cfg.z)
+    if cfg.model == "healpix_sky":
+        x = np.arange(cfg.x, dtype=np.float64)
+        y = np.array([0.0], dtype=np.float32)
+        z = np.array([0.0], dtype=np.float32)
+
+    coords = {
+        "sample": np.arange(cfg.sample, dtype=np.int32),
+        "pol": np.arange(cfg.pol, dtype=np.int32),
+        "t": np.linspace(0.0, 70.0, cfg.t, dtype=np.float32),
+        "nu": nu_coords,
+        "x": x,
+        "y": y,
+        "z": z,
+    }
+    units = {
+        "sample": "index",
+        "pol": "stokes-index",
+        "t": "s",
+        "nu": "Hz",
+        "x": "arcsec",
+        "y": "arcsec",
+        "z": "channel",
+    }
+    wcs: dict[str, object] = {"frame": "ICRS", "projection": "TAN", "note": "mock synthetic coordinate model"}
+    sphere = None
+    if cfg.model == "healpix_sky":
+        nside = _healpix_nside_from_npix(cfg.x)
+        wcs = {
+            "frame": "ICRS",
+            "projection": "HEALPIX",
+            "healpix_ordering": "ring",
+            "healpix_nside": int(nside) if nside is not None else None,
+            "note": "mock HEALPix sky model",
+        }
+        units["x"] = "healpix-pix"
+        units["y"] = "index"
+        units["z"] = "index"
+        sphere = {
+            "kind": "healpix",
+            "active": True,
+            "npix": int(cfg.x),
+            "nside": int(nside) if nside is not None else None,
+            "ordering": "ring",
+        }
+
+    provenance: dict[str, object] = {
+        "source": "generated",
+        "generator": "generate_mock_dataset",
+        "seed": cfg.seed,
+        "model": cfg.model,
+        "shape": [cfg.sample, cfg.pol, cfg.t, cfg.nu, cfg.x, cfg.y, cfg.z],
+        "pol_labels": ["I", "Q", "U", "V"][: cfg.pol],
+    }
+    if cfg.model == "radio_galaxy":
+        provenance["nu_range_hz"] = [float(np.min(nu_coords)), float(np.max(nu_coords))]
+        provenance["nu_spacing"] = "log"
+    if cfg.model == "healpix_sky":
+        provenance["healpix_ordering"] = "ring"
+
+    coords_summary: dict[str, dict[str, object]] = {}
+    for dim in CANONICAL_DIMS:
+        coord = np.asarray(coords[dim])
+        coords_summary[dim] = {
+            "size": int(coord.shape[0]),
+            "unit": units[dim],
+            "min": float(coord.min()) if coord.size else None,
+            "max": float(coord.max()) if coord.size else None,
+        }
+
+    return {
+        "data_id": dataset_id,
+        "dims": list(CANONICAL_DIMS),
+        "shape": [cfg.sample, cfg.pol, cfg.t, cfg.nu, cfg.x, cfg.y, cfg.z],
+        "coords": coords_summary,
+        "intensity_unit": "arb",
+        "wcs": wcs,
+        "provenance": provenance,
+        "uncertainty": {"type": "sample-axis", "sample_dim": "sample", "weights": None},
+        "pol_labels": ["I", "Q", "U", "V"][: cfg.pol],
+        "sphere": sphere,
+    }
+
+
 def generate_mock_dataset(
     dataset_id: str = "mock-7d-cube",
     cfg: MockCubeConfig | None = None,
@@ -863,7 +956,7 @@ def generate_mock_dataset(
         "y": "arcsec",
         "z": "channel",
     }
-    wcs = {"frame": "ICRS", "projection": "TAN", "note": "mock synthetic coordinate model"}
+    wcs: dict[str, object] = {"frame": "ICRS", "projection": "TAN", "note": "mock synthetic coordinate model"}
     if cfg.model == "healpix_sky":
         nside = _healpix_nside_from_npix(cfg.x)
         wcs = {
@@ -877,7 +970,7 @@ def generate_mock_dataset(
         units["y"] = "index"
         units["z"] = "index"
 
-    provenance = {
+    provenance: dict[str, object] = {
         "source": "generated",
         "generator": "generate_mock_dataset",
         "seed": cfg.seed,

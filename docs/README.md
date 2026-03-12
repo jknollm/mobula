@@ -13,8 +13,12 @@ This project ships a FastAPI backend and a browser-based viewer for local high-d
 ## Reference
 
 - [API Reference](./API.md)
+- [Acceleration Implementation Plan](./ACCELERATION_IMPLEMENTATION_PLAN.md)
 - [Data Loading and Axis Mapping](./DATA_LOADING.md)
 - [Data Ingestion Implementation Plan](./DATA_INGESTION_PLAN.md)
+- [Expected Behavior](./EXPECTED_BEHAVIOR.md)
+- [Performance Baseline](./PERFORMANCE_BASELINE.md)
+- [Refactoring Plan](./REFACTORING_PLAN.md)
 - [Architecture](./ARCHITECTURE.md)
 - [Development Guide](./DEVELOPMENT.md)
 

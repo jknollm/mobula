@@ -6,7 +6,7 @@
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install -e ".[dev,native]"
 ```
 
 Run app:
@@ -22,6 +22,20 @@ Run all tests:
 ```bash
 source .venv/bin/activate
 pytest
+```
+
+Run browser smoke coverage:
+
+```bash
+pytest tests/browser -q
+```
+
+Run lint, format, and targeted type checks:
+
+```bash
+ruff check src/mobula/main.py src/mobula/service/view_service.py src/mobula/service/views src/mobula/service/ingest src/mobula/service/ingest_service.py tests/browser/test_smoke.py tests/conftest.py tests/test_api_endpoints.py scripts/generate_brand_banners.py
+ruff format --check src/mobula/main.py src/mobula/service/view_service.py src/mobula/service/views src/mobula/service/ingest src/mobula/service/ingest_service.py tests/browser/test_smoke.py tests/conftest.py tests/test_api_endpoints.py scripts/generate_brand_banners.py
+mypy src/mobula/data/schema.py src/mobula/service/api_models.py src/mobula/service/api_utils.py
 ```
 
 Run a focused test module:
@@ -58,19 +72,47 @@ PYTHONPATH=src python scripts/export_mock_files.py
 
 ```bash
 source .venv/bin/activate
-python scripts/benchmark.py --dataset movie-2d-pol-hd --n 40 --warmup 10
+python scripts/benchmark.py --dataset movie-2d-pol-hd --n 40 --warmup 10 --response-format json
+python scripts/benchmark.py --dataset movie-2d-pol-hd --n 40 --warmup 10 --response-format binary
 ```
 
 Requires app to be running.
 
+### Inspect browser perf metrics
+
+Run the app and open:
+
+```text
+http://127.0.0.1:8000/?perf=1
+```
+
+This enables the dev-only perf readout and `window.__mobulaPerf`.
+
+For viewer-state inspection in browser tests or manual debugging, use:
+
+```text
+window.__mobulaDebug.getStateSnapshot()
+```
+
 ## Project Layout
 
 - `src/mobula/`: backend application and data/model logic
-- `src/mobula/static/`: browser UI assets packaged with the Python distribution
-- `static/`: repo-level static fallback used in local development
+- `src/mobula/static/`: canonical browser UI asset tree
 - `tests/`: pytest coverage for API, loaders, and registry
 - `scripts/`: utility scripts for benchmark and dataset generation
 - `data/`: generated dataset artifacts
+
+## Source Of Truth Policy
+
+- Dependencies live in `pyproject.toml`.
+- `requirements.txt` is a secondary compatibility wrapper for local tooling; do not edit it as the primary dependency definition.
+- Frontend assets live in `src/mobula/static/`.
+
+## Change Checklist
+
+- Update [EXPECTED_BEHAVIOR](./EXPECTED_BEHAVIOR.md) when user-visible behavior changes.
+- Update [ARCHITECTURE](./ARCHITECTURE.md) when module ownership or data flow changes materially.
+- Add a benchmark, metric, or note to [PERFORMANCE_BASELINE](./PERFORMANCE_BASELINE.md) when changing performance-sensitive paths.
 
 ## Current Constraints
 

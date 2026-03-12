@@ -4,6 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>mobula</title>
+    <link rel="shortcut icon" href="/favicon.ico?v=20260307b" />
+    <link rel="icon" type="image/png" href="/static/assets/mobula_logo.png?v=20260307a" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -78,13 +80,14 @@
             </div>
           </div>
           <label>
-            Backend
+            Render Backend
             <select id="sliceBackendSelect">
               <option value="auto" selected>Auto (GPU if beneficial)</option>
               <option value="gpu">GPU (WebGL2)</option>
               <option value="cpu">CPU</option>
             </select>
           </label>
+          <div id="renderBackendStatus" class="backendStatus" aria-live="polite"></div>
           <div class="toggleRow">
             <span>Flux Scale</span>
             <div class="miniGroup">
@@ -146,9 +149,12 @@
                 <option value="2">2 fps</option>
                 <option value="4">4 fps</option>
                 <option value="7">7 fps</option>
-                <option value="10">10 fps</option>
+                <option value="10" selected>10 fps</option>
                 <option value="15">15 fps</option>
                 <option value="20">20 fps</option>
+                <option value="24">24 fps</option>
+                <option value="30">30 fps</option>
+                <option value="45">45 fps</option>
               </select>
             </label>
           </div>
@@ -385,6 +391,17 @@
             <button id="multiSpectralBtn" class="tinyBtn" type="button">Off</button>
           </div>
           <div id="spectralMapControls" class="spectralMapControls">
+            <label>
+              Compute Backend
+              <select id="computeBackendSelect">
+                <option value="auto" selected>Auto</option>
+                <option value="native">Native Accelerated</option>
+                <option value="cpu">CPU Reference</option>
+                <option value="cuda">CUDA</option>
+                <option value="metal">Metal</option>
+              </select>
+            </label>
+            <div id="computeBackendStatus" class="backendStatus" aria-live="polite"></div>
             <div class="spectralMapAxisRow">
               <span>Frequency Axis</span>
               <button id="msNuAxisLogBtn" class="tinyBtn" type="button" aria-pressed="false">Log</button>
@@ -513,6 +530,7 @@
         <h2 id="metricsTitle">Inspect</h2>
         <p id="metricsHint">Click for point or drag for area.</p>
         <div id="hoverReadout" class="hoverReadout">Move cursor over the image to inspect coordinates and flux.</div>
+        <pre id="perfReadout" hidden>Performance metrics disabled. Add ?perf=1 to enable.</pre>
         <div id="timeProfileBlock">
           <h2>Time Flux Profile</h2>
           <canvas id="timeProfileCanvas" class="profileCanvas" width="300" height="180"></canvas>

@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,native]"
+
+      - name: Install Chromium for browser smoke tests
+        run: python -m playwright install --with-deps chromium
+
+      - name: Lint
+        run: ruff check src/mobula/main.py src/mobula/service/view_service.py src/mobula/service/views src/mobula/service/ingest src/mobula/service/ingest_service.py tests/browser/test_smoke.py tests/conftest.py tests/test_api_endpoints.py scripts/generate_brand_banners.py
+
+      - name: Format check
+        run: ruff format --check src/mobula/main.py src/mobula/service/view_service.py src/mobula/service/views src/mobula/service/ingest src/mobula/service/ingest_service.py tests/browser/test_smoke.py tests/conftest.py tests/test_api_endpoints.py scripts/generate_brand_banners.py
+
+      - name: Type check
+        run: mypy src/mobula/data/schema.py src/mobula/service/api_models.py src/mobula/service/api_utils.py
+
+      - name: Python tests
+        run: pytest -q tests --ignore=tests/browser
+
+      - name: Browser smoke tests
+        run: pytest -q tests/browser

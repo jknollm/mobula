@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from contextlib import contextmanager
+from time import perf_counter
 
 import numpy as np
 import pytest
 from fastapi import FastAPI
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.testclient import TestClient
 
 from mobula.data.mock_cube import MockCubeConfig, generate_mock_dataset
@@ -50,6 +52,19 @@ def build_client(*datasets: CubeDataset):
         registry.add(ds)
 
     app = FastAPI()
+    app.add_middleware(GZipMiddleware, minimum_size=2048)
+
+    @app.middleware("http")
+    async def add_request_timing(request, call_next):
+        started = perf_counter()
+        response = await call_next(request)
+        total_ms = (perf_counter() - started) * 1000.0
+        response.headers["X-Mobula-Request-Ms"] = f"{total_ms:.2f}"
+        existing = response.headers.get("Server-Timing")
+        total_metric = f"total;dur={total_ms:.2f}"
+        response.headers["Server-Timing"] = f"{existing}, {total_metric}" if existing else total_metric
+        return response
+
     app.include_router(build_router(registry))
     with TestClient(app) as client:
         yield client

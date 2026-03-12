@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import concurrent.futures
 import json
 from dataclasses import asdict
 from pathlib import Path
+import time
 
 import numpy as np
 import pytest
@@ -72,6 +74,39 @@ def test_lazy_dataset_builder_materializes_once() -> None:
     assert ds1.data_id == "lazy-tiny"
     assert ds2.data_id == "lazy-tiny"
     assert builder_calls["n"] == 1
+
+
+def test_concurrent_lazy_dataset_requests_share_single_build() -> None:
+    registry = DatasetRegistry()
+    builder_calls = {"n": 0}
+
+    def build() -> CubeDataset:
+        builder_calls["n"] += 1
+        time.sleep(0.05)
+        return _tiny_dataset("lazy-concurrent")
+
+    registry._lazy_datasets = {  # noqa: SLF001
+        "lazy-concurrent": (
+            DatasetSummary(
+                data_id="lazy-concurrent",
+                dims=("sample", "pol", "t", "nu", "x", "y", "z"),
+                shape=(2, 3, 2, 3, 4, 3, 2),
+                intensity_unit="arb",
+                source="test-lazy",
+            ),
+            build,
+        )
+    }
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(registry.get_with_stats, "lazy-concurrent") for _ in range(2)]
+        results = [future.result(timeout=2.0) for future in futures]
+
+    assert builder_calls["n"] == 1
+    datasets = [result[0] for result in results]
+    metrics = [result[1] for result in results]
+    assert all(ds.data_id == "lazy-concurrent" for ds in datasets)
+    assert {metric["cache"] for metric in metrics} == {"hit", "miss"}
 
 
 def test_ensure_default_datasets_is_idempotent() -> None:

@@ -6,10 +6,12 @@ import subprocess
 import tempfile
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 
+from mobula.service.acceleration.capabilities import probe_compute_capabilities
 from mobula.service.api_models import LoadLocalRequest, PickLocalPathRequest
-from mobula.service.api_utils import _coords_summary, _dim_size, _safe_dataset, _sphere_summary
+from mobula.service.api_utils import _coords_summary, _dim_size, _safe_dataset, _safe_dataset_with_perf, _sphere_summary
+from mobula.service.perf import timed_json_response
 from mobula.service.registry import DatasetRegistry
 
 SUPPORTED_LOCAL_DATASET_EXTS = {".h5", ".hdf5", ".fits", ".fit", ".fts", ".zarr"}
@@ -136,6 +138,14 @@ def _register_core_routes(router: APIRouter, registry: DatasetRegistry) -> None:
             ]
         }
 
+    @router.get("/acceleration/capabilities")
+    def acceleration_capabilities() -> dict[str, Any]:
+        return {
+            "compute": probe_compute_capabilities(),
+            "compute_backend_modes": ["auto", "cpu", "native", "cuda", "metal"],
+            "render_backend_modes": ["auto", "gpu", "cpu"],
+        }
+
     @router.post("/load-local")
     def load_local(req: LoadLocalRequest) -> dict[str, Any]:
         p = Path(req.path).expanduser().resolve()
@@ -246,20 +256,31 @@ def _register_core_routes(router: APIRouter, registry: DatasetRegistry) -> None:
         }
 
     @router.get("/datasets/{data_id}/meta")
-    def dataset_meta(data_id: str) -> dict[str, Any]:
-        ds = _safe_dataset(registry, data_id)
-        pol_labels = ds.provenance.get("pol_labels")
-        if pol_labels is None and "pol" in ds.dims and _dim_size(ds, "pol") == 4:
-            pol_labels = ["I", "Q", "U", "V"]
-        return {
-            "data_id": ds.data_id,
-            "dims": list(ds.dims),
-            "shape": list(ds.shape),
-            "coords": _coords_summary(ds),
-            "intensity_unit": ds.intensity_unit,
-            "wcs": ds.wcs,
-            "provenance": ds.provenance,
-            "uncertainty": ds.uncertainty,
-            "pol_labels": pol_labels,
-            "sphere": _sphere_summary(ds),
-        }
+    def dataset_meta(data_id: str) -> Response:
+        lazy_meta = registry.lazy_metadata(data_id)
+        if lazy_meta is not None:
+            return timed_json_response(
+                lambda: lazy_meta,
+                dataset_metrics={"cache": "summary", "load_ms": 0.0},
+            )
+
+        ds, dataset_metrics = _safe_dataset_with_perf(registry, data_id)
+
+        def build_payload() -> dict[str, Any]:
+            pol_labels = ds.provenance.get("pol_labels")
+            if pol_labels is None and "pol" in ds.dims and _dim_size(ds, "pol") == 4:
+                pol_labels = ["I", "Q", "U", "V"]
+            return {
+                "data_id": ds.data_id,
+                "dims": list(ds.dims),
+                "shape": list(ds.shape),
+                "coords": _coords_summary(ds),
+                "intensity_unit": ds.intensity_unit,
+                "wcs": ds.wcs,
+                "provenance": ds.provenance,
+                "uncertainty": ds.uncertainty,
+                "pol_labels": pol_labels,
+                "sphere": _sphere_summary(ds),
+            }
+
+        return timed_json_response(build_payload, dataset_metrics=dataset_metrics)

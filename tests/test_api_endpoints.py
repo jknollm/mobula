@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import io
-from pathlib import Path
+import json
 import subprocess
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -10,7 +11,7 @@ from astropy.io import fits
 
 from mobula.data.mock_cube import MockCubeConfig, generate_mock_dataset
 from mobula.data.schema import CubeDataset
-from mobula.service import api_routes_core, api_routes_views, view_service
+from mobula.service import api_routes_core, api_routes_views
 
 
 def _data_id(base_dataset) -> str:
@@ -52,6 +53,7 @@ def test_datasets_lists_registered_dataset(client, base_dataset) -> None:
 def test_meta_contains_expected_fields(client, base_dataset) -> None:
     res = client.get(f"/api/datasets/{_data_id(base_dataset)}/meta")
     assert res.status_code == 200
+    _assert_perf_headers(res)
     body = res.json()
     assert body["data_id"] == _data_id(base_dataset)
     assert body["dims"] == list(base_dataset.dims)
@@ -60,6 +62,23 @@ def test_meta_contains_expected_fields(client, base_dataset) -> None:
     assert body["coords"]["x"]["size"] == base_dataset.shape[4]
     assert body["pol_labels"] == ["I", "Q", "U", "V"]
     assert body["sphere"] is None
+
+
+def test_lazy_demo_meta_does_not_materialize_dataset(client) -> None:
+    before = client.get("/api/datasets").json()["datasets"]
+    before_source = next(ds["source"] for ds in before if ds["data_id"] == "movie-2d-pol-hd")
+    assert before_source == "demo-generated-lazy"
+
+    res = client.get("/api/datasets/movie-2d-pol-hd/meta")
+    assert res.status_code == 200
+    assert res.headers["X-Mobula-Dataset-Cache"] == "summary"
+    body = res.json()
+    assert body["data_id"] == "movie-2d-pol-hd"
+    assert body["shape"] == [4, 4, 120, 1, 144, 144, 1]
+
+    after = client.get("/api/datasets").json()["datasets"]
+    after_source = next(ds["source"] for ds in after if ds["data_id"] == "movie-2d-pol-hd")
+    assert after_source == "demo-generated-lazy"
 
 
 def test_meta_reports_healpix_summary(client_factory) -> None:
@@ -78,6 +97,79 @@ def test_meta_reports_healpix_summary(client_factory) -> None:
             "nside": 1,
             "ordering": "nested",
         }
+
+
+def _assert_perf_headers(res) -> None:
+    assert float(res.headers["X-Mobula-Compute-Ms"]) >= 0.0
+    assert float(res.headers["X-Mobula-Serialize-Ms"]) >= 0.0
+    assert float(res.headers["X-Mobula-Request-Ms"]) >= 0.0
+    assert int(res.headers["X-Mobula-Response-Bytes"]) > 0
+    assert res.headers["X-Mobula-Dataset-Cache"] == "hit"
+    assert float(res.headers["X-Mobula-Dataset-Load-Ms"]) >= 0.0
+    server_timing = res.headers["Server-Timing"]
+    assert "compute;dur=" in server_timing
+    assert "serialize;dur=" in server_timing
+    assert "total;dur=" in server_timing
+
+
+def _decode_binary_scalar_payload(body: bytes) -> dict[str, object]:
+    assert len(body) >= 4
+    metadata_length = int.from_bytes(body[:4], byteorder="little", signed=False)
+    metadata_start = 4
+    padded_length = (metadata_length + 3) & ~3
+    values_start = metadata_start + padded_length
+    metadata = json.loads(body[metadata_start : metadata_start + metadata_length].decode("utf-8"))
+    values = np.frombuffer(body, dtype=np.float32, count=-1, offset=values_start)
+    return {**metadata, "values": values}
+
+
+def _decode_binary_rgb_payload(body: bytes) -> dict[str, object]:
+    assert len(body) >= 4
+    metadata_length = int.from_bytes(body[:4], byteorder="little", signed=False)
+    metadata_start = 4
+    padded_length = (metadata_length + 3) & ~3
+    values_start = metadata_start + padded_length
+    metadata = json.loads(body[metadata_start : metadata_start + metadata_length].decode("utf-8"))
+    values = np.frombuffer(body, dtype=np.float32, count=-1, offset=values_start)
+    values_length = int(metadata["values_length"])
+    assert int(metadata["values_channels"]) == 3
+    assert values.size == values_length * 3
+    return {
+        **metadata,
+        "values": {
+            "r": values[:values_length],
+            "g": values[values_length : values_length * 2],
+            "b": values[values_length * 2 : values_length * 3],
+        },
+    }
+
+
+def test_view_routes_include_perf_headers(client, base_dataset) -> None:
+    data_id = _data_id(base_dataset)
+    slice_res = client.get(
+        f"/api/datasets/{data_id}/slice",
+        params={"sample": 0, "pol": 0, "t": 0, "nu": 0, "z": 0, "sample_mode": "single"},
+    )
+    assert slice_res.status_code == 200
+    _assert_perf_headers(slice_res)
+
+    roi_res = client.post(
+        f"/api/datasets/{data_id}/roi-stats",
+        json={"x0": 1, "x1": 4, "y0": 2, "y1": 5, "pol": 0, "t": 0, "nu": 0, "z": 0},
+    )
+    assert roi_res.status_code == 200
+    _assert_perf_headers(roi_res)
+
+
+def test_large_json_view_responses_can_be_gzipped(client, base_dataset) -> None:
+    data_id = _data_id(base_dataset)
+    res = client.get(
+        f"/api/datasets/{data_id}/volume",
+        params={"sample": 0, "pol": 0, "t": 0, "nu": 0, "sample_mode": "single"},
+        headers={"Accept-Encoding": "gzip"},
+    )
+    assert res.status_code == 200
+    assert res.headers.get("Content-Encoding") == "gzip"
 
 
 def test_healpix_sky_model_meta_detected(client_factory) -> None:
@@ -330,6 +422,31 @@ def test_slice_default_shape_and_stats(client, base_dataset) -> None:
     assert body["sampling_step"] == [1, 1]
 
 
+def test_slice_binary_response_matches_json_payload(client, base_dataset) -> None:
+    params = {"sample": 1, "pol": 2, "t": 3, "nu": 4, "z": 1, "sample_mode": "single"}
+    data_id = _data_id(base_dataset)
+    json_res = client.get(f"/api/datasets/{data_id}/slice", params=params)
+    assert json_res.status_code == 200
+    binary_res = client.get(f"/api/datasets/{data_id}/slice", params={**params, "response_format": "binary"})
+    assert binary_res.status_code == 200
+    assert binary_res.headers["X-Mobula-Transport"] == "binary-v1"
+    assert binary_res.headers["X-Mobula-Values-Dtype"] == "float32"
+    assert binary_res.headers["content-type"].startswith("application/vnd.mobula.scalar-array")
+    _assert_perf_headers(binary_res)
+
+    json_body = json_res.json()
+    binary_body = _decode_binary_scalar_payload(binary_res.content)
+    assert binary_body["transport"] == "binary-v1"
+    assert binary_body["values_dtype"] == "float32"
+    assert binary_body["values_length"] == len(json_body["values"])
+    assert binary_body["shape"] == json_body["shape"]
+    assert binary_body["full_shape"] == json_body["full_shape"]
+    assert binary_body["sampling_step"] == json_body["sampling_step"]
+    assert binary_body["selected_indices"] == json_body["selected_indices"]
+    assert binary_body["selected_coords"] == json_body["selected_coords"]
+    np.testing.assert_allclose(binary_body["values"], np.asarray(json_body["values"], dtype=np.float32))
+
+
 def test_slice_rejects_invalid_sample_mode(client, base_dataset) -> None:
     res = client.get(f"/api/datasets/{_data_id(base_dataset)}/slice", params={"sample_mode": "median"})
     assert res.status_code == 400
@@ -402,6 +519,13 @@ def test_slice_rejects_projection_of_plane_dimension(client, base_dataset) -> No
 def test_slice_query_validation_for_max_pixels(client, base_dataset) -> None:
     res = client.get(f"/api/datasets/{_data_id(base_dataset)}/slice", params={"max_pixels": 0})
     assert res.status_code == 422
+
+
+@pytest.mark.parametrize("path", ["slice", "volume", "multispectral"])
+def test_view_rejects_unknown_response_format(client, base_dataset, path: str) -> None:
+    res = client.get(f"/api/datasets/{_data_id(base_dataset)}/{path}", params={"response_format": "protobuf"})
+    assert res.status_code == 400
+    assert "response_format" in res.json()["detail"]
 
 
 def test_export_cutout_returns_fits_with_metadata(client, base_dataset) -> None:
@@ -784,7 +908,9 @@ def test_save_render_movie_rejects_invalid_frame_payload(client, base_dataset, t
     assert "invalid frame payload" in res.json()["detail"]
 
 
-def test_export_cutout_save_healpix_pixel_indices_to_fits_is_temporarily_disabled(client_factory, tmp_path: Path) -> None:
+def test_export_cutout_save_healpix_pixel_indices_to_fits_is_temporarily_disabled(
+    client_factory, tmp_path: Path
+) -> None:
     ds = generate_mock_dataset(
         "healpix-export-fits",
         MockCubeConfig(sample=2, pol=1, t=4, nu=5, x=192, y=1, z=1, seed=71, model="healpix_sky"),
@@ -858,6 +984,29 @@ def test_volume_supports_all_sample_modes(client, base_dataset, mode: str) -> No
     assert body["sample_mode"] == mode
     assert body["shape"] == [base_dataset.shape[4], base_dataset.shape[5], base_dataset.shape[6]]
     assert len(body["values"]) == base_dataset.shape[4] * base_dataset.shape[5] * base_dataset.shape[6]
+
+
+def test_volume_binary_response_matches_json_payload(client, base_dataset) -> None:
+    params = {"sample": 1, "pol": 2, "t": 3, "nu": 4, "sample_mode": "single"}
+    data_id = _data_id(base_dataset)
+    json_res = client.get(f"/api/datasets/{data_id}/volume", params=params)
+    assert json_res.status_code == 200
+    binary_res = client.get(f"/api/datasets/{data_id}/volume", params={**params, "response_format": "binary"})
+    assert binary_res.status_code == 200
+    assert binary_res.headers["X-Mobula-Transport"] == "binary-v1"
+    assert binary_res.headers["X-Mobula-Values-Dtype"] == "float32"
+    assert binary_res.headers["content-type"].startswith("application/vnd.mobula.scalar-array")
+    _assert_perf_headers(binary_res)
+
+    json_body = json_res.json()
+    binary_body = _decode_binary_scalar_payload(binary_res.content)
+    assert binary_body["transport"] == "binary-v1"
+    assert binary_body["values_dtype"] == "float32"
+    assert binary_body["values_length"] == len(json_body["values"])
+    assert binary_body["shape"] == json_body["shape"]
+    assert binary_body["selected_indices"] == json_body["selected_indices"]
+    assert binary_body["selected_coords"] == json_body["selected_coords"]
+    np.testing.assert_allclose(binary_body["values"], np.asarray(json_body["values"], dtype=np.float32))
 
 
 def test_volume_rejects_invalid_sample_mode(client, base_dataset) -> None:
@@ -1149,6 +1298,51 @@ def test_multispectral_success(client, base_dataset) -> None:
     assert body["bands"]["brightness_mode"] == "total_flux"
 
 
+def test_multispectral_binary_response_matches_json_payload(client, base_dataset) -> None:
+    params = {
+        "sample": 1,
+        "pol": 2,
+        "t": 3,
+        "sample_mode": "single",
+        "plane_x": "x",
+        "plane_y": "y",
+        "deslope": 0.75,
+        "normalize_spectrum": True,
+        "normalize_spectrum_boost": 1.5,
+        "intensity_scale": "sqrt",
+        "range_min": 10,
+        "range_max": 90,
+    }
+    data_id = _data_id(base_dataset)
+    json_res = client.get(f"/api/datasets/{data_id}/multispectral", params=params)
+    assert json_res.status_code == 200
+    binary_res = client.get(f"/api/datasets/{data_id}/multispectral", params={**params, "response_format": "binary"})
+    assert binary_res.status_code == 200
+    assert binary_res.headers["X-Mobula-Transport"] == "binary-rgb-v1"
+    assert binary_res.headers["X-Mobula-Values-Dtype"] == "float32"
+    assert binary_res.headers["content-type"].startswith("application/vnd.mobula.rgb-array")
+    _assert_perf_headers(binary_res)
+
+    json_body = json_res.json()
+    binary_body = _decode_binary_rgb_payload(binary_res.content)
+    assert binary_body["transport"] == "binary-rgb-v1"
+    assert binary_body["values_dtype"] == "float32"
+    assert binary_body["values_length"] == len(json_body["values"]["r"])
+    assert binary_body["values_channels"] == 3
+    assert binary_body["shape"] == json_body["shape"]
+    assert binary_body["full_shape"] == json_body["full_shape"]
+    assert binary_body["sampling_step"] == json_body["sampling_step"]
+    assert binary_body["selected_indices"] == json_body["selected_indices"]
+    for key, value in json_body["bands"].items():
+        if key == "stage_timings_ms":
+            assert key in binary_body["bands"]
+            continue
+        assert binary_body["bands"][key] == value
+    np.testing.assert_allclose(binary_body["values"]["r"], np.asarray(json_body["values"]["r"], dtype=np.float32))
+    np.testing.assert_allclose(binary_body["values"]["g"], np.asarray(json_body["values"]["g"], dtype=np.float32))
+    np.testing.assert_allclose(binary_body["values"]["b"], np.asarray(json_body["values"]["b"], dtype=np.float32))
+
+
 def test_multispectral_downsamples(client, base_dataset) -> None:
     res = client.get(f"/api/datasets/{_data_id(base_dataset)}/multispectral", params={"max_pixels": 12})
     assert res.status_code == 200
@@ -1203,25 +1397,46 @@ def test_multispectral_accepts_compute_backend_cpu(client, base_dataset) -> None
     assert res.status_code == 200
     body = res.json()
     assert body["bands"]["compute_backend_requested"] == "cpu"
+    assert body["bands"]["compute_backend_used"] == "cpu"
     assert body["bands"]["compute_backend"] == "cpu"
 
 
-def test_multispectral_gpu_backend_unavailable_returns_400(client, base_dataset, monkeypatch) -> None:
-    real_convert = view_service.convert_mf_to_rgb_new
+def test_multispectral_unavailable_accelerated_backend_falls_back_to_cpu(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"compute_backend": "cuda"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["bands"]["compute_backend_requested"] == "cuda"
+    assert body["bands"]["compute_backend_used"] == "cpu"
+    assert "fallback" in str(body["bands"]["fallback_reason"]).lower()
+
+
+def test_multispectral_preview_downsamples_before_rgb_conversion(client, base_dataset, monkeypatch) -> None:
+    from mobula.service.acceleration import multispectral_cpu
+
+    real_convert = multispectral_cpu.convert_mf_to_rgb_new
+    seen_shapes: list[tuple[int, ...]] = []
 
     def fake_convert(*args, **kwargs):
-        if kwargs.get("backend") == "gpu":
-            raise RuntimeError("GPU unavailable")
+        seen_shapes.append(np.asarray(args[0]).shape)
         return real_convert(*args, **kwargs)
 
-    monkeypatch.setattr(view_service, "convert_mf_to_rgb_new", fake_convert)
+    monkeypatch.setattr(multispectral_cpu, "convert_mf_to_rgb_new", fake_convert)
 
     res = client.get(
         f"/api/datasets/{_data_id(base_dataset)}/multispectral",
-        params={"compute_backend": "gpu"},
+        params={"compute_backend": "cpu", "max_pixels": 12},
     )
-    assert res.status_code == 400
-    assert "gpu backend unavailable" in res.json()["detail"].lower()
+    assert res.status_code == 200
+    body = res.json()
+    assert seen_shapes
+    expected_height = body["shape"][0]
+    expected_width = body["shape"][1]
+    assert seen_shapes[-1] == (expected_height, expected_width, base_dataset.shape[3])
+    assert body["bands"]["preview_active"] is True
+    assert body["bands"]["stage_timings_ms"]["preview_downsampling"] >= 0.0
 
 
 def test_multispectral_accepts_normalize_spectrum(client, base_dataset) -> None:
@@ -1322,6 +1537,16 @@ def test_multispectral_rejects_invalid_compute_backend(client, base_dataset) -> 
     )
     assert res.status_code == 400
     assert "compute_backend" in res.json()["detail"]
+
+
+def test_acceleration_capabilities_endpoint(client) -> None:
+    res = client.get("/api/acceleration/capabilities")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["compute"]["backends"]["cpu"]["available"] is True
+    assert "native_backend" in body["compute"]
+    assert "cuda" in body["compute_backend_modes"]
+    assert "metal" in body["compute_backend_modes"]
 
 
 def test_multispectral_rejects_too_narrow_nu_window(client, base_dataset) -> None:

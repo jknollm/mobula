@@ -4,12 +4,13 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock
+from time import perf_counter
 
 from mobula.data.loaders import load_by_extension, pad_dataset_to_canonical
-from mobula.data.mock_cube import MockCubeConfig, generate_mock_dataset
-from mobula.paths import default_seeded_manifest_path
+from mobula.data.mock_cube import MockCubeConfig, describe_mock_dataset, generate_mock_dataset
 from mobula.data.schema import CubeDataset
+from mobula.paths import default_seeded_manifest_path
 
 
 @dataclass(slots=True)
@@ -26,6 +27,12 @@ class DemoDatasetSpec:
     data_id: str
     cfg: MockCubeConfig
     preload: bool = False
+
+
+@dataclass(slots=True)
+class _PendingDatasetLoad:
+    event: Event
+    error: Exception | None = None
 
 
 DEMO_DATASETS: tuple[DemoDatasetSpec, ...] = (
@@ -57,6 +64,8 @@ class DatasetRegistry:
         self._lock = RLock()
         self._datasets: dict[str, CubeDataset] = {}
         self._lazy_datasets: dict[str, tuple[DatasetSummary, Callable[[], CubeDataset]]] = {}
+        self._lazy_metadata: dict[str, Callable[[], dict[str, object]]] = {}
+        self._pending_loads: dict[str, _PendingDatasetLoad] = {}
         default_manifest = default_seeded_manifest_path()
         self._seeded_manifest_path = Path(seeded_manifest_path).expanduser().resolve() if seeded_manifest_path else default_manifest
         self._register_lazy_defaults()
@@ -68,24 +77,64 @@ class DatasetRegistry:
             self._datasets[dataset.data_id] = dataset
 
     def get(self, data_id: str) -> CubeDataset:
+        dataset, _ = self.get_with_stats(data_id)
+        return dataset
+
+    def get_with_stats(self, data_id: str) -> tuple[CubeDataset, dict[str, object]]:
         lazy_builder: Callable[[], CubeDataset] | None = None
+        pending: _PendingDatasetLoad | None = None
+        should_build = False
         with self._lock:
             ds = self._datasets.get(data_id)
             if ds is not None:
-                return ds
+                return ds, {"cache": "hit", "load_ms": 0.0}
             lazy = self._lazy_datasets.get(data_id)
             if lazy is not None:
                 _, lazy_builder = lazy
+                pending = self._pending_loads.get(data_id)
+                if pending is None:
+                    pending = _PendingDatasetLoad(event=Event())
+                    self._pending_loads[data_id] = pending
+                    should_build = True
 
-        if lazy_builder is not None:
-            dataset = lazy_builder()
-            dataset.validate()
+        if lazy_builder is not None and should_build:
+            started = perf_counter()
+            try:
+                dataset = lazy_builder()
+                dataset.validate()
+                load_ms = (perf_counter() - started) * 1000.0
+            except Exception as exc:
+                with self._lock:
+                    current_pending = self._pending_loads.get(data_id)
+                    if current_pending is not None:
+                        current_pending.error = exc
+                        current_pending.event.set()
+                        self._pending_loads.pop(data_id, None)
+                raise
+
             with self._lock:
                 existing = self._datasets.get(data_id)
+                current_pending = self._pending_loads.get(data_id)
                 if existing is not None:
-                    return existing
+                    if current_pending is not None:
+                        current_pending.event.set()
+                        self._pending_loads.pop(data_id, None)
+                    return existing, {"cache": "hit", "load_ms": 0.0}
                 self._datasets[data_id] = dataset
-                return dataset
+                if current_pending is not None:
+                    current_pending.event.set()
+                    self._pending_loads.pop(data_id, None)
+                return dataset, {"cache": "miss", "load_ms": load_ms}
+
+        if lazy_builder is not None and pending is not None:
+            pending.event.wait()
+            with self._lock:
+                ds = self._datasets.get(data_id)
+                if ds is not None:
+                    return ds, {"cache": "hit", "load_ms": 0.0}
+                err = pending.error
+            if err is not None:
+                raise err
 
         raise KeyError(f"dataset '{data_id}' not found")
 
@@ -105,6 +154,15 @@ class DatasetRegistry:
             lazy = [summary for data_id, (summary, _) in self._lazy_datasets.items() if data_id not in loaded_ids]
             return loaded + lazy
 
+    def lazy_metadata(self, data_id: str) -> dict[str, object] | None:
+        with self._lock:
+            if data_id in self._datasets:
+                return None
+            builder = self._lazy_metadata.get(data_id)
+        if builder is None:
+            return None
+        return builder()
+
     def _register_lazy_defaults(self) -> None:
         dims = ("sample", "pol", "t", "nu", "x", "y", "z")
         for spec in DEMO_DATASETS:
@@ -123,7 +181,17 @@ class DatasetRegistry:
                 ds.provenance["demo"] = True
                 return ds
 
+            def build_meta(local_spec: DemoDatasetSpec = spec) -> dict[str, object]:
+                payload = describe_mock_dataset(local_spec.data_id, local_spec.cfg)
+                raw_provenance = payload.get("provenance", {})
+                provenance = dict(raw_provenance) if isinstance(raw_provenance, dict) else {}
+                provenance["source"] = "demo-generated"
+                provenance["demo"] = True
+                payload["provenance"] = provenance
+                return payload
+
             self._lazy_datasets[spec.data_id] = (summary, build)
+            self._lazy_metadata[spec.data_id] = build_meta
 
     def _register_seeded_local_datasets(self) -> None:
         p = self._seeded_manifest_path
@@ -161,25 +229,31 @@ class DatasetRegistry:
                 continue
             if not isinstance(kwargs, dict):
                 kwargs = {}
+            typed_kwargs = {str(key): value for key, value in kwargs.items()}
+            typed_data_id = data_id
 
             ds_path = (p.parent / rel_path).expanduser().resolve()
             if not ds_path.exists():
                 continue
-            if data_id in self._datasets or data_id in self._lazy_datasets:
+            if typed_data_id in self._datasets or typed_data_id in self._lazy_datasets:
                 continue
 
             summary = DatasetSummary(
-                data_id=data_id,
+                data_id=typed_data_id,
                 dims=tuple(dims),
                 shape=tuple(shape),
                 intensity_unit=str(intensity_unit),
                 source=str(source),
             )
 
-            def build(path: Path = ds_path, local_data_id: str = data_id, local_kwargs: dict[str, object] = kwargs) -> CubeDataset:
+            def build(
+                path: Path = ds_path,
+                local_data_id: str = typed_data_id,
+                local_kwargs: dict[str, object] = typed_kwargs,
+            ) -> CubeDataset:
                 return load_by_extension(path, data_id=local_data_id, **local_kwargs)
 
-            self._lazy_datasets[data_id] = (summary, build)
+            self._lazy_datasets[typed_data_id] = (summary, build)
 
     def load_local(
         self,

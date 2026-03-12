@@ -13,8 +13,13 @@ _SAMPLE_REDUCTION_MODES = frozenset({"mean", "std", "rel_uncert"})
 
 
 def _safe_dataset(registry: DatasetRegistry, data_id: str) -> CubeDataset:
+    dataset, _ = _safe_dataset_with_perf(registry, data_id)
+    return dataset
+
+
+def _safe_dataset_with_perf(registry: DatasetRegistry, data_id: str) -> tuple[CubeDataset, dict[str, object]]:
     try:
-        return registry.get(data_id)
+        return registry.get_with_stats(data_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -164,14 +169,17 @@ def _project_dims_by_mean(
     cast_float32: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
     """Project requested dimensions by mean-reduction, preserving output dim order."""
-    for dim in [existing_dim for existing_dim in arr_dims if existing_dim in projected]:
-        axis = arr_dims.index(dim)
-        arr = arr.mean(axis=axis, dtype=np.float64)
-        if cast_float32:
-            arr = arr.astype(np.float32)
-        arr_dims.pop(axis)
+    reduce_axes = tuple(axis for axis, dim in enumerate(arr_dims) if dim in projected)
+    if not reduce_axes:
+        return arr, arr_dims
+
+    arr = arr.mean(axis=reduce_axes, dtype=np.float64)
+    if cast_float32:
+        arr = arr.astype(np.float32)
+
+    for dim in projected:
         selected_indices.pop(dim, None)
-    return arr, arr_dims
+    return arr, [dim for dim in arr_dims if dim not in projected]
 
 
 def _downsample_2d(arr: np.ndarray, max_pixels: int | None) -> tuple[np.ndarray, tuple[int, int]]:

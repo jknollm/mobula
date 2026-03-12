@@ -1,706 +1,89 @@
 import { createGpuRenderers } from "./app_gpu.js?v=20260306a";
 import { bindCanvasInteractions } from "./app_interactions.js?v=20260306a";
-import { fetchJson as fetchJsonBase, createRequestBuilders } from "./app_requests.js?v=20260306a";
+import { fetchBinaryPayload as fetchBinaryPayloadBase, fetchJson as fetchJsonBase, createRequestBuilders } from "./app_requests.js?v=20260306a";
 import { resetForDatasetChange, resetForPlaneChange } from "./app_state_transitions.js?v=20260306a";
+import {
+  AXIS_CONTROL_DIMS,
+  AXIS_DISPLAY_LABEL,
+  COLOR_RAMPS,
+  DEFAULT_EXPORT_OUTPUT_DIR,
+  DEFAULT_MOSAIC_GRID_SIZE,
+  DEFAULT_RECORD_BITRATE,
+  DEFAULT_RECORD_MAX_PIXELS,
+  GLOBAL_ZOOM_OUT_FACTOR,
+  INGEST_AXIS_LABEL,
+  INGEST_AXIS_THEME,
+  INGEST_CANONICAL_DIMS,
+  INGEST_HDF5_STACK_TOKEN_PREFIX,
+  INGEST_SPHERE_ALIAS_DIM,
+  INGEST_UI_DIMS,
+  PLANE_KEYS,
+  PLANE_OPTIONS,
+  PROFILE_THEME,
+  RENDER_AXIS_HIDDEN,
+  RENDER_AXIS_ROTATE,
+  RECORD_STOP_TIMEOUT_MS,
+  SUPPORTED_DROP_UPLOAD_EXTS,
+  VIEW_SOURCE_RECT_MAX_MULTIPLIER,
+  VOLUME_ZOOM_MAX,
+  VOLUME_ZOOM_MIN,
+  WHEEL_ZOOM_STEP_FACTOR,
+  normalizeColorMapKey,
+} from "./viewer_constants.js?v=20260306b";
+import { normalizeComputeBackendPreference, probeRenderCapabilities } from "./viewer_acceleration.js?v=20260309a";
+import { lookupViewerElements } from "./viewer_dom.js?v=20260306b";
+import {
+  VIEW_ROTATE_RATE_STEP_LEVELS,
+  createDefaultAxisPlaneSwap,
+  createDefaultAxisSettings,
+  createViewerState,
+  mat3Mul,
+  mat3MulVec3,
+  mat3RotationAxis,
+  mat3RotationY,
+  mat3RotationZ,
+  mat3Transpose,
+  normalizeAxisPlaneSwapState,
+  normalizeAxisSettingEntry,
+  normalizeAxisSettingsState,
+  normalizeSphereRotateAxisObject,
+  normalizeSphereRotationMatrix,
+  normalizeVec3,
+  normalizeViewRotateDirection,
+  normalizeViewRotateRate,
+  normalizeViewRotateSpeed,
+  orthonormalizeRotationMatrix,
+  sphereRotationMatrixFromYawPitch,
+} from "./viewer_state.js?v=20260306b";
+import { createPerfStore, perfEnabledFromLocation } from "./viewer_perf.js?v=20260306c";
+import { createPlaybackController } from "./viewer_playback.js?v=20260306d";
+import { createMovieRecordingController } from "./viewer_recording.js?v=20260306a";
+import { createOfflineRenderController } from "./viewer_rendering.js?v=20260306a";
+import {
+  buildDefaultRecordMovieFilename,
+  buildDefaultRenderMovieFilename,
+  normalizeMovieFilename,
+  normalizeRecordMovieFormat,
+  normalizeRecordQuality,
+  normalizeRenderFps,
+  normalizeRenderLoops,
+  normalizeRenderOverlayOption,
+  normalizeRenderResolution,
+  parseRenderAxis,
+  recordQualityConfig,
+  renderQualityLabel,
+  resolveRenderFrameDimensions,
+} from "./viewer_media.js?v=20260306a";
 
-const PLANE_OPTIONS = {
-  xy: { planeX: "x", planeY: "y", hidden: "z", label: "XY" },
-  yz: { planeX: "y", planeY: "z", hidden: "x", label: "YZ" },
-  zx: { planeX: "z", planeY: "x", hidden: "y", label: "ZX" },
-};
-const PLANE_KEYS = Object.freeze(["xy", "yz", "zx"]);
-
-const COLOR_RAMPS = {
-  viridis: [
-    [0.0, 68, 1, 84],
-    [0.25, 59, 82, 139],
-    [0.5, 33, 145, 140],
-    [0.75, 94, 201, 98],
-    [1.0, 253, 231, 37],
-  ],
-  plasma: [
-    [0.0, 13, 8, 135],
-    [0.25, 126, 3, 167],
-    [0.5, 203, 71, 119],
-    [0.75, 248, 149, 64],
-    [1.0, 240, 249, 33],
-  ],
-  inferno: [
-    [0.0, 0, 0, 4],
-    [0.25, 87, 15, 109],
-    [0.5, 187, 55, 84],
-    [0.75, 249, 142, 9],
-    [1.0, 252, 255, 164],
-  ],
-  // Sampled from ehtplot `afmhot_us.ctab` (GPL-3.0 project):
-  // https://github.com/liamedeiros/ehtplot
-  afmhot_us: [
-    [0.0, 0, 0, 0],
-    [0.0625, 27, 0, 0],
-    [0.125, 56, 0, 0],
-    [0.1875, 82, 0, 0],
-    [0.25, 108, 0, 0],
-    [0.3125, 132, 5, 0],
-    [0.375, 153, 27, 1],
-    [0.4375, 172, 45, 1],
-    [0.5, 190, 63, 0],
-    [0.5625, 208, 81, 0],
-    [0.625, 226, 99, 0],
-    [0.6875, 244, 118, 8],
-    [0.75, 251, 146, 34],
-    [0.8125, 250, 178, 65],
-    [0.875, 247, 208, 109],
-    [0.9375, 246, 235, 166],
-    [1.0, 255, 254, 253],
-  ],
-  gray: [
-    [0.0, 0, 0, 0],
-    [1.0, 255, 255, 255],
-  ],
-  diverging: [
-    [0.0, 58, 76, 192],
-    [0.25, 141, 175, 253],
-    [0.5, 247, 247, 247],
-    [0.75, 244, 109, 67],
-    [1.0, 180, 4, 38],
-  ],
-  circular: [
-    [0.0, 255, 68, 68],
-    [0.16, 255, 183, 77],
-    [0.33, 234, 255, 77],
-    [0.5, 77, 255, 123],
-    [0.66, 77, 197, 255],
-    [0.83, 173, 92, 255],
-    [1.0, 255, 68, 68],
-  ],
-};
-
-// Backward compatibility for older saved states that used older afmhot aliases.
-COLOR_RAMPS.afmhot_u = COLOR_RAMPS.afmhot_us;
-COLOR_RAMPS.ehtplot = COLOR_RAMPS.afmhot_us;
-
-function normalizeColorMapKey(raw) {
-  const key = String(raw || "").trim();
-  if (key === "afmhot_u" || key === "ehtplot") return "afmhot_us";
-  if (Object.prototype.hasOwnProperty.call(COLOR_RAMPS, key)) return key;
-  return "viridis";
-}
-
-const PROFILE_THEME = {
-  dragFill: "rgba(245, 250, 255, 0.08)",
-  dragStroke: "rgba(245, 250, 255, 0.92)",
-  indicator: "#f7fbff",
-  time: "#57daff",
-  spectral: "#36d7d8",
-  spatial: "#52efbc",
-};
-const SUPPORTED_DROP_UPLOAD_EXTS = new Set([".h5", ".hdf5", ".fits", ".fit", ".fts"]);
-const INGEST_CANONICAL_DIMS = ["sample", "pol", "t", "nu", "x", "y", "z"];
-const INGEST_SPHERE_ALIAS_DIM = "sphere";
-const INGEST_UI_DIMS = [...INGEST_CANONICAL_DIMS, INGEST_SPHERE_ALIAS_DIM];
-const INGEST_HDF5_STACK_TOKEN_PREFIX = "__stokes_stack__:";
-const INGEST_AXIS_LABEL = {
-  sample: "Samples",
-  pol: "Polarisation",
-  t: "Time",
-  nu: "Frequency",
-  x: "X-Axis",
-  y: "Y-Axis",
-  z: "Z-Axis",
-  sphere: "Sphere",
-};
-const AXIS_DISPLAY_LABEL = {
-  sample: "Sample",
-  pol: "Polarisation",
-  t: "Time",
-  nu: "Frequency",
-  x: "X-Axis",
-  y: "Y-Axis",
-  z: "Z-Axis",
-};
-const INGEST_AXIS_THEME = {
-  sample: { rgb: "56, 180, 119", border: "#38b477", text: "#eafff3" },
-  pol: { rgb: "213, 155, 53", border: "#d59b35", text: "#fff7e6" },
-  t: { rgb: "75, 166, 255", border: "#4ba6ff", text: "#eef6ff" },
-  nu: { rgb: "238, 106, 79", border: "#ee6a4f", text: "#fff2ed" },
-  x: { rgb: "68, 192, 200", border: "#44c0c8", text: "#ebfeff" },
-  y: { rgb: "122, 201, 93", border: "#7ac95d", text: "#f0ffea" },
-  z: { rgb: "186, 119, 214", border: "#ba77d6", text: "#fdf0ff" },
-};
-const DEFAULT_MOSAIC_SAMPLE_COUNT = 4;
-const DEFAULT_MOSAIC_GRID_SIZE = Math.round(Math.sqrt(DEFAULT_MOSAIC_SAMPLE_COUNT));
-const DEFAULT_EXPORT_OUTPUT_DIR = "~/Downloads";
-const DEFAULT_RECORD_FPS = 12;
-const DEFAULT_RECORD_BITRATE = 3_500_000;
-const DEFAULT_RECORD_MAX_PIXELS = 640_000;
-const RECORD_STOP_TIMEOUT_MS = 3000;
-const WHEEL_ZOOM_STEP_FACTOR = 1.05;
-const GLOBAL_ZOOM_OUT_FACTOR = 25.0;
-const VOLUME_ZOOM_MIN = 0.2;
-const VOLUME_ZOOM_MAX = 8.0;
-const VIEW_SOURCE_RECT_MAX_MULTIPLIER = 64.0;
-const RECORD_QUALITY_PRESETS = {
-  low: { key: "low", label: "Low", shortLabel: "Low", fps: 8, bitrate: 2_000_000, maxPixels: 360_000 },
-  balanced: {
-    key: "balanced",
-    label: "Medium",
-    shortLabel: "Med",
-    fps: DEFAULT_RECORD_FPS,
-    bitrate: DEFAULT_RECORD_BITRATE,
-    maxPixels: DEFAULT_RECORD_MAX_PIXELS,
+const els = lookupViewerElements();
+const perfStore = createPerfStore({
+  enabled: perfEnabledFromLocation(),
+  onChange(summary, snapshot) {
+    if (!els.perfReadout) return;
+    els.perfReadout.hidden = !snapshot.enabled;
+    els.perfReadout.textContent = summary;
   },
-  high: { key: "high", label: "High", shortLabel: "High", fps: 18, bitrate: 5_000_000, maxPixels: 1_000_000 },
-};
-const RENDER_RESOLUTION_HEIGHT = {
-  "720p": 720,
-  "1080p": 1080,
-  "1440p": 1440,
-  "2160p": 2160,
-};
-const RENDER_AXIS_HIDDEN = "hidden";
-const RENDER_AXIS_ROTATE = "__rotate__";
-const AXIS_CONTROL_DIMS = ["sample", "pol", "t", "nu", "x", "y", "z"];
-
-const els = {
-  layout: document.querySelector(".layout"),
-  workspaceRow: document.getElementById("workspaceRow"),
-  leftSplitter: document.getElementById("leftSplitter"),
-  rightSplitter: document.getElementById("rightSplitter"),
-  controlsPanel: document.querySelector(".controls"),
-  viewerPanel: document.querySelector(".viewer"),
-  colorbarPanel: document.querySelector(".colorbarPanel"),
-  viewerToolbar: document.querySelector(".viewerToolbar"),
-  dataControlGroup: document.getElementById("dataControlGroup"),
-  spatialControlGroup: document.getElementById("spatialControlGroup"),
-  temporalControlGroup: document.getElementById("temporalControlGroup"),
-  spectralControlGroup: document.getElementById("spectralControlGroup"),
-  polarizationControlGroup: document.getElementById("polarizationControlGroup"),
-  datasetTabs: document.getElementById("datasetTabs"),
-
-  datasetSelect: document.getElementById("datasetSelect"),
-  systemPickerBtn: document.getElementById("systemPickerBtn"),
-  systemPickerStatus: document.getElementById("systemPickerStatus"),
-  ingestDialog: document.getElementById("ingestDialog"),
-  ingestStatus: document.getElementById("ingestStatus"),
-  ingestStepInspect: document.getElementById("ingestStepInspect"),
-  ingestStepMap: document.getElementById("ingestStepMap"),
-  ingestStepPreview: document.getElementById("ingestStepPreview"),
-  ingestStepPills: document.getElementById("ingestStepPills"),
-  ingestStepPillMap: document.getElementById("ingestStepPillMap"),
-  ingestInspectSummary: document.getElementById("ingestInspectSummary"),
-  ingestInspectWarnings: document.getElementById("ingestInspectWarnings"),
-  ingestInspectFiles: document.getElementById("ingestInspectFiles"),
-  ingestPresetRow: document.getElementById("ingestPresetRow"),
-  ingestPresetLabel: document.getElementById("ingestPresetLabel"),
-  ingestApplyPresetBtn: document.getElementById("ingestApplyPresetBtn"),
-  ingestActiveFileLabel: document.getElementById("ingestActiveFileLabel"),
-  ingestActiveFileSelect: document.getElementById("ingestActiveFileSelect"),
-  ingestPrevFileBtn: document.getElementById("ingestPrevFileBtn"),
-  ingestNextFileBtn: document.getElementById("ingestNextFileBtn"),
-  ingestApplyToAllBtn: document.getElementById("ingestApplyToAllBtn"),
-  ingestSlotStrip: document.getElementById("ingestSlotStrip"),
-  ingestPalette: document.getElementById("ingestPalette"),
-  ingestMapperLegend: document.getElementById("ingestMapperLegend"),
-  ingestPreviewSummary: document.getElementById("ingestPreviewSummary"),
-  ingestPreviewDatasets: document.getElementById("ingestPreviewDatasets"),
-  ingestPreviewWarnings: document.getElementById("ingestPreviewWarnings"),
-  ingestPreviewErrors: document.getElementById("ingestPreviewErrors"),
-  ingestCancelBtn: document.getElementById("ingestCancelBtn"),
-  ingestBackBtn: document.getElementById("ingestBackBtn"),
-  ingestPreviewBtn: document.getElementById("ingestPreviewBtn"),
-  ingestCommitBtn: document.getElementById("ingestCommitBtn"),
-  ingestIntentDialog: document.getElementById("ingestIntentDialog"),
-  ingestIntentAxisBtn: document.getElementById("ingestIntentAxisBtn"),
-  ingestIntentTabsBtn: document.getElementById("ingestIntentTabsBtn"),
-  ingestIntentFileAxisFieldset: document.getElementById("ingestIntentFileAxisFieldset"),
-  ingestIntentFileAxisSampleBtn: document.getElementById("ingestIntentFileAxisSampleBtn"),
-  ingestIntentFileAxisPolBtn: document.getElementById("ingestIntentFileAxisPolBtn"),
-  ingestIntentFileAxisTimeBtn: document.getElementById("ingestIntentFileAxisTimeBtn"),
-  ingestIntentFileAxisFreqBtn: document.getElementById("ingestIntentFileAxisFreqBtn"),
-  ingestIntentFileAxisHint: document.getElementById("ingestIntentFileAxisHint"),
-  ingestIntentCancelBtn: document.getElementById("ingestIntentCancelBtn"),
-  ingestIntentContinueBtn: document.getElementById("ingestIntentContinueBtn"),
-  ingestKeysDialog: document.getElementById("ingestKeysDialog"),
-  ingestKeysStepPills: document.getElementById("ingestKeysStepPills"),
-  ingestKeysStatus: document.getElementById("ingestKeysStatus"),
-  ingestKeysFileLabel: document.getElementById("ingestKeysFileLabel"),
-  ingestKeysFileSelect: document.getElementById("ingestKeysFileSelect"),
-  ingestKeysStackAxisLabel: document.getElementById("ingestKeysStackAxisLabel"),
-  ingestKeysStackAxisButtons: document.getElementById("ingestKeysStackAxisButtons"),
-  ingestStokesQuickList: document.getElementById("ingestStokesQuickList"),
-  ingestKeyGroupList: document.getElementById("ingestKeyGroupList"),
-  ingestKeyCandidatesList: document.getElementById("ingestKeyCandidatesList"),
-  ingestSelectedKeysList: document.getElementById("ingestSelectedKeysList"),
-  ingestKeysCancelBtn: document.getElementById("ingestKeysCancelBtn"),
-  ingestKeysBackBtn: document.getElementById("ingestKeysBackBtn"),
-  ingestKeysContinueBtn: document.getElementById("ingestKeysContinueBtn"),
-  colorMapSelect: document.getElementById("colorMapSelect"),
-  colorRangeModeSelect: document.getElementById("colorRangeModeSelect"),
-  colorNormRangeBlock: document.getElementById("colorNormRangeBlock"),
-  colorNormTrack: document.getElementById("colorNormTrack"),
-  colorNormMinRange: document.getElementById("colorNormMinRange"),
-  colorNormMaxRange: document.getElementById("colorNormMaxRange"),
-  colorNormMinValue: document.getElementById("colorNormMinValue"),
-  colorNormMaxValue: document.getElementById("colorNormMaxValue"),
-  colorNormBoundMin: document.getElementById("colorNormBoundMin"),
-  colorNormBoundMax: document.getElementById("colorNormBoundMax"),
-  sliceBackendSelect: document.getElementById("sliceBackendSelect"),
-  axisSettingsBtn: document.getElementById("axisSettingsBtn"),
-  axisSettingsDialog: document.getElementById("axisSettingsDialog"),
-  axisSettingsSummary: document.getElementById("axisSettingsSummary"),
-  axisSwapRows: document.getElementById("axisSwapRows"),
-  axisSettingsRows: document.getElementById("axisSettingsRows"),
-  axisSettingsResetBtn: document.getElementById("axisSettingsResetBtn"),
-  axisSettingsCloseBtn: document.getElementById("axisSettingsCloseBtn"),
-  spatialResolutionSelect: document.getElementById("spatialResolutionSelect"),
-  fluxScaleLinearBtn: document.getElementById("fluxScaleLinearBtn"),
-  fluxScaleSqrtBtn: document.getElementById("fluxScaleSqrtBtn"),
-  fluxScaleLogBtn: document.getElementById("fluxScaleLogBtn"),
-  sampleModeMeanBtn: document.getElementById("sampleModeMeanBtn"),
-  sampleModeStdBtn: document.getElementById("sampleModeStdBtn"),
-  sampleModeRelBtn: document.getElementById("sampleModeRelBtn"),
-  sampleModeSamplesBtn: document.getElementById("sampleModeSamplesBtn"),
-  sampleModeBlock: document.getElementById("sampleModeBlock"),
-  sampleViewControls: document.getElementById("sampleViewControls"),
-  sampleViewMosaicBtn: document.getElementById("sampleViewMosaicBtn"),
-  sampleViewMorphBtn: document.getElementById("sampleViewMorphBtn"),
-  sampleMosaicControls: document.getElementById("sampleMosaicControls"),
-  sampleMorphControls: document.getElementById("sampleMorphControls"),
-  sampleMorphDeltaSelect: document.getElementById("sampleMorphDeltaSelect"),
-  sampleMorphStatus: document.getElementById("sampleMorphStatus"),
-  sampleGridCountSelect: document.getElementById("sampleGridCountSelect"),
-  resampleSamplesBtn: document.getElementById("resampleSamplesBtn"),
-  playbackTimingControls: document.getElementById("playbackTimingControls"),
-  playSpeedSelect: document.getElementById("playSpeedSelect"),
-  temporalResolutionSelect: document.getElementById("temporalResolutionSelect"),
-  spectralResolutionSelect: document.getElementById("spectralResolutionSelect"),
-
-  planeSelect: document.getElementById("planeSelect"),
-  planeLabel: document.getElementById("planeLabel"),
-  spatialViewRow: document.getElementById("spatialViewRow"),
-  spatialSliceBtn: document.getElementById("spatialSliceBtn"),
-  spatialVolumeBtn: document.getElementById("spatialVolumeBtn"),
-  spatialSphereBtn: document.getElementById("spatialSphereBtn"),
-  sphereControls: document.getElementById("sphereControls"),
-  sphereProjMollweideBtn: document.getElementById("sphereProjMollweideBtn"),
-  sphereProjInsideBtn: document.getElementById("sphereProjInsideBtn"),
-  sphereProjOutsideBtn: document.getElementById("sphereProjOutsideBtn"),
-  viewRotateControls: document.getElementById("viewRotateControls"),
-  viewRotateRateControl: document.getElementById("viewRotateRateControl"),
-  viewRotateNegBtn: document.getElementById("viewRotateNegBtn"),
-  viewRotateSpeedValue: document.getElementById("viewRotateSpeedValue"),
-  viewRotatePosBtn: document.getElementById("viewRotatePosBtn"),
-  viewRotateRebaseBtn: document.getElementById("viewRotateRebaseBtn"),
-  sphereMetaLabel: document.getElementById("sphereMetaLabel"),
-  hiddenAxisTitle: document.getElementById("hiddenAxisTitle"),
-  hiddenNavValue: document.getElementById("hiddenNavValue"),
-  hiddenPlayBtn: document.getElementById("hiddenPlayBtn"),
-  hiddenProjectBtn: document.getElementById("hiddenProjectBtn"),
-  hiddenNavPanel: document.getElementById("hiddenNavPanel"),
-  volumeRenderControls: document.getElementById("volumeRenderControls"),
-  volumeBackendStatus: document.getElementById("volumeBackendStatus"),
-  volumeQualitySelect: document.getElementById("volumeQualitySelect"),
-  volumeRenderModeSelect: document.getElementById("volumeRenderModeSelect"),
-  volumeSphereProjectionLabel: document.getElementById("volumeSphereProjectionLabel"),
-  volumeSphereProjectionSelect: document.getElementById("volumeSphereProjectionSelect"),
-  volumeSphereNsiteLabel: document.getElementById("volumeSphereNsiteLabel"),
-  volumeSphereNsiteInput: document.getElementById("volumeSphereNsiteInput"),
-  volumeTfSelect: document.getElementById("volumeTfSelect"),
-  volumeOpacityRange: document.getElementById("volumeOpacityRange"),
-  volumeOpacityValue: document.getElementById("volumeOpacityValue"),
-  volumeGammaRange: document.getElementById("volumeGammaRange"),
-  volumeGammaValue: document.getElementById("volumeGammaValue"),
-  volumeClipRangeBlock: document.getElementById("volumeClipRangeBlock"),
-  volumeClipRangeTrack: document.getElementById("volumeClipRangeTrack"),
-  volumeClipRangeMin: document.getElementById("volumeClipRangeMin"),
-  volumeClipRangeMax: document.getElementById("volumeClipRangeMax"),
-  volumeClipRangeMinValue: document.getElementById("volumeClipRangeMinValue"),
-  volumeClipRangeMaxValue: document.getElementById("volumeClipRangeMaxValue"),
-  volumeSphereRangeBlock: document.getElementById("volumeSphereRangeBlock"),
-  volumeSphereRangeTrack: document.getElementById("volumeSphereRangeTrack"),
-  volumeSphereRangeMin: document.getElementById("volumeSphereRangeMin"),
-  volumeSphereRangeMax: document.getElementById("volumeSphereRangeMax"),
-  volumeSphereRangeMinValue: document.getElementById("volumeSphereRangeMinValue"),
-  volumeSphereRangeMaxValue: document.getElementById("volumeSphereRangeMaxValue"),
-  volumeIsoThresholdLabel: document.getElementById("volumeIsoThresholdLabel"),
-  volumeIsoThresholdRange: document.getElementById("volumeIsoThresholdRange"),
-  volumeIsoThresholdValue: document.getElementById("volumeIsoThresholdValue"),
-  hiddenNavCanvas: document.getElementById("hiddenNavCanvas"),
-  hiddenAxisMin: document.getElementById("hiddenAxisMin"),
-  hiddenAxisMax: document.getElementById("hiddenAxisMax"),
-
-  multiSpectralBtn: document.getElementById("multiSpectralBtn"),
-  spectralMapControls: document.getElementById("spectralMapControls"),
-  msNuAxisLogBtn: document.getElementById("msNuAxisLogBtn"),
-  msDeslopeRange: document.getElementById("msDeslopeRange"),
-  msDeslopeValue: document.getElementById("msDeslopeValue"),
-  msNormalizeBtn: document.getElementById("msNormalizeBtn"),
-  msNormalizeBoostLabel: document.getElementById("msNormalizeBoostLabel"),
-  msNormalizeBoostRange: document.getElementById("msNormalizeBoostRange"),
-  msNormalizeBoostValue: document.getElementById("msNormalizeBoostValue"),
-  msChannelRangeBlock: document.getElementById("msChannelRangeBlock"),
-  msChannelRangeTrack: document.getElementById("msChannelRangeTrack"),
-  msChannelRangeMinRange: document.getElementById("msChannelRangeMinRange"),
-  msChannelRangeMaxRange: document.getElementById("msChannelRangeMaxRange"),
-  msChannelRangeMinValue: document.getElementById("msChannelRangeMinValue"),
-  msChannelRangeMaxValue: document.getElementById("msChannelRangeMaxValue"),
-  msChannelRangeBoundMin: document.getElementById("msChannelRangeBoundMin"),
-  msChannelRangeBoundMax: document.getElementById("msChannelRangeBoundMax"),
-  spectralNavPanel: document.getElementById("spectralNavPanel"),
-  tValue: document.getElementById("tValue"),
-  nuValue: document.getElementById("nuValue"),
-  timePlayBtn: document.getElementById("timePlayBtn"),
-  timeProjectBtn: document.getElementById("timeProjectBtn"),
-  freqPlayBtn: document.getElementById("freqPlayBtn"),
-  freqProjectBtn: document.getElementById("freqProjectBtn"),
-  timeNavCanvas: document.getElementById("timeNavCanvas"),
-  freqNavCanvas: document.getElementById("freqNavCanvas"),
-  timeAxisMin: document.getElementById("timeAxisMin"),
-  timeAxisMax: document.getElementById("timeAxisMax"),
-  freqAxisMin: document.getElementById("freqAxisMin"),
-  freqAxisMax: document.getElementById("freqAxisMax"),
-
-  polValue: document.getElementById("polValue"),
-  evpaToggleBtn: document.getElementById("evpaToggleBtn"),
-  evpaDensitySelect: document.getElementById("evpaDensitySelect"),
-  evpaIThresholdSelect: document.getElementById("evpaIThresholdSelect"),
-  fracPolBtn: document.getElementById("fracPolBtn"),
-  bfieldBtn: document.getElementById("bfieldBtn"),
-  linPolBtn: document.getElementById("linPolBtn"),
-  circPolBtn: document.getElementById("circPolBtn"),
-  polButtons: [
-    document.getElementById("polBtn0"),
-    document.getElementById("polBtn1"),
-    document.getElementById("polBtn2"),
-    document.getElementById("polBtn3"),
-  ],
-
-  canvas: document.getElementById("sliceCanvas"),
-  colorbarCanvas: document.getElementById("colorbarCanvas"),
-  colorbarMin: document.getElementById("colorbarMin"),
-  colorbarMid: document.getElementById("colorbarMid"),
-  colorbarMax: document.getElementById("colorbarMax"),
-
-  modeInspectBtn: document.getElementById("modeInspectBtn"),
-  modeZoomBtn: document.getElementById("modeZoomBtn"),
-  coordSystemSelect: document.getElementById("coordSystemSelect"),
-  exportZoomBtn: document.getElementById("exportZoomBtn"),
-  saveImagesBtn: document.getElementById("saveImagesBtn"),
-  mediaQualitySelect: document.getElementById("mediaQualitySelect"),
-  renderMovieBtn: document.getElementById("renderMovieBtn"),
-  renderAxisTimeBtn: document.getElementById("renderAxisTimeBtn"),
-  renderAxisFreqBtn: document.getElementById("renderAxisFreqBtn"),
-  renderAxisHiddenBtn: document.getElementById("renderAxisHiddenBtn"),
-  renderAxisSampleMorphBtn: document.getElementById("renderAxisSampleMorphBtn"),
-  renderAxisRotateBtn: document.getElementById("renderAxisRotateBtn"),
-  renderFormatMp4Btn: document.getElementById("renderFormatMp4Btn"),
-  renderFormatWebmBtn: document.getElementById("renderFormatWebmBtn"),
-  renderFormatGifBtn: document.getElementById("renderFormatGifBtn"),
-  renderQualityLowBtn: document.getElementById("renderQualityLowBtn"),
-  renderQualityMedBtn: document.getElementById("renderQualityMedBtn"),
-  renderQualityHighBtn: document.getElementById("renderQualityHighBtn"),
-  renderResCanvasBtn: document.getElementById("renderResCanvasBtn"),
-  renderRes720Btn: document.getElementById("renderRes720Btn"),
-  renderRes1080Btn: document.getElementById("renderRes1080Btn"),
-  renderRes1440Btn: document.getElementById("renderRes1440Btn"),
-  renderRes2160Btn: document.getElementById("renderRes2160Btn"),
-  renderFpsInput: document.getElementById("renderFpsInput"),
-  renderLoopInput: document.getElementById("renderLoopInput"),
-  renderIncludeColorbarBtn: document.getElementById("renderIncludeColorbarBtn"),
-  renderIncludeSkyDirectionsBtn: document.getElementById("renderIncludeSkyDirectionsBtn"),
-  renderIncludeLengthScaleBtn: document.getElementById("renderIncludeLengthScaleBtn"),
-  renderIncludeSampleLabelsBtn: document.getElementById("renderIncludeSampleLabelsBtn"),
-  renderProgressOverlay: document.getElementById("renderProgressOverlay"),
-  renderProgressPrimary: document.getElementById("renderProgressPrimary"),
-  renderProgressSecondary: document.getElementById("renderProgressSecondary"),
-  renderProgressEta: document.getElementById("renderProgressEta"),
-  renderProgressCancelBtn: document.getElementById("renderProgressCancelBtn"),
-  recordMovieBtn: document.getElementById("recordMovieBtn"),
-  resetZoomBtn: document.getElementById("resetZoomBtn"),
-  hoverReadout: document.getElementById("hoverReadout"),
-  exportDialog: document.getElementById("exportDialog"),
-  exportFormatSelect: document.getElementById("exportFormatSelect"),
-  exportFormatNote: document.getElementById("exportFormatNote"),
-  exportLocationInput: document.getElementById("exportLocationInput"),
-  exportBrowseBtn: document.getElementById("exportBrowseBtn"),
-  exportFilenameInput: document.getElementById("exportFilenameInput"),
-  exportOverwriteChk: document.getElementById("exportOverwriteChk"),
-  exportStatus: document.getElementById("exportStatus"),
-  exportCancelBtn: document.getElementById("exportCancelBtn"),
-  exportConfirmBtn: document.getElementById("exportConfirmBtn"),
-  saveImagesDialog: document.getElementById("saveImagesDialog"),
-  saveImagesSummary: document.getElementById("saveImagesSummary"),
-  saveImagesIncludeViewerBtn: document.getElementById("saveImagesIncludeViewerBtn"),
-  saveImagesIncludeColorbarBtn: document.getElementById("saveImagesIncludeColorbarBtn"),
-  saveImagesIncludeSampleLabelsBtn: document.getElementById("saveImagesIncludeSampleLabelsBtn"),
-  saveImagesIncludeTimeProfileBtn: document.getElementById("saveImagesIncludeTimeProfileBtn"),
-  saveImagesIncludeSpectralProfileBtn: document.getElementById("saveImagesIncludeSpectralProfileBtn"),
-  saveImagesIncludeSpatialProfileBtn: document.getElementById("saveImagesIncludeSpatialProfileBtn"),
-  saveImagesLocationInput: document.getElementById("saveImagesLocationInput"),
-  saveImagesBrowseBtn: document.getElementById("saveImagesBrowseBtn"),
-  saveImagesPrefixInput: document.getElementById("saveImagesPrefixInput"),
-  saveImagesOverwriteChk: document.getElementById("saveImagesOverwriteChk"),
-  saveImagesTransparentBgChk: document.getElementById("saveImagesTransparentBgChk"),
-  saveImagesStatus: document.getElementById("saveImagesStatus"),
-  saveImagesCancelBtn: document.getElementById("saveImagesCancelBtn"),
-  saveImagesConfirmBtn: document.getElementById("saveImagesConfirmBtn"),
-  recordMovieDialog: document.getElementById("recordMovieDialog"),
-  recordMovieFormatWebmBtn: document.getElementById("recordMovieFormatWebmBtn"),
-  recordMovieFormatMp4Btn: document.getElementById("recordMovieFormatMp4Btn"),
-  recordMovieFormatGifBtn: document.getElementById("recordMovieFormatGifBtn"),
-  recordMovieLocationInput: document.getElementById("recordMovieLocationInput"),
-  recordMovieBrowseBtn: document.getElementById("recordMovieBrowseBtn"),
-  recordMovieFilenameInput: document.getElementById("recordMovieFilenameInput"),
-  recordMovieOverwriteChk: document.getElementById("recordMovieOverwriteChk"),
-  recordMovieStatus: document.getElementById("recordMovieStatus"),
-  recordMovieCancelBtn: document.getElementById("recordMovieCancelBtn"),
-  recordMovieConfirmBtn: document.getElementById("recordMovieConfirmBtn"),
-  renderMovieDialog: document.getElementById("renderMovieDialog"),
-  renderMovieSummary: document.getElementById("renderMovieSummary"),
-  renderMovieLocationInput: document.getElementById("renderMovieLocationInput"),
-  renderMovieBrowseBtn: document.getElementById("renderMovieBrowseBtn"),
-  renderMovieFilenameInput: document.getElementById("renderMovieFilenameInput"),
-  renderMovieOverwriteChk: document.getElementById("renderMovieOverwriteChk"),
-  renderMovieStatus: document.getElementById("renderMovieStatus"),
-  renderMovieCancelBtn: document.getElementById("renderMovieCancelBtn"),
-  renderMovieConfirmBtn: document.getElementById("renderMovieConfirmBtn"),
-
-  metricsPanel: document.getElementById("metricsPanel"),
-  metricsTitle: document.getElementById("metricsTitle"),
-  metricsHint: document.getElementById("metricsHint"),
-  timeProfileBlock: document.getElementById("timeProfileBlock"),
-  spectrumProfileBlock: document.getElementById("spectrumProfileBlock"),
-  spatialProfileBlock: document.getElementById("spatialProfileBlock"),
-  timeProfileCanvas: document.getElementById("timeProfileCanvas"),
-  spectrumProfileCanvas: document.getElementById("spectrumProfileCanvas"),
-  spatialProfileTitle: document.getElementById("spatialProfileTitle"),
-  spatialProfileCanvas: document.getElementById("spatialProfileCanvas"),
-};
-
-function normalizeAxisSettingEntry(entry) {
-  const flip = Boolean(entry && entry.flip === true);
-  const rawUnit = entry && entry.unit !== undefined && entry.unit !== null ? String(entry.unit).trim() : "";
-  const unit = rawUnit || "";
-  const rawLength = Number.parseFloat(entry && entry.length);
-  const length = Number.isFinite(rawLength) && rawLength > 0 ? rawLength : null;
-  const rawStart = Number.parseFloat(entry && entry.start);
-  const rawEnd = Number.parseFloat(entry && entry.end);
-  const start = Number.isFinite(rawStart) ? rawStart : null;
-  const end = Number.isFinite(rawEnd) ? rawEnd : null;
-  return { flip, length, unit, start, end };
-}
-
-function createDefaultAxisSettings() {
-  const out = {};
-  for (const dim of AXIS_CONTROL_DIMS) out[dim] = { flip: false, length: null, unit: "", start: null, end: null };
-  return out;
-}
-
-function createDefaultAxisPlaneSwap() {
-  const out = {};
-  for (const key of PLANE_KEYS) out[key] = false;
-  return out;
-}
-
-function normalizeAxisSettingsState(raw) {
-  const base = createDefaultAxisSettings();
-  if (!raw || typeof raw !== "object") return base;
-  for (const dim of AXIS_CONTROL_DIMS) {
-    if (!Object.prototype.hasOwnProperty.call(raw, dim)) continue;
-    base[dim] = normalizeAxisSettingEntry(raw[dim]);
-  }
-  return base;
-}
-
-function normalizeAxisPlaneSwapState(raw) {
-  const base = createDefaultAxisPlaneSwap();
-  if (!raw || typeof raw !== "object") return base;
-  for (const key of PLANE_KEYS) {
-    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue;
-    base[key] = raw[key] === true;
-  }
-  return base;
-}
-
-const VIEW_ROTATE_SPEED_LEVELS = Object.freeze([0.5, 1, 2, 4]);
-const VIEW_ROTATE_RATE_LEVELS = Object.freeze([0, 0.5, 1, 2, 4, -4, -2, -1, -0.5]);
-const VIEW_ROTATE_RATE_STEP_LEVELS = Object.freeze([...VIEW_ROTATE_RATE_LEVELS].sort((a, b) => a - b));
-
-function normalizeViewRotateDirection(raw) {
-  return raw === -1 ? -1 : 1;
-}
-
-function normalizeViewRotateSpeed(raw) {
-  const parsed = Number.parseFloat(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 1;
-  let best = VIEW_ROTATE_SPEED_LEVELS[0];
-  let bestErr = Math.abs(parsed - best);
-  for (let i = 1; i < VIEW_ROTATE_SPEED_LEVELS.length; i += 1) {
-    const candidate = VIEW_ROTATE_SPEED_LEVELS[i];
-    const err = Math.abs(parsed - candidate);
-    if (err < bestErr) {
-      best = candidate;
-      bestErr = err;
-    }
-  }
-  return best;
-}
-
-function normalizeViewRotateRate(raw) {
-  const parsed = Number.parseFloat(raw);
-  if (!Number.isFinite(parsed)) return 0;
-  let best = VIEW_ROTATE_RATE_LEVELS[0];
-  let bestErr = Math.abs(parsed - best);
-  for (let i = 1; i < VIEW_ROTATE_RATE_LEVELS.length; i += 1) {
-    const candidate = VIEW_ROTATE_RATE_LEVELS[i];
-    const err = Math.abs(parsed - candidate);
-    if (err < bestErr) {
-      best = candidate;
-      bestErr = err;
-    }
-  }
-  return best;
-}
-
-function vec3Dot(a, b) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-function vec3Cross(a, b) {
-  return [
-    a[1] * b[2] - a[2] * b[1],
-    a[2] * b[0] - a[0] * b[2],
-    a[0] * b[1] - a[1] * b[0],
-  ];
-}
-
-function normalizeVec3(raw, fallback = [0, 0, 1]) {
-  if (!(Array.isArray(raw) || ArrayBuffer.isView(raw)) || raw.length < 3) {
-    return [...fallback];
-  }
-  const x = Number(raw[0]);
-  const y = Number(raw[1]);
-  const z = Number(raw[2]);
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
-    return [...fallback];
-  }
-  const mag = Math.hypot(x, y, z);
-  if (!(mag > 1.0e-12)) return [...fallback];
-  return [x / mag, y / mag, z / mag];
-}
-
-function mat3Mul(a, b) {
-  return [
-    a[0] * b[0] + a[1] * b[3] + a[2] * b[6],
-    a[0] * b[1] + a[1] * b[4] + a[2] * b[7],
-    a[0] * b[2] + a[1] * b[5] + a[2] * b[8],
-    a[3] * b[0] + a[4] * b[3] + a[5] * b[6],
-    a[3] * b[1] + a[4] * b[4] + a[5] * b[7],
-    a[3] * b[2] + a[4] * b[5] + a[5] * b[8],
-    a[6] * b[0] + a[7] * b[3] + a[8] * b[6],
-    a[6] * b[1] + a[7] * b[4] + a[8] * b[7],
-    a[6] * b[2] + a[7] * b[5] + a[8] * b[8],
-  ];
-}
-
-function mat3MulVec3(m, v) {
-  return [
-    m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
-    m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
-    m[6] * v[0] + m[7] * v[1] + m[8] * v[2],
-  ];
-}
-
-function mat3Transpose(m) {
-  return [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]];
-}
-
-function mat3RotationY(angle) {
-  const c = Math.cos(angle);
-  const s = Math.sin(angle);
-  return [c, 0, s, 0, 1, 0, -s, 0, c];
-}
-
-function mat3RotationZ(angle) {
-  const c = Math.cos(angle);
-  const s = Math.sin(angle);
-  return [c, -s, 0, s, c, 0, 0, 0, 1];
-}
-
-function mat3RotationAxis(axisRaw, angle) {
-  const axis = normalizeVec3(axisRaw, [0, 0, 1]);
-  const [x, y, z] = axis;
-  const c = Math.cos(angle);
-  const s = Math.sin(angle);
-  const t = 1 - c;
-  return [
-    t * x * x + c,
-    t * x * y - s * z,
-    t * x * z + s * y,
-    t * x * y + s * z,
-    t * y * y + c,
-    t * y * z - s * x,
-    t * x * z - s * y,
-    t * y * z + s * x,
-    t * z * z + c,
-  ];
-}
-
-function orthonormalizeRotationMatrix(mRaw) {
-  if (!(Array.isArray(mRaw) || ArrayBuffer.isView(mRaw)) || mRaw.length < 9) {
-    return [1, 0, 0, 0, 1, 0, 0, 0, 1];
-  }
-  const m = new Array(9);
-  for (let i = 0; i < 9; i += 1) {
-    const v = Number(mRaw[i]);
-    if (!Number.isFinite(v)) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
-    m[i] = v;
-  }
-  let c0 = normalizeVec3([m[0], m[3], m[6]], [1, 0, 0]);
-  let c1 = [m[1], m[4], m[7]];
-  const proj = vec3Dot(c1, c0);
-  c1 = [c1[0] - proj * c0[0], c1[1] - proj * c0[1], c1[2] - proj * c0[2]];
-  c1 = normalizeVec3(c1, [0, 1, 0]);
-  let c2 = vec3Cross(c0, c1);
-  c2 = normalizeVec3(c2, [0, 0, 1]);
-  c1 = vec3Cross(c2, c0);
-  c1 = normalizeVec3(c1, [0, 1, 0]);
-  c0 = normalizeVec3(c0, [1, 0, 0]);
-  return [
-    c0[0],
-    c1[0],
-    c2[0],
-    c0[1],
-    c1[1],
-    c2[1],
-    c0[2],
-    c1[2],
-    c2[2],
-  ];
-}
-
-function sphereRotationMatrixFromYawPitch(yawRaw, pitchRaw) {
-  const yaw = Number.isFinite(yawRaw) ? yawRaw : 0;
-  const pitch = Number.isFinite(pitchRaw) ? pitchRaw : 0;
-  return mat3Mul(mat3RotationY(pitch), mat3RotationZ(yaw));
-}
-
-function normalizeSphereRotationMatrix(raw, yawRaw = 0, pitchRaw = 0) {
-  if (!(Array.isArray(raw) || ArrayBuffer.isView(raw)) || raw.length < 9) {
-    return sphereRotationMatrixFromYawPitch(yawRaw, pitchRaw);
-  }
-  const out = new Array(9);
-  for (let i = 0; i < 9; i += 1) {
-    const v = Number(raw[i]);
-    if (!Number.isFinite(v)) return sphereRotationMatrixFromYawPitch(yawRaw, pitchRaw);
-    out[i] = v;
-  }
-  return out;
-}
-
-function normalizeSphereRotateAxisObject(raw) {
-  return normalizeVec3(raw, [0, 0, 1]);
-}
+});
 
 function ensureSphereRotationState() {
   state.sphereRotationMatrix = normalizeSphereRotationMatrix(state.sphereRotationMatrix, state.sphereYaw, state.spherePitch);
@@ -753,226 +136,13 @@ function resetSphereRotateAxisToViewerZ() {
   state.sphereRotateAxisObject = normalizeSphereRotateAxisObject(mat3MulVec3(inv, [0, 0, 1]));
 }
 
-function createViewerState() {
-  return {
-  dataId: null,
-  pickerStatusMessage: "",
-  pickerStatusError: false,
-  meta: null,
-  plane: "xy",
-  values: { sample: 0, pol: 0, t: 0, nu: 0, x: 0, y: 0, z: 0 },
-  axisSettings: createDefaultAxisSettings(),
-  axisPlaneSwap: createDefaultAxisPlaneSwap(),
-
-  sampleMode: "mean",
-  sampleSingleView: "mosaic",
-  sampleMorphDeltaT: 0.5,
-  sampleGridSize: DEFAULT_MOSAIC_GRID_SIZE,
-  sampleGridIndices: [0],
-  activeSampleTile: 0,
-  sampleMorph: {
-    token: 0,
-    fromSample: 0,
-    toSample: 0,
-    alpha: 0,
-    initializing: false,
-    sharedStats: null,
-    fromSlice: null,
-    toSlice: null,
-    fromVolume: null,
-    toVolume: null,
-    fromEvpaTicks: [],
-    toEvpaTicks: [],
-    fromCanvas: null,
-    toCanvas: null,
-    blendCanvas: null,
-    multispectral: false,
-  },
-  colorMap: "viridis",
-  colorRangeMode: "full",
-  colorNormValueWindow: { min: null, max: null },
-  colorNormWindowsByQuantity: {},
-  spatialMode: "slice",
-  sphereMeta: null,
-  sphereProjection: "mollweide",
-  sphereInsideScale: 0.2,
-  sphereYaw: 0,
-  spherePitch: 0,
-  sphereRotationMatrix: sphereRotationMatrixFromYawPitch(0, 0),
-  sphereRotateAxisObject: [0, 0, 1],
-  viewRotateRate: 0,
-  viewRotateEnabled: false,
-  viewRotateDirection: 1,
-  viewRotateSpeed: 1,
-  sphereVectorKey: "",
-  sphereVectors: null,
-  sphereSimplexKey: "",
-  sphereSimplexFaces: null,
-  sphereMeshCanvas: null,
-  sphereRingLutKey: "",
-  sphereRingLut: null,
-  sphereRayGridKey: "",
-  sphereRayGrid: null,
-  volumeSphereVectorKey: "",
-  volumeSphereVectors: null,
-  volumeSphereRayGridKey: "",
-  volumeSphereRayGrid: null,
-  fluxScale: "linear",
-  multiSpectral: false,
-  multiSpectralNuAxisScale: "linear",
-  multiSpectralDeslope: 0,
-  multiSpectralNormalizeSpectrum: false,
-  multiSpectralNormalizeBoost: 1.0,
-  multiSpectralChannelRange: { min: 0, max: 100 },
-  dragMode: null,
-  dragModeModifier: null,
-  renderScale: {
-    spatial: 1,
-    temporal: 1,
-    spectral: 1,
-  },
-  sliceRender: {
-    backend: "auto",
-  },
-  showEvpa: false,
-  evpaStep: 8,
-  evpaIMinFraction: 0.0,
-  derivedPolMode: "none",
-
-  evpaTicks: [],
-  evpaTicksBySample: {},
-  frameCanvas: null,
-  frameTiles: null,
-  frameGrid: 1,
-  drawTiles: [],
-  currentMonoSlice: null,
-  currentMonoSliceTiles: null,
-  currentVolume: null,
-  currentVolumeTiles: null,
-  currentIntensityStats: null,
-  currentIntensityUnit: "",
-  fixedColorRange: null,
-  currentMultispectralBands: null,
-  currentMultispectralSlice: null,
-  currentMultispectralTiles: null,
-  selectedCoords: null,
-  coordSystem: "native",
-  hoverProbe: null,
-  hoverPointer: { clientX: 0, clientY: 0, inside: false },
-  exportPrefs: {
-    format: "fits",
-    outputDir: DEFAULT_EXPORT_OUTPUT_DIR,
-    filename: "",
-    overwrite: true,
-  },
-  saveImagesPrefs: {
-    outputDir: DEFAULT_EXPORT_OUTPUT_DIR,
-    prefix: "",
-    overwrite: true,
-    transparentBackground: false,
-    includeViewer: true,
-    includeColorbar: true,
-    includeSampleLabels: true,
-    includeTimeProfile: true,
-    includeSpectralProfile: true,
-    includeSpatialProfile: true,
-  },
-  recordMoviePrefs: {
-    format: "mp4",
-    quality: "balanced",
-    outputDir: DEFAULT_EXPORT_OUTPUT_DIR,
-    filename: "",
-    overwrite: true,
-  },
-  renderMoviePrefs: {
-    axis: "t",
-    format: "mp4",
-    quality: "balanced",
-    fps: 30,
-    loops: 1,
-    resolution: "canvas",
-    includeColorbar: true,
-    includeSkyDirections: true,
-    includeLengthScale: true,
-    includeSampleLabels: true,
-    outputDir: DEFAULT_EXPORT_OUTPUT_DIR,
-    filename: "",
-    overwrite: true,
-  },
-
-  selection: null,
-  selectionDrag: null,
-  zoomDrag: null,
-  volumeDrag: null,
-  sphereDrag: null,
-  panDrag: null,
-  navDrag: null,
-  profileZoomDrag: null,
-  axisWindow: { t: null, nu: null },
-  axisProjection: { t: false, nu: false, x: false, y: false, z: false },
-
-  profiles: null,
-  viewProfiles: null,
-
-  drawRect: { x: 0, y: 0, w: 1, h: 1 },
-  view: { u: 0, v: 0, w: 1, h: 1 },
-
-  playbackAxis: null,
-  playbackFps: 7,
-  playbackTimer: null,
-  sampleMorphTimer: null,
-  playbackBusy: false,
-  playbackRefineToken: 0,
-  playbackPreviewMaxPixels: 220000,
-
-  _selectionToken: 0,
-  _viewProfileToken: 0,
-  _resizePanelsRaf: 0,
-  _resizePanelsNeedsGraphs: false,
-  _colorNormRerenderTimer: null,
-  _multispectralRerenderRaf: 0,
-  profileZoom: {},
-  panelWidths: { left: null, right: null },
-  volumeYaw: 0.65,
-  volumePitch: -0.45,
-  volumeZoom: 1.0,
-  volumeRender: {
-    quality: "balanced",
-    mode: "composite",
-    sphereProjection: "mollweide",
-    sphereNsite: 32,
-    tf: "linear",
-    opacity: 1.2,
-    gamma: 0.9,
-    cutoff: 0.0,
-    clipNear: 0.0,
-    clipFar: 1.0,
-    isoThreshold: 0.45,
-  },
-  volumeGpu: {
-    available: null,
-    renderer: null,
-    lastError: "",
-  },
-  sliceGpu: {
-    available: null,
-    renderer: null,
-    lastError: "",
-  },
-  rgbGpu: {
-    available: null,
-    renderer: null,
-    lastError: "",
-  },
-  sphereGpu: {
-    available: null,
-    renderer: null,
-    lastError: "",
-  },
-  };
+function resetVolumeOrientation() {
+  state.volumeYaw = DEFAULT_VOLUME_YAW;
+  state.volumePitch = DEFAULT_VOLUME_PITCH;
 }
 
 const state = createViewerState();
+state.accelerationCaps.render = probeRenderCapabilities();
 
 const PROFILE_MARGIN = { l: 102, r: 18, t: 16, b: 62 };
 const NAV_MARGIN = { l: 40, r: 8, t: 6, b: 8 };
@@ -1010,9 +180,13 @@ const VIEW_ROTATE_MAX_DT_SEC = 0.12;
 const VIEW_ROTATE_MIN_RENDER_VOLUME_MS = 72;
 const VIEW_ROTATE_MIN_RENDER_SPHERE_MS = 48;
 const VIEW_ROTATE_SPHERE_REFRESH_MS = 220;
+const DEFAULT_VOLUME_YAW = 0.65;
+const DEFAULT_VOLUME_PITCH = -0.45;
 const PLAYBACK_PREVIEW_BASE_MAX_PIXELS = 220000;
 const PLAYBACK_PREVIEW_MIN_PIXELS = 90000;
 const PLAYBACK_PREVIEW_MAX_PIXELS = 520000;
+const PLAYBACK_FRAME_CACHE_MAX = 24;
+const PLAYBACK_PREFETCH_LOOKAHEAD_MAX = 3;
 const DOMAIN_SCALE_FACTORS = [0.25, 0.5, 1, 2, 4, 8, 16, 32];
 const SPATIAL_SCALE_MAX_PIXELS = 64_000_000;
 const VOLUME_FRAME_RES_MAX = 1024;
@@ -1038,11 +212,13 @@ const DATASET_TAB_LABEL_MAX = 42;
 let viewerDropDragDepth = 0;
 let stateEpoch = 0;
 let activeRequestController = new AbortController();
+const playbackFrameCache = new Map();
 const spatialSliceResampleCache = new WeakMap();
 const spatialRgbResampleCache = new WeakMap();
 const sphereUpsampleKernelCache = new Map();
 const sphereScalarColorTableCache = new WeakMap();
 const sphereRgbColorTableCache = new WeakMap();
+const datasetSummaryById = new Map();
 const datasetTabs = [];
 let activeDatasetTabId = null;
 let nextDatasetTabId = 1;
@@ -1120,6 +296,7 @@ function assertEpoch(epoch) {
 
 function bumpStateEpoch() {
   stateEpoch += 1;
+  playbackFrameCache.clear();
   try {
     activeRequestController.abort();
   } catch (_) {
@@ -1216,10 +393,327 @@ function restoreState(snapshot) {
   rememberCurrentQuantityColorNormWindow();
 }
 
+const playbackController = createPlaybackController({
+  state,
+  els,
+  renderJob,
+  sampleMorphAxis: SAMPLE_MORPH_AXIS,
+  playbackPreviewBaseMaxPixels: PLAYBACK_PREVIEW_BASE_MAX_PIXELS,
+  playbackPreviewMinPixels: PLAYBACK_PREVIEW_MIN_PIXELS,
+  playbackPreviewMaxPixels: PLAYBACK_PREVIEW_MAX_PIXELS,
+  hiddenDim,
+  isSampleMorphMode,
+  sampleCount,
+  isAxisProjectionActive,
+  isVolumeMode,
+  isSphereMode,
+  axisSize,
+  isAxisSelectorLocked,
+  refreshSlice,
+  refreshSelectionAnalytics,
+  advanceSampleMorphPlayback,
+  isSamplesMode,
+  clamp,
+  getAxisWindow,
+  onUpdatePlayUi: updateSampleMorphPlaybackStatus,
+  prefetchAxisPlaybackFrame,
+  setAxisIndex,
+});
+
+const {
+  isPlaying,
+  isSampleMorphPlaybackActive,
+  playbackAxisLength,
+  playbackIntervalMs,
+  playbackMaxPixelsForFrame,
+  restartPlaybackIfRunning,
+  restartPlaybackTimersIfRunning,
+  restartSampleMorphPlaybackIfRunning,
+  scheduleNextPlaybackTick,
+  schedulePlaybackRefine,
+  startPlayback,
+  stopPlayback,
+  stopSampleMorphPlayback,
+  syncSampleMorphPlayback,
+  toggleAxisPlayback,
+  updatePlayUi,
+  updatePlaybackButtons,
+} = playbackController;
+
+function debugStateSnapshot() {
+  const msBands = state.currentMultispectralBands || null;
+  return {
+    acceleration: {
+      compute: state.accelerationCaps?.compute || null,
+      computeBackendPreference: state.multiSpectralComputeBackend,
+      computeFallbackReason: msBands?.fallback_reason || null,
+      computePreviewActive: Boolean(msBands?.preview_active),
+      computeUsed: msBands?.compute_backend_used || msBands?.compute_backend || null,
+      render: state.accelerationCaps?.render || null,
+      renderRequested: state.sliceRender.backend,
+    },
+    axisWindow: {
+      t: state.axisWindow?.t ? { ...state.axisWindow.t } : null,
+      nu: state.axisWindow?.nu ? { ...state.axisWindow.nu } : null,
+    },
+    colorMap: state.colorMap,
+    dataId: state.dataId,
+    fluxScale: state.fluxScale,
+    hoverProbeActive: Boolean(state.hoverProbe),
+    ingest: {
+      dialogOpen: Boolean(els.ingestDialog?.open),
+      hasInspection: Boolean(ingestWizard.inspection),
+      hasPlan: Boolean(ingestWizard.plan),
+      intentDialogOpen: Boolean(els.ingestIntentDialog?.open),
+      keysDialogOpen: Boolean(els.ingestKeysDialog?.open),
+      step: ingestWizard.step,
+    },
+    plane: state.plane,
+    playback: {
+      active: isPlaying(),
+      axis: state.playbackAxis || null,
+      fps: state.playbackFps,
+      prefetchCacheSize: playbackFrameCache.size,
+      sampleMorphActive: isSampleMorphPlaybackActive(),
+    },
+    recording: {
+      active: isMovieRecordingActive(),
+      dialogOpen: Boolean(els.recordMovieDialog?.open),
+      pending: hasPendingMovieRecording(),
+    },
+    render: {
+      active: renderJob.running,
+      dialogOpen: Boolean(els.renderMovieDialog?.open),
+      encoding: renderJob.encoding,
+    },
+    profileZoomKeys: Object.keys(state.profileZoom || {}).sort(),
+    profilesActive: Boolean(state.profiles),
+    sampleMode: state.sampleMode,
+    sampleSingleView: state.sampleSingleView,
+    selection: state.selection
+      ? {
+          tile: state.selection.tile ?? null,
+          u0: state.selection.u0,
+          u1: state.selection.u1,
+          v0: state.selection.v0,
+          v1: state.selection.v1,
+        }
+      : null,
+    spatialMode: state.spatialMode,
+    sphere: {
+      hasVectors: Boolean(state.sphereVectors),
+      pitch: state.spherePitch,
+      projection: state.sphereProjection,
+      yaw: state.sphereYaw,
+    },
+    volume: {
+      pitch: state.volumePitch,
+      yaw: state.volumeYaw,
+    },
+    values: { ...state.values },
+    view: { ...state.view },
+    viewProfilesActive: Boolean(state.viewProfiles),
+  };
+}
+
+if (typeof window !== "undefined") {
+  window.__mobulaDebug = {
+    getStateSnapshot: debugStateSnapshot,
+  };
+}
+
 async function fetchJson(url, options = null) {
   const opts = options ? { ...options } : {};
   if (!opts.signal) opts.signal = activeRequestController.signal;
+  opts.onPerf = (event) => {
+    perfStore.recordFetch(event);
+  };
   return fetchJsonBase(url, opts);
+}
+
+async function fetchBinaryPayload(url, options = null) {
+  const opts = options ? { ...options } : {};
+  if (!opts.signal) opts.signal = activeRequestController.signal;
+  opts.onPerf = (event) => {
+    perfStore.recordFetch(event);
+  };
+  return fetchBinaryPayloadBase(url, opts);
+}
+
+function withBinaryResponse(params) {
+  const next = new URLSearchParams(params);
+  next.set("response_format", "binary");
+  return next;
+}
+
+function rememberPlaybackFramePromise(cacheKey, loader) {
+  const existing = playbackFrameCache.get(cacheKey);
+  if (existing) {
+    playbackFrameCache.delete(cacheKey);
+    playbackFrameCache.set(cacheKey, existing);
+    return existing.promise;
+  }
+  const entry = { promise: null };
+  entry.promise = Promise.resolve()
+    .then(() => loader())
+    .catch((err) => {
+      if (playbackFrameCache.get(cacheKey) === entry) {
+        playbackFrameCache.delete(cacheKey);
+      }
+      throw err;
+    });
+  playbackFrameCache.set(cacheKey, entry);
+  while (playbackFrameCache.size > PLAYBACK_FRAME_CACHE_MAX) {
+    const oldestKey = playbackFrameCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    playbackFrameCache.delete(oldestKey);
+  }
+  return entry.promise;
+}
+
+function fetchPlaybackCachedJson(url) {
+  return rememberPlaybackFramePromise(`json:${url}`, () => fetchJson(url));
+}
+
+function fetchPlaybackCachedBinaryPayload(url) {
+  return rememberPlaybackFramePromise(`binary:${url}`, () => fetchBinaryPayload(url));
+}
+
+function slicePayloadUrl(params) {
+  return `/api/datasets/${state.dataId}/slice?${withBinaryResponse(params).toString()}`;
+}
+
+function fetchSlicePayload(params, options = {}) {
+  const url = slicePayloadUrl(params);
+  return options.playback === true ? fetchPlaybackCachedBinaryPayload(url) : fetchBinaryPayload(url);
+}
+
+async function loadAccelerationCapabilities() {
+  try {
+    const payload = await fetchJsonBase("/api/acceleration/capabilities");
+    state.accelerationCaps.compute = payload?.compute || null;
+  } catch (err) {
+    console.warn("acceleration capability probe failed:", err);
+    state.accelerationCaps.compute = null;
+  }
+}
+
+function activeRenderBackendUsed() {
+  const width = Math.max(1, Math.round(state.drawRect?.w || els.canvas?.width || 0));
+  const height = Math.max(1, Math.round(state.drawRect?.h || els.canvas?.height || 0));
+  if (isVolumeMode()) return volumeBackendMode();
+  if (isSphereMode()) return sphereBackendMode(width, height);
+  if (multispectralFrameActive()) return rgbBackendMode(width, height);
+  return sliceBackendMode(width, height);
+}
+
+function renderBackendStatusText() {
+  const requested = state.sliceRender.backend || "auto";
+  const used = activeRenderBackendUsed();
+  const webgl2 = state.accelerationCaps?.render?.webgl2 || null;
+  if (used === "gpu") {
+    return `Render ${requested} -> GPU (WebGL2)`;
+  }
+  if (requested === "gpu") {
+    const reason = webgl2?.reason || "WebGL2 unavailable";
+    return `Render GPU requested, CPU used. ${reason}`;
+  }
+  if (requested === "auto" && webgl2?.supported === false) {
+    return `Render auto -> CPU. ${webgl2.reason || "WebGL2 unavailable"}`;
+  }
+  return `Render ${requested} -> CPU`;
+}
+
+function computeBackendStatusText() {
+  const bands = state.currentMultispectralBands || null;
+  const requested = normalizeComputeBackendPreference(state.multiSpectralComputeBackend);
+  if (!canUseMultiSpectral()) {
+    return "Compute backend applies to multi-spectral conversion only.";
+  }
+  if (!bands) {
+    const nativeBackend = state.accelerationCaps?.compute?.native_backend;
+    if (requested === "auto" && nativeBackend && nativeBackend !== "cpu") {
+      return `Compute auto prefers ${nativeBackend}.`;
+    }
+    return `Compute request: ${requested}.`;
+  }
+  const requestedUsed = bands.compute_backend_requested || requested;
+  const used = bands.compute_backend_used || bands.compute_backend || "cpu";
+  const preview = bands.preview_active ? " Preview active." : "";
+  const fallback = bands.fallback_reason ? ` ${bands.fallback_reason}` : "";
+  return `Compute ${requestedUsed} -> ${used}.${preview}${fallback}`.trim();
+}
+
+function updateBackendStatusUi() {
+  if (els.renderBackendStatus) {
+    els.renderBackendStatus.textContent = renderBackendStatusText();
+  }
+  if (els.computeBackendStatus) {
+    els.computeBackendStatus.textContent = computeBackendStatusText();
+  }
+}
+
+function volumePayloadUrl(params) {
+  return `/api/datasets/${state.dataId}/volume?${withBinaryResponse(params).toString()}`;
+}
+
+function fetchVolumePayload(params, options = {}) {
+  const url = volumePayloadUrl(params);
+  return options.playback === true ? fetchPlaybackCachedBinaryPayload(url) : fetchBinaryPayload(url);
+}
+
+function multispectralPayloadUrl(params) {
+  return `/api/datasets/${state.dataId}/multispectral?${withBinaryResponse(params).toString()}`;
+}
+
+function fetchMultispectralPayload(params, options = {}) {
+  const url = multispectralPayloadUrl(params);
+  return options.playback === true ? fetchPlaybackCachedBinaryPayload(url) : fetchBinaryPayload(url);
+}
+
+function startVisibleUpdate(label, meta = null) {
+  perfStore.startVisibleUpdate(label, meta);
+}
+
+function ensureVisibleUpdate(label, meta = null) {
+  perfStore.ensureVisibleUpdate(label, meta);
+}
+
+function renderPerfContext() {
+  if (isPlaying() || isSampleMorphPlaybackActive()) {
+    return { context: "playback", targetMs: playbackIntervalMs() };
+  }
+  if (
+    state.volumeDrag
+    || state.sphereDrag
+    || state.panDrag
+    || state.zoomDrag
+    || state.selectionDrag
+    || state.navDrag
+    || state.profileZoomDrag
+  ) {
+    return { context: "interaction", targetMs: 1000 / 60 };
+  }
+  return { context: "idle", targetMs: null };
+}
+
+function recordViewerRender(startedAt, label = "viewer-frame") {
+  const { context, targetMs } = renderPerfContext();
+  perfStore.recordRender({
+    completedAt: performance.now(),
+    context,
+    drawMode: state.frameTiles && state.frameTiles.length ? "tiles" : "single",
+    durationMs: performance.now() - startedAt,
+    framePixels: els.canvas ? els.canvas.width * els.canvas.height : null,
+    label,
+    meta: {
+      multiSpectral: Boolean(state.multiSpectral),
+      plane: state.plane,
+      sampleMode: state.sampleMode,
+      spatialMode: state.spatialMode,
+    },
+    targetMs,
+  });
 }
 
 function planeDims() {
@@ -1471,6 +965,64 @@ function detectSphereMeta(meta) {
   };
 }
 
+function provisionalAxisUnit(dim) {
+  if (dim === "sample") return "index";
+  if (dim === "pol") return "index";
+  if (dim === "t") return "s";
+  if (dim === "nu") return "Hz";
+  return "pix";
+}
+
+function provisionalAxisType(dim) {
+  if (dim === "sample") return "sample";
+  if (dim === "pol") return "polarization";
+  if (dim === "t") return "time";
+  if (dim === "nu") return "spectral";
+  return "spatial";
+}
+
+function buildProvisionalMetaFromDatasetSummary(summary) {
+  if (!summary || !Array.isArray(summary.dims) || !Array.isArray(summary.shape) || summary.dims.length !== summary.shape.length) {
+    return null;
+  }
+  const coords = {};
+  const axisTypes = {};
+  for (let i = 0; i < summary.dims.length; i += 1) {
+    const dim = String(summary.dims[i] || "");
+    if (!dim) continue;
+    const size = Math.max(1, Number.parseInt(summary.shape[i], 10) || 1);
+    coords[dim] = {
+      size,
+      unit: provisionalAxisUnit(dim),
+      min: 0,
+      max: Math.max(0, size - 1),
+    };
+    axisTypes[dim] = provisionalAxisType(dim);
+  }
+
+  const meta = {
+    data_id: summary.data_id,
+    dims: [...summary.dims],
+    shape: [...summary.shape],
+    coords,
+    intensity_unit: summary.intensity_unit || "arb",
+    wcs: {
+      frame: "unknown",
+      source: "summary",
+      axis_types: axisTypes,
+    },
+    provenance: {
+      source: summary.source || "summary",
+      provisional_meta: true,
+    },
+    uncertainty: null,
+    pol_labels: coords.pol && Number.parseInt(coords.pol.size, 10) === 4 ? ["I", "Q", "U", "V"] : null,
+    sphere: null,
+  };
+  meta.sphere = detectSphereMeta(meta);
+  return meta;
+}
+
 function polLabel(idx) {
   const labels =
     state.meta && Array.isArray(state.meta.pol_labels) ? state.meta.pol_labels : ["I", "Q", "U", "V"];
@@ -1633,7 +1185,6 @@ function gpuAvailable() {
 }
 
 function volumeBackendMode() {
-  if (state.fluxScale === "sqrt") return "cpu";
   const requested = state.sliceRender.backend;
   if (requested === "cpu") return "cpu";
   if (!gpuAvailableKnown()) ensureVolumeGpuRenderer();
@@ -1650,7 +1201,6 @@ function sliceGpuAvailable() {
 }
 
 function sliceBackendMode(width = 0, height = 0) {
-  if (state.fluxScale === "sqrt") return "cpu";
   const requested = state.sliceRender.backend;
   if (requested === "cpu") return "cpu";
   if (!sliceGpuAvailableKnown()) ensureSliceGpuRenderer();
@@ -2124,6 +1674,7 @@ function stepViewRotateRate(directionRaw) {
 function updateViewRotateControls() {
   const rate = syncLegacyViewRotateState();
   const modeActive = viewRotateModeActive();
+  const volumeMode = isVolumeMode();
   const sphereMode = isSphereMode();
   if (els.viewRotateNegBtn) {
     els.viewRotateNegBtn.disabled = !modeActive;
@@ -2138,114 +1689,13 @@ function updateViewRotateControls() {
     els.viewRotateRateControl.classList.toggle("isActive", modeActive && rate !== 0);
   }
   if (els.viewRotateRebaseBtn) {
-    setVisible(els.viewRotateRebaseBtn, sphereMode);
-    els.viewRotateRebaseBtn.disabled = !modeActive || !sphereMode;
+    setVisible(els.viewRotateRebaseBtn, volumeMode || sphereMode);
+    els.viewRotateRebaseBtn.disabled = !modeActive || (!volumeMode && !sphereMode);
+    els.viewRotateRebaseBtn.textContent = volumeMode ? "Reset" : "Rebase";
+    els.viewRotateRebaseBtn.title = volumeMode ? "Reset volume orientation" : "Rebase sphere rotate axis";
+    els.viewRotateRebaseBtn.setAttribute("aria-label", els.viewRotateRebaseBtn.title);
   }
   ensureViewRotateLoop();
-}
-
-function isPlaying() {
-  return state.playbackTimer !== null;
-}
-
-function isSampleMorphPlaybackActive() {
-  return state.sampleMorphTimer !== null;
-}
-
-function shouldAutoPlaySampleMorph() {
-  return (
-    Boolean(state.dataId)
-    && isSampleMorphMode()
-    && sampleCount() > 1
-    && !isPlaying()
-    && !renderJob.running
-    && !renderJob.encoding
-    && !state.sampleMorph.initializing
-  );
-}
-
-function stopSampleMorphPlayback() {
-  if (state.sampleMorphTimer) {
-    clearInterval(state.sampleMorphTimer);
-    state.sampleMorphTimer = null;
-  }
-}
-
-function startSampleMorphPlayback() {
-  if (!shouldAutoPlaySampleMorph()) {
-    stopSampleMorphPlayback();
-    return;
-  }
-  if (state.sampleMorphTimer) return;
-
-  const intervalMs = Math.max(30, Math.floor(1000 / Math.max(1, state.playbackFps)));
-  state.sampleMorphTimer = setInterval(async () => {
-    if (state.playbackBusy) return;
-    state.playbackBusy = true;
-    try {
-      await advanceSampleMorphPlayback(intervalMs / 1000);
-    } finally {
-      state.playbackBusy = false;
-    }
-  }, intervalMs);
-}
-
-function syncSampleMorphPlayback() {
-  if (shouldAutoPlaySampleMorph()) {
-    startSampleMorphPlayback();
-  } else {
-    stopSampleMorphPlayback();
-  }
-}
-
-function playbackIntervalMs() {
-  return Math.max(30, Math.floor(1000 / Math.max(1, state.playbackFps)));
-}
-
-function tunePlaybackPreviewBudget(frameMs) {
-  const targetMs = playbackIntervalMs();
-  const current = Math.max(PLAYBACK_PREVIEW_MIN_PIXELS, Math.floor(state.playbackPreviewMaxPixels || PLAYBACK_PREVIEW_BASE_MAX_PIXELS));
-  if (frameMs > targetMs * 1.2) {
-    state.playbackPreviewMaxPixels = Math.max(PLAYBACK_PREVIEW_MIN_PIXELS, Math.floor(current * 0.85));
-    return;
-  }
-  if (frameMs < targetMs * 0.7) {
-    state.playbackPreviewMaxPixels = Math.min(PLAYBACK_PREVIEW_MAX_PIXELS, Math.floor(current * 1.05));
-  }
-}
-
-async function runPlaybackTick(axis) {
-  if (!axis || !isPlaying() || state.playbackAxis !== axis) return;
-  if (state.playbackBusy) {
-    scheduleNextPlaybackTick(axis);
-    return;
-  }
-  state.playbackBusy = true;
-  const startedAt = performance.now();
-  try {
-    await advanceAxisPlayback(axis);
-  } finally {
-    state.playbackBusy = false;
-    tunePlaybackPreviewBudget(performance.now() - startedAt);
-  }
-  scheduleNextPlaybackTick(axis);
-}
-
-function scheduleNextPlaybackTick(axis, delayMs = null) {
-  if (!axis || state.playbackAxis !== axis) return;
-  if (state.playbackTimer) {
-    clearTimeout(state.playbackTimer);
-  }
-  const waitMs = Number.isFinite(delayMs) && delayMs !== null ? Math.max(0, Math.floor(delayMs)) : playbackIntervalMs();
-  state.playbackTimer = setTimeout(() => {
-    void runPlaybackTick(axis);
-  }, waitMs);
-}
-
-function playbackMaxPixelsForFrame() {
-  const tileCount = isSamplesMode() ? Math.max(1, state.sampleGridIndices.length || 1) : 1;
-  const budget = Math.max(40000, state.playbackPreviewMaxPixels);
-  return Math.max(20000, Math.floor(budget / tileCount));
 }
 
 function spatialLodMaxPixels(baseMaxPixels = null) {
@@ -2470,6 +1920,80 @@ function multispectralCorrectionGains(payload, targetAlpha = state.multiSpectral
     return Number.isFinite(gain) && gain > 0 ? gain : 1;
   };
   return [gainForBand(bands.red), gainForBand(bands.green), gainForBand(bands.blue)];
+}
+
+function multispectralChromaPreviewBoost(payload) {
+  const bands = payload && payload.bands ? payload.bands : null;
+  if (!bands || !bands.normalize_spectrum) return 1;
+  const baseBoost = Number.isFinite(bands.normalize_spectrum_boost) ? bands.normalize_spectrum_boost : 1;
+  const targetBoost = state.multiSpectralNormalizeSpectrum
+    ? normalizeMultispectralNormalizeBoost(state.multiSpectralNormalizeBoost)
+    : 1;
+  return clamp(targetBoost / Math.max(0.25, baseBoost), 0.25, 8.0);
+}
+
+function multispectralRangeWindowFromPercent(minPct, maxPct) {
+  const min = Number.isFinite(minPct) ? clamp(minPct / 100, 0, 1) : 0;
+  const max = Number.isFinite(maxPct) ? clamp(maxPct / 100, 0, 1) : 1;
+  if (max <= min + MULTISPECTRAL_RANGE_MIN_GAP) {
+    const hi = clamp(min + MULTISPECTRAL_RANGE_MIN_GAP, MULTISPECTRAL_RANGE_MIN_GAP, 1);
+    return {
+      min: clamp(hi - MULTISPECTRAL_RANGE_MIN_GAP, 0, 1 - MULTISPECTRAL_RANGE_MIN_GAP),
+      max: hi,
+    };
+  }
+  return { min, max };
+}
+
+function multispectralFluxScaleMode(rawMode) {
+  return rawMode === "log" ? "log" : rawMode === "sqrt" ? "sqrt" : "linear";
+}
+
+function multispectralBrightnessFractionFromDisplay(displayValue, fluxScale, rangeWindow) {
+  const value = clamp(Number.isFinite(displayValue) ? displayValue : 0, 0, 1);
+  const min = clamp(Number.isFinite(rangeWindow?.min) ? rangeWindow.min : 0, 0, 1);
+  const max = clamp(Number.isFinite(rangeWindow?.max) ? rangeWindow.max : 1, min + 1.0e-9, 1);
+  if (fluxScale === "log") {
+    const lo = min > 0 ? min : Math.max(max / 2500.0, 1.0e-30);
+    const hi = Math.max(max, lo * (1.0 + 1.0e-12));
+    return clamp(lo * Math.exp(value * Math.log(hi / lo)), 0, 1);
+  }
+  const linear = fluxScale === "sqrt" ? value * value : value;
+  return clamp(min + linear * Math.max(1.0e-9, max - min), 0, 1);
+}
+
+function multispectralBrightnessDisplayFromFraction(rawFraction, fluxScale, rangeWindow) {
+  const raw = clamp(Number.isFinite(rawFraction) ? rawFraction : 0, 0, 1);
+  const min = clamp(Number.isFinite(rangeWindow?.min) ? rangeWindow.min : 0, 0, 1);
+  const max = clamp(Number.isFinite(rangeWindow?.max) ? rangeWindow.max : 1, min + 1.0e-9, 1);
+  if (fluxScale === "log") {
+    const lo = min > 0 ? min : Math.max(max / 2500.0, 1.0e-30);
+    const hi = Math.max(max, lo * (1.0 + 1.0e-12));
+    const clipped = clamp(raw, lo, hi);
+    return clamp((Math.log(clipped / lo) / Math.log(hi / lo)), 0, 1);
+  }
+  const linear = clamp((raw - min) / Math.max(1.0e-9, max - min), 0, 1);
+  return fluxScale === "sqrt" ? Math.sqrt(linear) : linear;
+}
+
+function multispectralPreviewBrightness(displayValue, preview) {
+  if (!preview) return clamp(Number.isFinite(displayValue) ? displayValue : 0, 0, 1);
+  const rawFraction = multispectralBrightnessFractionFromDisplay(displayValue, preview.baseFluxScale, preview.baseRange);
+  return multispectralBrightnessDisplayFromFraction(rawFraction, preview.targetFluxScale, preview.targetRange);
+}
+
+function buildMultispectralLocalPreview(payload) {
+  const bands = payload && payload.bands ? payload.bands : null;
+  if (!bands) return null;
+  const targetRange = multispectralChannelRangeFractionWindow();
+  return {
+    gains: multispectralCorrectionGains(payload),
+    chromaBoost: multispectralChromaPreviewBoost(payload),
+    baseFluxScale: multispectralFluxScaleMode(bands.intensity_scale),
+    targetFluxScale: multispectralFluxScaleMode(state.fluxScale),
+    baseRange: multispectralRangeWindowFromPercent(bands.range_min, bands.range_max),
+    targetRange,
+  };
 }
 
 function isAxisSelectorLocked(axis) {
@@ -4116,6 +3640,14 @@ function payloadSamplingStep(payload) {
   return [Math.max(1, sx), Math.max(1, sy)];
 }
 
+function isNumericArrayLike(values) {
+  return Array.isArray(values) || ArrayBuffer.isView(values);
+}
+
+function isRgbValuePayload(values) {
+  return Boolean(values && isNumericArrayLike(values.r) && isNumericArrayLike(values.g) && isNumericArrayLike(values.b));
+}
+
 function payloadValueAt(payload, ix, iy) {
   if (!payload) return { kind: "none" };
   const [shapeX, shapeY] = payloadShape2d(payload);
@@ -4125,12 +3657,12 @@ function payloadValueAt(payload, ix, iy) {
   const sy = clamp(Math.floor(iy / stepY), 0, shapeY - 1);
   const src = sx * shapeY + sy;
   const values = payload.values;
-  if (Array.isArray(values)) {
+  if (isNumericArrayLike(values)) {
     const flux = values[src];
     if (Number.isFinite(flux)) return { kind: "single", flux };
     return { kind: "single", flux: null };
   }
-  if (values && Array.isArray(values.r) && Array.isArray(values.g) && Array.isArray(values.b)) {
+  if (isRgbValuePayload(values)) {
     const rv = values.r[src];
     const gv = values.g[src];
     const bv = values.b[src];
@@ -4142,12 +3674,12 @@ function payloadValueAt(payload, ix, iy) {
 function payloadValueAtIndex(payload, idx) {
   if (!payload) return { kind: "none" };
   const values = payload.values;
-  if (Array.isArray(values)) {
+  if (isNumericArrayLike(values)) {
     const flux = values[idx];
     if (Number.isFinite(flux)) return { kind: "single", flux };
     return { kind: "single", flux: null };
   }
-  if (values && Array.isArray(values.r) && Array.isArray(values.g) && Array.isArray(values.b)) {
+  if (isRgbValuePayload(values)) {
     const rv = values.r[idx];
     const gv = values.g[idx];
     const bv = values.b[idx];
@@ -4907,6 +4439,12 @@ function withRenderOverlayOverride(overrideOptions, fn) {
   }
 }
 
+function setRenderOverlayDrawOverride(overrideOptions) {
+  renderOverlayDrawOverride = overrideOptions && typeof overrideOptions === "object"
+    ? { ...overrideOptions }
+    : null;
+}
+
 function drawSnapshotCardBackground(ctx, width, height) {
   ctx.fillStyle = "#0b1119";
   ctx.fillRect(0, 0, width, height);
@@ -5237,72 +4775,13 @@ async function saveCurrentImagesFromDialog() {
   closeSaveImagesDialog();
 }
 
-function isMovieRecordingActive() {
-  return Boolean(movieRecording.recorder && movieRecording.recorder.state === "recording");
-}
-
-function hasPendingMovieRecording() {
-  return Boolean(movieRecording.pendingBlob && movieRecording.pendingBlob.size > 0);
-}
-
-function preferredMovieMimeType() {
-  if (typeof MediaRecorder === "undefined") return null;
-  const candidates = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
-  if (typeof MediaRecorder.isTypeSupported !== "function") return "video/webm";
-  for (const mime of candidates) {
-    if (MediaRecorder.isTypeSupported(mime)) return mime;
-  }
-  return null;
-}
-
-function isMovieRecordingSupported() {
-  if (!els.canvas || typeof els.canvas.captureStream !== "function") return false;
-  return Boolean(preferredMovieMimeType());
-}
-
-function isValidRecordMovieFormat(format) {
-  return format === "webm" || format === "mp4" || format === "gif";
-}
-
-function normalizeRecordMovieFormat(format) {
-  return isValidRecordMovieFormat(format) ? format : "mp4";
-}
-
-function isValidRecordQuality(quality) {
-  return quality === "low" || quality === "balanced" || quality === "high";
-}
-
-function normalizeRecordQuality(quality) {
-  return isValidRecordQuality(quality) ? quality : "balanced";
-}
-
-function recordQualityConfig(quality) {
-  const key = normalizeRecordQuality(quality);
-  return RECORD_QUALITY_PRESETS[key] || RECORD_QUALITY_PRESETS.balanced;
-}
-
-function recordMovieExtension(format) {
-  const fmt = normalizeRecordMovieFormat(format);
-  if (fmt === "mp4") return ".mp4";
-  if (fmt === "gif") return ".gif";
-  return ".webm";
-}
-
 function defaultRecordMovieFilename(format = "mp4") {
-  const base = state.dataId ? state.dataId : "mobula";
-  return `${base}_recording_${snapshotTimestamp()}${recordMovieExtension(format)}`;
+  return buildDefaultRecordMovieFilename(state.dataId, snapshotTimestamp(), format);
 }
 
 function normalizeRecordMovieFilename(name, format = "mp4") {
   const fmt = normalizeRecordMovieFormat(format);
-  let out = String(name || "").trim();
-  if (!out) out = defaultRecordMovieFilename(fmt);
-  out = out.split(/[\\/]/).pop() || defaultRecordMovieFilename(fmt);
-  const ext = recordMovieExtension(fmt);
-  if (!out.toLowerCase().endsWith(ext)) {
-    out = `${out.replace(/\.[^.]+$/, "")}${ext}`;
-  }
-  return out;
+  return normalizeMovieFilename(name, fmt, defaultRecordMovieFilename(fmt));
 }
 
 function setRecordMovieStatus(message, error = false) {
@@ -5403,6 +4882,44 @@ function closeRecordMovieDialog() {
   setRecordMovieStatus("");
 }
 
+const movieRecordingController = createMovieRecordingController({
+  state,
+  els,
+  movieRecording,
+  recordStopTimeoutMs: RECORD_STOP_TIMEOUT_MS,
+  fetchJson,
+  visibleCanvasForSnapshot,
+  normalizeRecordQuality,
+  normalizeRecordMovieFormat,
+  normalizeRecordMovieFilename,
+  defaultRecordMovieFilename,
+  recordQualityConfig,
+  setSystemPickerStatus,
+  setRecordMovieStatus,
+  updateRecordMovieDialogActions,
+  updateExportButtonState,
+  openRecordMovieDialog,
+  closeRecordMovieDialog,
+  chooseRecordMovieFolder,
+  blobToDataUrl,
+});
+
+function isMovieRecordingActive() {
+  return movieRecordingController.isMovieRecordingActive();
+}
+
+function hasPendingMovieRecording() {
+  return movieRecordingController.hasPendingMovieRecording();
+}
+
+function preferredMovieMimeType() {
+  return movieRecordingController.preferredMovieMimeType();
+}
+
+function isMovieRecordingSupported() {
+  return movieRecordingController.isMovieRecordingSupported();
+}
+
 function blobToDataUrl(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -5412,493 +4929,32 @@ function blobToDataUrl(blob) {
   });
 }
 
-function sleepMs(ms) {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, Math.max(0, ms));
-  });
-}
-
-function loadImageFromDataUrl(dataUrl) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("failed to decode rendered frame"));
-    img.src = dataUrl;
-  });
-}
-
-async function encodeFramesToWebmDataUrl(frames, fps) {
-  if (!Array.isArray(frames) || frames.length < 1) {
-    throw new Error("No rendered frames to encode.");
-  }
-  if (typeof MediaRecorder === "undefined") {
-    throw new Error("Fallback render encoding requires MediaRecorder support.");
-  }
-  const candidateMimes = [];
-  const pref = preferredMovieMimeType();
-  if (pref) candidateMimes.push(pref);
-  candidateMimes.push("video/webm;codecs=vp8", "video/webm");
-  const uniqueMimes = Array.from(new Set(candidateMimes)).filter((mime) => {
-    if (typeof MediaRecorder.isTypeSupported !== "function") return true;
-    return MediaRecorder.isTypeSupported(mime);
-  });
-  if (!uniqueMimes.length) {
-    throw new Error("Fallback render encoding requires WebM MediaRecorder support.");
-  }
-
-  const first = await loadImageFromDataUrl(frames[0].data_url);
-  const frameDurationMs = Math.max(1, Math.round(1000 / Math.max(1, fps)));
-  let lastErr = null;
-
-  for (const mimeType of uniqueMimes) {
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(2, first.naturalWidth || first.width || 2);
-    canvas.height = Math.max(2, first.naturalHeight || first.height || 2);
-    const ctx = canvas.getContext("2d", { alpha: false });
-    if (!ctx) throw new Error("Could not initialize fallback render encoder canvas.");
-
-    const stream = canvas.captureStream(Math.max(1, fps));
-    const track = stream.getVideoTracks().length ? stream.getVideoTracks()[0] : null;
-    const chunks = [];
-    let stopResolve = null;
-    let stopReject = null;
-    const stopPromise = new Promise((resolve, reject) => {
-      stopResolve = resolve;
-      stopReject = reject;
-    });
-    let recorder = null;
-    try {
-      recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
-      recorder.ondataavailable = (ev) => {
-        if (ev.data && ev.data.size > 0) chunks.push(ev.data);
-      };
-      recorder.onerror = (ev) => {
-        if (stopReject) {
-          stopReject(ev && ev.error ? ev.error : new Error("fallback render encoding failed"));
-        }
-      };
-      recorder.onstop = () => {
-        if (stopResolve) stopResolve(null);
-      };
-      recorder.start(250);
-
-      for (let i = 0; i < frames.length; i += 1) {
-        if (renderJob.cancelRequested) throw makeRenderCancelError();
-        const img = i === 0 ? first : await loadImageFromDataUrl(frames[i].data_url);
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        if (track && typeof track.requestFrame === "function") {
-          try {
-            track.requestFrame();
-          } catch (_) {
-            // ignore requestFrame failures
-          }
-        }
-        await sleepMs(frameDurationMs);
-      }
-      await sleepMs(frameDurationMs);
-      try {
-        if (typeof recorder.requestData === "function") recorder.requestData();
-      } catch (_) {
-        // ignore requestData failures
-      }
-      if (recorder.state !== "inactive") {
-        recorder.stop();
-      }
-      await stopPromise;
-      const blob = new Blob(chunks, { type: mimeType });
-      if (blob.size > 0) {
-        for (const t of stream.getTracks()) {
-          try {
-            t.stop();
-          } catch (_) {
-            // ignore cleanup failures
-          }
-        }
-        return blobToDataUrl(blob);
-      }
-      lastErr = new Error(`Fallback render encoding produced no video data for ${mimeType}.`);
-    } catch (err) {
-      lastErr = err instanceof Error ? err : new Error(String(err || "fallback render encoding failed"));
-      try {
-        if (recorder && recorder.state !== "inactive") recorder.stop();
-      } catch (_) {
-        // ignore stop failures
-      }
-    } finally {
-      for (const t of stream.getTracks()) {
-        try {
-          t.stop();
-        } catch (_) {
-          // ignore cleanup failures
-        }
-      }
-    }
-  }
-
-  if (lastErr) throw lastErr;
-  throw new Error("Fallback render encoding produced no video data.");
-}
-
-function beginMovieCompositor(qualityCfg) {
-  const cfg = qualityCfg || recordQualityConfig(state.recordMoviePrefs.quality);
-  const source = visibleCanvasForSnapshot(els.canvas);
-  if (!source) throw new Error("Viewer canvas is not available.");
-  const colorbar = visibleCanvasForSnapshot(els.colorbarCanvas, els.colorbarPanel);
-  const sourceW = Math.max(1, source.width);
-  const sourceH = Math.max(1, source.height);
-  const colorbarH = colorbar ? Math.max(1, colorbar.height) : 0;
-  const gap = colorbar ? 8 : 0;
-  const rawOutW = sourceW;
-  const rawOutH = sourceH + (colorbar ? colorbarH + gap : 0);
-  const pixelCount = rawOutW * rawOutH;
-  const scale = pixelCount > cfg.maxPixels
-    ? Math.sqrt(cfg.maxPixels / Math.max(1, pixelCount))
-    : 1;
-
-  const out = document.createElement("canvas");
-  const targetW = Math.max(2, Math.round(rawOutW * scale));
-  const targetH = Math.max(2, Math.round(rawOutH * scale));
-  out.width = targetW % 2 === 0 ? targetW : targetW + 1;
-  out.height = targetH % 2 === 0 ? targetH : targetH + 1;
-  const ctx = out.getContext("2d", { alpha: false, desynchronized: true });
-  if (!ctx) throw new Error("Could not initialize movie recorder canvas.");
-
-  const drawMainH = Math.max(1, Math.round(sourceH * scale));
-  const drawColorbarH = colorbar ? Math.max(1, Math.round(colorbarH * scale)) : 0;
-  const drawGap = colorbar ? Math.max(1, Math.round(gap * scale)) : 0;
-
-  const drawFrame = () => {
-    ctx.fillStyle = "#060d16";
-    ctx.fillRect(0, 0, out.width, out.height);
-    ctx.drawImage(source, 0, 0, source.width, source.height, 0, 0, out.width, drawMainH);
-    if (colorbar) {
-      ctx.drawImage(colorbar, 0, 0, colorbar.width, colorbar.height, 0, drawMainH + drawGap, out.width, drawColorbarH);
-    }
-  };
-  drawFrame();
-  const frameIntervalMs = Math.max(16, Math.round(1000 / Math.max(1, cfg.fps)));
-  const timerId = window.setInterval(drawFrame, frameIntervalMs);
-
-  const stream = out.captureStream(cfg.fps);
-  const stopDrawing = () => {
-    window.clearInterval(timerId);
-  };
-  return {
-    stream,
-    stopDrawing,
-    stop: () => {
-      stopDrawing();
-      for (const track of stream.getTracks()) {
-        track.stop();
-      }
-    },
-  };
-}
-
-function clearPendingMovieRecording() {
-  movieRecording.pendingBlob = null;
-  movieRecording.pendingMimeType = "";
-  movieRecording.pendingDataId = null;
-}
-
-function resetMovieRecordingRuntime(clearPending = false) {
-  if (movieRecording.stopDrawing) {
-    try {
-      movieRecording.stopDrawing();
-    } catch (_) {
-      // ignore cleanup failures
-    }
-  }
-  if (movieRecording.stopCompositor) {
-    try {
-      movieRecording.stopCompositor();
-    } catch (_) {
-      // ignore cleanup failures
-    }
-  } else if (movieRecording.stream) {
-    for (const track of movieRecording.stream.getTracks()) {
-      try {
-        track.stop();
-      } catch (_) {
-        // ignore cleanup failures
-      }
-    }
-  }
-  movieRecording.recorder = null;
-  movieRecording.stream = null;
-  movieRecording.stopDrawing = null;
-  movieRecording.stopCompositor = null;
-  movieRecording.chunks = [];
-  movieRecording.mimeType = "video/webm";
-  movieRecording.dataId = null;
-  movieRecording.startedAtMs = 0;
-  movieRecording.stopPromise = null;
-  if (clearPending) {
-    clearPendingMovieRecording();
-  }
-}
-
 async function startMovieRecordingFromToolbar() {
-  if (!state.dataId) return;
-  if (isMovieRecordingActive() || movieRecording.stopping) return;
-  if (!isMovieRecordingSupported()) {
-    throw new Error("Movie recording is not supported in this browser.");
-  }
-
-  state.recordMoviePrefs.quality = normalizeRecordQuality(state.recordMoviePrefs.quality);
-  const qualityCfg = recordQualityConfig(state.recordMoviePrefs.quality);
-  if (els.recordMovieDialog && els.recordMovieDialog.open) {
-    closeRecordMovieDialog();
-  }
-  clearPendingMovieRecording();
-  setSystemPickerStatus(`Starting recording (${qualityCfg.label})...`);
-  const mimeType = preferredMovieMimeType() || "video/webm";
-  const compositor = beginMovieCompositor(qualityCfg);
-  const chunks = [];
-  const recorderOpts = { mimeType, videoBitsPerSecond: qualityCfg.bitrate };
-  let recorder = null;
-  try {
-    recorder = new MediaRecorder(compositor.stream, recorderOpts);
-  } catch (err) {
-    compositor.stop();
-    throw err;
-  }
-
-  let settled = false;
-  let resolveStop = null;
-  let rejectStop = null;
-  const stopPromise = new Promise((resolve, reject) => {
-    resolveStop = resolve;
-    rejectStop = reject;
-  });
-  const resolveOnce = () => {
-    if (settled) return;
-    settled = true;
-    if (resolveStop) resolveStop();
-  };
-  const rejectOnce = (err) => {
-    if (settled) return;
-    settled = true;
-    const wrapped = err instanceof Error ? err : new Error(String(err || "recording failed"));
-    if (rejectStop) rejectStop(wrapped);
-  };
-
-  recorder.ondataavailable = (ev) => {
-    if (ev.data && ev.data.size > 0) chunks.push(ev.data);
-  };
-  recorder.onerror = (ev) => {
-    rejectOnce(ev && ev.error ? ev.error : new Error("recording failed"));
-  };
-  recorder.onstop = () => {
-    resolveOnce();
-  };
-
-  try {
-    recorder.start(250);
-  } catch (err) {
-    compositor.stop();
-    throw err;
-  }
-
-  movieRecording.recorder = recorder;
-  movieRecording.stream = compositor.stream;
-  movieRecording.stopDrawing = compositor.stopDrawing;
-  movieRecording.stopCompositor = compositor.stop;
-  movieRecording.chunks = chunks;
-  movieRecording.mimeType = mimeType;
-  movieRecording.dataId = state.dataId;
-  movieRecording.startedAtMs = Date.now();
-  movieRecording.stopPromise = stopPromise;
-  movieRecording.stopping = false;
-  updateExportButtonState();
-  setSystemPickerStatus(`Recording central panel (${qualityCfg.label})`);
+  return movieRecordingController.startMovieRecordingFromToolbar();
 }
 
 async function stopMovieRecordingForExport() {
-  if (!movieRecording.recorder) return;
-  if (movieRecording.stopping) return;
-  movieRecording.stopping = true;
-  updateExportButtonState();
-  setSystemPickerStatus("Stopping recording...");
-
-  const recorder = movieRecording.recorder;
-  const stopPromise = movieRecording.stopPromise;
-  let stopError = null;
-  let stopTimedOut = false;
-  try {
-    if (movieRecording.stopDrawing) {
-      try {
-        // Stop extra compositor work immediately once stop is requested.
-        movieRecording.stopDrawing();
-      } catch (_) {
-        // ignore stopDrawing errors
-      }
-    }
-    try {
-      if (typeof recorder.requestData === "function") {
-        recorder.requestData();
-      }
-    } catch (_) {
-      // ignore requestData errors
-    }
-    try {
-      if (recorder.state !== "inactive") {
-        recorder.stop();
-      }
-    } catch (_) {
-      // ignore stop errors and continue cleanup
-    }
-    if (stopPromise) {
-      await Promise.race([
-        stopPromise,
-        new Promise((resolve) => {
-          window.setTimeout(() => {
-            stopTimedOut = true;
-            resolve(null);
-          }, RECORD_STOP_TIMEOUT_MS);
-        }),
-      ]);
-    }
-  } catch (err) {
-    stopError = err;
-  }
-
-  const chunks = movieRecording.chunks.slice();
-  const mimeType = movieRecording.mimeType || "video/webm";
-  const dataId = movieRecording.dataId || state.dataId;
-  const startedAt = movieRecording.startedAtMs || 0;
-  resetMovieRecordingRuntime(false);
-  movieRecording.stopping = false;
-  updateExportButtonState();
-  if (stopError) {
-    throw stopError;
-  }
-  if (stopTimedOut) {
-    setSystemPickerStatus("Recording stop timed out; attempting export with captured frames.", true);
-  }
-
-  if (!chunks.length) {
-    throw new Error("No recording data captured.");
-  }
-  const blob = new Blob(chunks, { type: mimeType });
-  if (blob.size < 1) {
-    throw new Error("No recording data captured.");
-  }
-  if (!dataId) {
-    throw new Error("No dataset selected for movie export.");
-  }
-
-  movieRecording.pendingBlob = blob;
-  movieRecording.pendingMimeType = mimeType;
-  movieRecording.pendingDataId = dataId;
-  if (!state.recordMoviePrefs.filename) {
-    state.recordMoviePrefs.filename = defaultRecordMovieFilename(state.recordMoviePrefs.format);
-  }
-  state.recordMoviePrefs.filename = normalizeRecordMovieFilename(state.recordMoviePrefs.filename, state.recordMoviePrefs.format);
-  openRecordMovieDialog();
-  const durationSec = startedAt > 0 ? (Date.now() - startedAt) / 1000 : 0;
-  setRecordMovieStatus(`Recording ready (${durationSec.toFixed(1)}s). Choose format and save.`);
+  return movieRecordingController.stopMovieRecordingForExport();
 }
 
 function discardPendingMovieRecording() {
-  clearPendingMovieRecording();
-  closeRecordMovieDialog();
-  setSystemPickerStatus("Recording discarded.");
+  return movieRecordingController.discardPendingMovieRecording();
 }
 
 async function savePendingMovieFromDialog() {
-  if (!hasPendingMovieRecording()) {
-    throw new Error("No recording available to save.");
-  }
-  if (!els.recordMovieFilenameInput || !els.recordMovieOverwriteChk) return;
-
-  state.recordMoviePrefs.format = normalizeRecordMovieFormat(state.recordMoviePrefs.format);
-  state.recordMoviePrefs.filename = normalizeRecordMovieFilename(els.recordMovieFilenameInput.value, state.recordMoviePrefs.format);
-  state.recordMoviePrefs.overwrite = Boolean(els.recordMovieOverwriteChk.checked);
-
-  if (!state.recordMoviePrefs.outputDir) {
-    setRecordMovieStatus("Choose a destination folder.", true);
-    const selected = await chooseRecordMovieFolder();
-    if (!selected) return;
-  }
-
-  const dataId = movieRecording.pendingDataId || state.dataId;
-  if (!dataId) {
-    throw new Error("No dataset selected for movie export.");
-  }
-
-  movieRecording.saving = true;
-  updateRecordMovieDialogActions();
-  try {
-    setRecordMovieStatus("Encoding movie...");
-    const dataUrl = await blobToDataUrl(movieRecording.pendingBlob);
-    setRecordMovieStatus("Saving movie...");
-    const response = await fetchJson(`/api/datasets/${dataId}/save-movie`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        output_dir: state.recordMoviePrefs.outputDir,
-        format: state.recordMoviePrefs.format,
-        filename: state.recordMoviePrefs.filename,
-        overwrite: state.recordMoviePrefs.overwrite !== false,
-        data_url: dataUrl,
-      }),
-    });
-    if (!response.saved) {
-      throw new Error(response.detail || "save failed");
-    }
-    clearPendingMovieRecording();
-    closeRecordMovieDialog();
-    setSystemPickerStatus(`Saved movie: ${response.path}`);
-  } finally {
-    movieRecording.saving = false;
-    updateRecordMovieDialogActions();
-  }
+  return movieRecordingController.savePendingMovieFromDialog();
 }
 
-function parseRenderAxis(axis) {
-  const token = String(axis || "").trim().toLowerCase();
-  if (!token) return null;
-  if (token === "t" || token === "nu" || token === RENDER_AXIS_HIDDEN) return token;
-  if (token === SAMPLE_MORPH_AXIS || token === "sample-morph" || token === "sample_morph") {
-    return SAMPLE_MORPH_AXIS;
-  }
-  if (token === RENDER_AXIS_ROTATE || token === "rotate" || token === "rotation") {
-    return RENDER_AXIS_ROTATE;
-  }
-  return null;
+function parseRenderAxisToken(axis) {
+  return parseRenderAxis(axis, SAMPLE_MORPH_AXIS);
 }
 
 function isValidRenderAxis(axis) {
-  return parseRenderAxis(axis) !== null;
+  return parseRenderAxisToken(axis) !== null;
 }
 
 function normalizeRenderAxis(axis) {
-  return parseRenderAxis(axis) || "t";
-}
-
-function isValidRenderResolution(resolution) {
-  return resolution === "canvas" || Object.prototype.hasOwnProperty.call(RENDER_RESOLUTION_HEIGHT, resolution);
-}
-
-function normalizeRenderResolution(resolution) {
-  return isValidRenderResolution(resolution) ? resolution : "canvas";
-}
-
-function normalizeRenderFps(fps) {
-  const parsed = Number.parseInt(fps, 10);
-  if (!Number.isFinite(parsed)) return 30;
-  return clamp(parsed, 1, 240);
-}
-
-function normalizeRenderLoops(loops) {
-  const parsed = Number.parseInt(loops, 10);
-  if (!Number.isFinite(parsed)) return 1;
-  return clamp(parsed, 1, 100);
-}
-
-function normalizeRenderOverlayOption(value) {
-  return value !== false;
+  return parseRenderAxisToken(axis) || "t";
 }
 
 function computeSampleMorphRenderFrameCount(fps) {
@@ -5919,25 +4975,13 @@ function resolveRenderSweepAxis(axisPref = null) {
   return pref === RENDER_AXIS_HIDDEN ? hiddenDim() : pref;
 }
 
-function renderQualityLabel(quality) {
-  return recordQualityConfig(quality).label;
-}
-
 function defaultRenderMovieFilename(format = "mp4") {
-  const base = state.dataId ? state.dataId : "mobula";
-  return `${base}_render_${snapshotTimestamp()}${recordMovieExtension(format)}`;
+  return buildDefaultRenderMovieFilename(state.dataId, snapshotTimestamp(), format);
 }
 
 function normalizeRenderMovieFilename(name, format = "mp4") {
   const fmt = normalizeRecordMovieFormat(format);
-  let out = String(name || "").trim();
-  if (!out) out = defaultRenderMovieFilename(fmt);
-  out = out.split(/[\\/]/).pop() || defaultRenderMovieFilename(fmt);
-  const ext = recordMovieExtension(fmt);
-  if (!out.toLowerCase().endsWith(ext)) {
-    out = `${out.replace(/\.[^.]+$/, "")}${ext}`;
-  }
-  return out;
+  return normalizeMovieFilename(name, fmt, defaultRenderMovieFilename(fmt));
 }
 
 function setRenderMovieStatus(message, error = false) {
@@ -5985,7 +5029,7 @@ function canRenderRotationAxis() {
 }
 
 function canRenderSweepAxis(axisToken) {
-  const normalizedAxis = parseRenderAxis(axisToken);
+  const normalizedAxis = parseRenderAxisToken(axisToken);
   if (!normalizedAxis) return false;
   if (normalizedAxis === SAMPLE_MORPH_AXIS) {
     return sampleCount() > 1;
@@ -6233,426 +5277,78 @@ function closeRenderMovieDialog() {
   setRenderMovieStatus("");
 }
 
-function ensureEvenPositive(n) {
-  const v = Math.max(2, Math.round(Number.isFinite(n) ? n : 2));
-  return v % 2 === 0 ? v : v + 1;
-}
-
-function resolveRenderFrameDimensions(rawW, rawH, resolution) {
-  const key = normalizeRenderResolution(resolution);
-  if (key === "canvas") {
-    return { width: ensureEvenPositive(rawW), height: ensureEvenPositive(rawH) };
-  }
-  const targetH = RENDER_RESOLUTION_HEIGHT[key];
-  const scale = targetH / Math.max(1, rawH);
-  return {
-    width: ensureEvenPositive(rawW * scale),
-    height: ensureEvenPositive(targetH),
-  };
-}
-
-function buildRenderFrameCanvas(resolution = "canvas", options = null) {
-  const source = visibleCanvasForSnapshot(els.canvas);
-  if (!source) throw new Error("Viewer canvas is not available.");
-  const includeColorbar = !options || options.includeColorbar !== false;
-  const colorbar = includeColorbar ? visibleCanvasForSnapshot(els.colorbarCanvas, els.colorbarPanel) : null;
-  const sourceW = Math.max(1, source.width);
-  const sourceH = Math.max(1, source.height);
-  const colorbarH = colorbar ? Math.max(1, colorbar.height) : 0;
-  const gap = colorbar ? 8 : 0;
-  const rawOutW = sourceW;
-  const rawOutH = sourceH + (colorbar ? colorbarH + gap : 0);
-  const dims = resolveRenderFrameDimensions(rawOutW, rawOutH, resolution);
-  const mainH = Math.max(1, Math.round((sourceH / rawOutH) * dims.height));
-  const colorH = colorbar ? Math.max(1, Math.round((colorbarH / rawOutH) * dims.height)) : 0;
-  const gapH = colorbar ? Math.max(1, dims.height - mainH - colorH) : 0;
-
-  const out = document.createElement("canvas");
-  out.width = dims.width;
-  out.height = dims.height;
-  const ctx = out.getContext("2d", { alpha: false });
-  if (!ctx) throw new Error("Could not initialize render frame canvas.");
-  ctx.fillStyle = "#060d16";
-  ctx.fillRect(0, 0, out.width, out.height);
-  ctx.drawImage(source, 0, 0, source.width, source.height, 0, 0, out.width, mainH);
-  if (colorbar) {
-    ctx.drawImage(colorbar, 0, 0, colorbar.width, colorbar.height, 0, mainH + gapH, out.width, colorH);
-  }
-  return out;
-}
-
-function renderFrameInterpolationFactor(axis) {
-  if (axis === "t") return temporalScaleFactor();
-  if (axis === "nu") return spectralScaleFactor();
-  return 1;
-}
-
-function computeRenderFramePositions(axis) {
-  const axisLen = Math.max(1, axisSize(axis));
-  let start = 0;
-  let end = axisLen - 1;
-  if (axis === "t" || axis === "nu") {
-    const [w0, w1] = getAxisWindow(axis, axisLen);
-    start = w0;
-    end = w1;
-  }
-  const frameCount = end - start + 1;
-  const factor = renderFrameInterpolationFactor(axis);
-  const targetN = resampledDomainLength(frameCount, factor);
-  if (targetN <= 1 || frameCount <= 1) {
-    return [start];
-  }
-
-  const srcSpan = frameCount - 1;
-  const dstSpan = targetN - 1;
-  const out = [];
-  for (let i = 0; i < targetN; i += 1) {
-    const srcPos = (i * srcSpan) / dstSpan;
-    out.push(start + srcPos);
-  }
-  return out;
-}
-
-function formatEtaMs(ms) {
-  if (!Number.isFinite(ms) || ms < 0) return "--";
-  const totalSec = Math.round(ms / 1000);
-  const mins = Math.floor(totalSec / 60);
-  const secs = totalSec % 60;
-  return `${mins}:${String(secs).padStart(2, "0")}`;
-}
-
-function showRenderProgressOverlay() {
-  if (!els.renderProgressOverlay) return;
-  els.renderProgressOverlay.hidden = false;
-}
-
-function hideRenderProgressOverlay() {
-  if (!els.renderProgressOverlay) return;
-  els.renderProgressOverlay.hidden = true;
-}
-
-function updateRenderProgressOverlay(extraMessage = "") {
-  const total = Math.max(1, renderJob.totalFrames);
-  const completed = clamp(renderJob.completedFrames, 0, total);
-  const pct = Math.round((completed / total) * 100);
-  if (els.renderProgressPrimary) {
-    els.renderProgressPrimary.textContent = `${pct}%`;
-  }
-  if (els.renderProgressSecondary) {
-    const suffix = extraMessage ? ` | ${extraMessage}` : "";
-    els.renderProgressSecondary.textContent = `Frame ${completed} / ${total}${suffix}`;
-  }
-  if (els.renderProgressEta) {
-    if (completed <= 0 || renderJob.encoding) {
-      els.renderProgressEta.textContent = renderJob.encoding ? "ETA encoding..." : "ETA --";
-    } else {
-      const elapsed = Date.now() - renderJob.startedAtMs;
-      const avg = elapsed / completed;
-      const remainingMs = avg * (total - completed);
-      els.renderProgressEta.textContent = `ETA ${formatEtaMs(remainingMs)}`;
-    }
-  }
-}
+const offlineRenderController = createOfflineRenderController({
+  state,
+  els,
+  renderJob,
+  sampleMorphAxis: SAMPLE_MORPH_AXIS,
+  renderAxisRotate: RENDER_AXIS_ROTATE,
+  fetchJson,
+  preferredMovieMimeType,
+  normalizeRecordMovieFormat,
+  normalizeRecordQuality,
+  normalizeRenderFps,
+  normalizeRenderLoops,
+  normalizeRenderOverlayOption,
+  normalizeRenderMovieFilename,
+  visibleCanvasForSnapshot,
+  resolveRenderFrameDimensions,
+  temporalScaleFactor,
+  spectralScaleFactor,
+  axisSize,
+  getAxisWindow,
+  resampledDomainLength,
+  clamp,
+  chooseRenderMovieFolder,
+  setRenderMovieStatus,
+  closeRenderMovieDialog,
+  canRenderSweepAxis,
+  resolveRenderSweepAxis,
+  isAxisSelectorLocked,
+  isAxisProjectionActive,
+  axisDisplayLabel,
+  sampleCount,
+  isSampleMorphMode,
+  resetSampleMorphState,
+  updateControlCaps,
+  refreshSlice,
+  prepareSampleMorphPair,
+  advanceSampleMorphPlayback,
+  normalizeViewRotateRate,
+  normalizeAngleRad,
+  rerenderVolumeFrame,
+  isVolumeMode,
+  isSphereMode,
+  applySphereAutoRotateDelta,
+  rerenderSphereFrame,
+  setAxisIndex,
+  blendCanvasPair,
+  isNotFoundError,
+  isAbortError,
+  setSystemPickerStatus,
+  cloneSessionValue,
+  isPlaying,
+  isSampleMorphPlaybackActive,
+  stopPlayback,
+  stopSampleMorphPlayback,
+  drawFrameAndOverlays,
+  setRenderOverlayOverride: setRenderOverlayDrawOverride,
+  updateSliderReadouts,
+  refreshSelectionAnalytics,
+  updateRenderMovieDialogActions,
+  updateExportButtonState,
+  computeSampleMorphRenderFrameCount,
+  computeRenderRotationFrameCount,
+  blobToDataUrl,
+  readRenderSettingsFromUi,
+});
 
 function requestRenderCancel() {
-  if (!renderJob.running) return;
-  renderJob.cancelRequested = true;
-  if (renderJob.fetchAbortController) {
-    try {
-      renderJob.fetchAbortController.abort();
-    } catch (_) {
-      // ignore abort errors
-    }
-  }
-  updateRenderProgressOverlay("Canceling...");
-}
-
-function makeRenderCancelError() {
-  const err = new Error("render canceled");
-  err.name = "AbortError";
-  return err;
-}
-
-async function nextAnimationFrame() {
-  await new Promise((resolve) => {
-    window.requestAnimationFrame(() => resolve(null));
-  });
+  return offlineRenderController.requestRenderCancel();
 }
 
 async function runOfflineRenderFromDialog() {
-  if (!state.dataId) return;
-  if (renderJob.running) return;
-
-  readRenderSettingsFromUi();
-  state.renderMoviePrefs.overwrite = Boolean(els.renderMovieOverwriteChk ? els.renderMovieOverwriteChk.checked : true);
-  if (els.renderMovieFilenameInput) {
-    state.renderMoviePrefs.filename = normalizeRenderMovieFilename(
-      els.renderMovieFilenameInput.value,
-      state.renderMoviePrefs.format
-    );
-  }
-  state.renderMoviePrefs.quality = normalizeRecordQuality(state.renderMoviePrefs.quality);
-
-  if (!state.renderMoviePrefs.outputDir) {
-    setRenderMovieStatus("Choose a destination folder.", true);
-    const selected = await chooseRenderMovieFolder();
-    if (!selected) return;
-  }
-
-  closeRenderMovieDialog();
-
-  if (!canRenderSweepAxis(state.renderMoviePrefs.axis)) {
-    throw new Error("Selected axis is not currently renderable.");
-  }
-  const axis = resolveRenderSweepAxis(state.renderMoviePrefs.axis);
-  if (axis !== SAMPLE_MORPH_AXIS && axis !== RENDER_AXIS_ROTATE) {
-    if (isAxisSelectorLocked(axis)) {
-      throw new Error(`Axis ${axisDisplayLabel(axis)} cannot be swept in the current mode.`);
-    }
-    if (isAxisProjectionActive(axis)) {
-      throw new Error(`Axis ${axisDisplayLabel(axis)} is projected; disable projection before rendering.`);
-    }
-  }
-  const fps = normalizeRenderFps(state.renderMoviePrefs.fps);
-  const baseFramePositions = axis === SAMPLE_MORPH_AXIS || axis === RENDER_AXIS_ROTATE ? [] : computeRenderFramePositions(axis);
-  const baseFrameCount = axis === SAMPLE_MORPH_AXIS
-    ? computeSampleMorphRenderFrameCount(fps)
-    : axis === RENDER_AXIS_ROTATE
-    ? computeRenderRotationFrameCount(fps)
-    : baseFramePositions.length;
-  if (!baseFrameCount) {
-    throw new Error("No frames to render for the current range.");
-  }
-  const loopCount = normalizeRenderLoops(state.renderMoviePrefs.loops);
-  const renderedFrameCount = baseFrameCount;
-
-  const restoreValues = { ...state.values };
-  const restoreSampleState = {
-    sampleMode: state.sampleMode,
-    sampleSingleView: state.sampleSingleView,
-    sampleGridSize: state.sampleGridSize,
-    sampleGridIndices: cloneSessionValue(state.sampleGridIndices),
-    activeSampleTile: state.activeSampleTile,
-    sampleMorph: cloneSessionValue(state.sampleMorph),
-  };
-  const restoreViewState = {
-    volumeYaw: state.volumeYaw,
-    volumePitch: state.volumePitch,
-    sphereYaw: state.sphereYaw,
-    spherePitch: state.spherePitch,
-    sphereRotationMatrix: cloneSessionValue(state.sphereRotationMatrix),
-    sphereRotateAxisObject: cloneSessionValue(state.sphereRotateAxisObject),
-  };
-  const wasPlaying = isPlaying();
-  const wasSampleMorphPlaying = isSampleMorphPlaybackActive();
-  const renderDataId = state.dataId;
-
-  if (wasPlaying) stopPlayback(false);
-  if (wasSampleMorphPlaying) stopSampleMorphPlayback();
-
-  renderJob.running = true;
-  renderJob.cancelRequested = false;
-  renderJob.startedAtMs = Date.now();
-  renderJob.totalFrames = renderedFrameCount;
-  renderJob.completedFrames = 0;
-  renderJob.encoding = false;
-  renderJob.dataId = renderDataId;
-  renderJob.fetchAbortController = null;
-  showRenderProgressOverlay();
-  updateRenderProgressOverlay();
-  updateExportButtonState();
-  renderOverlayDrawOverride = {
-    includeSkyDirections: normalizeRenderOverlayOption(state.renderMoviePrefs.includeSkyDirections),
-    includeLengthScale: normalizeRenderOverlayOption(state.renderMoviePrefs.includeLengthScale),
-    includeSampleLabels: normalizeRenderOverlayOption(state.renderMoviePrefs.includeSampleLabels),
-  };
-  drawFrameAndOverlays();
-
-  const frames = [];
-  try {
-    const cycleFrames = [];
-    if (axis === SAMPLE_MORPH_AXIS && !isSampleMorphMode()) {
-      const sampleIdx = clamp(state.values.sample, 0, Math.max(0, sampleCount() - 1));
-      state.sampleMode = "single";
-      state.sampleSingleView = "morph";
-      state.sampleGridIndices = [sampleIdx];
-      state.activeSampleTile = 0;
-      resetSampleMorphState();
-      updateControlCaps();
-      await refreshSlice();
-    }
-    if (axis === SAMPLE_MORPH_AXIS) {
-      await prepareSampleMorphPair(null, false);
-      const frameDeltaSec = 1 / Math.max(1, fps);
-      for (let i = 0; i < baseFrameCount; i += 1) {
-        if (renderJob.cancelRequested) throw makeRenderCancelError();
-        if (i > 0) {
-          await advanceSampleMorphPlayback(frameDeltaSec, { fullResolution: true });
-        }
-        await nextAnimationFrame();
-        const frameCanvas = buildRenderFrameCanvas(state.renderMoviePrefs.resolution, state.renderMoviePrefs);
-        const dataUrl = frameCanvas.toDataURL("image/png");
-        cycleFrames.push(dataUrl);
-        frames.push({ data_url: dataUrl });
-        renderJob.completedFrames = i + 1;
-        updateRenderProgressOverlay();
-      }
-    } else if (axis === RENDER_AXIS_ROTATE) {
-      const direction = normalizeViewRotateRate(state.viewRotateRate) < 0 ? -1 : 1;
-      const angleStep = (direction * Math.PI * 2) / Math.max(1, baseFrameCount);
-      for (let i = 0; i < baseFrameCount; i += 1) {
-        if (renderJob.cancelRequested) throw makeRenderCancelError();
-        if (i > 0) {
-          if (isVolumeMode()) {
-            state.volumeYaw = normalizeAngleRad((state.volumeYaw || 0) + angleStep);
-            rerenderVolumeFrame();
-          } else if (isSphereMode()) {
-            applySphereAutoRotateDelta(angleStep);
-            rerenderSphereFrame();
-          }
-        }
-        await nextAnimationFrame();
-        const frameCanvas = buildRenderFrameCanvas(state.renderMoviePrefs.resolution, state.renderMoviePrefs);
-        const dataUrl = frameCanvas.toDataURL("image/png");
-        cycleFrames.push(dataUrl);
-        frames.push({ data_url: dataUrl });
-        renderJob.completedFrames = i + 1;
-        updateRenderProgressOverlay();
-      }
-    } else {
-      const endpointFrameCanvasCache = new Map();
-      let blendReuseCanvas = null;
-      const captureEndpointFrame = async (idx) => {
-        const key = String(idx);
-        if (endpointFrameCanvasCache.has(key)) return endpointFrameCanvasCache.get(key);
-        await setAxisIndex(axis, idx, { playback: true });
-        await nextAnimationFrame();
-        const frameCanvas = buildRenderFrameCanvas(state.renderMoviePrefs.resolution, state.renderMoviePrefs);
-        endpointFrameCanvasCache.set(key, frameCanvas);
-        return frameCanvas;
-      };
-      for (let i = 0; i < baseFramePositions.length; i += 1) {
-        if (renderJob.cancelRequested) throw makeRenderCancelError();
-        const framePos = baseFramePositions[i];
-        const lower = clamp(Math.floor(framePos), 0, axisSize(axis) - 1);
-        const upper = clamp(Math.ceil(framePos), 0, axisSize(axis) - 1);
-        let frameCanvas;
-        if (lower === upper || Math.abs(framePos - lower) <= 1.0e-6 || Math.abs(upper - framePos) <= 1.0e-6) {
-          frameCanvas = await captureEndpointFrame(clamp(Math.round(framePos), 0, axisSize(axis) - 1));
-        } else {
-          const alpha = clamp(framePos - lower, 0, 1);
-          const fromCanvas = await captureEndpointFrame(lower);
-          const toCanvas = await captureEndpointFrame(upper);
-          frameCanvas = blendCanvasPair(fromCanvas, toCanvas, alpha, blendReuseCanvas);
-          blendReuseCanvas = frameCanvas;
-        }
-        const dataUrl = frameCanvas.toDataURL("image/png");
-        cycleFrames.push(dataUrl);
-        frames.push({ data_url: dataUrl });
-        renderJob.completedFrames = i + 1;
-        updateRenderProgressOverlay();
-      }
-    }
-
-    if (loopCount > 1) {
-      updateRenderProgressOverlay("Loop duplication...");
-      for (let loop = 2; loop <= loopCount; loop += 1) {
-        for (let i = 0; i < cycleFrames.length; i += 1) {
-          if (renderJob.cancelRequested) throw makeRenderCancelError();
-          frames.push({ data_url: cycleFrames[i] });
-        }
-        updateRenderProgressOverlay();
-      }
-    }
-
-    if (renderJob.cancelRequested) throw makeRenderCancelError();
-
-    renderJob.encoding = true;
-    updateRenderProgressOverlay("Encoding...");
-    const saveBody = {
-      output_dir: state.renderMoviePrefs.outputDir,
-      format: state.renderMoviePrefs.format,
-      filename: state.renderMoviePrefs.filename,
-      overwrite: state.renderMoviePrefs.overwrite !== false,
-      fps,
-      quality: state.renderMoviePrefs.quality,
-      frames,
-    };
-
-    let response = null;
-    try {
-      renderJob.fetchAbortController = new AbortController();
-      response = await fetchJson(`/api/datasets/${renderDataId}/save-render-movie`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: renderJob.fetchAbortController.signal,
-        body: JSON.stringify(saveBody),
-      });
-    } catch (err) {
-      if (isNotFoundError(err)) {
-        updateRenderProgressOverlay("Compatibility encoding...");
-        const dataUrl = await encodeFramesToWebmDataUrl(frames, fps);
-        if (renderJob.cancelRequested) throw makeRenderCancelError();
-        updateRenderProgressOverlay("Compatibility save...");
-        renderJob.fetchAbortController = new AbortController();
-        response = await fetchJson(`/api/datasets/${renderDataId}/save-movie`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: renderJob.fetchAbortController.signal,
-          body: JSON.stringify({
-            output_dir: state.renderMoviePrefs.outputDir,
-            format: state.renderMoviePrefs.format,
-            filename: state.renderMoviePrefs.filename,
-            overwrite: state.renderMoviePrefs.overwrite !== false,
-            data_url: dataUrl,
-          }),
-        });
-      } else {
-        throw err;
-      }
-    }
-
-    if (!response || !response.saved) {
-      throw new Error((response && response.detail) || "render save failed");
-    }
-    setSystemPickerStatus(`Saved movie: ${response.path}`);
-  } catch (err) {
-    if (isAbortError(err) || renderJob.cancelRequested) {
-      setSystemPickerStatus("Render canceled.");
-      return;
-    }
-    throw err;
-  } finally {
-    renderOverlayDrawOverride = null;
-    drawFrameAndOverlays();
-    renderJob.running = false;
-    renderJob.cancelRequested = false;
-    renderJob.encoding = false;
-    renderJob.fetchAbortController = null;
-    renderJob.completedFrames = 0;
-    renderJob.totalFrames = 0;
-    hideRenderProgressOverlay();
-
-    state.values = { ...state.values, ...restoreValues };
-    state.sampleMode = restoreSampleState.sampleMode;
-    state.sampleSingleView = restoreSampleState.sampleSingleView;
-    state.sampleGridSize = restoreSampleState.sampleGridSize;
-    state.sampleGridIndices = cloneSessionValue(restoreSampleState.sampleGridIndices);
-    state.activeSampleTile = restoreSampleState.activeSampleTile;
-    state.sampleMorph = cloneSessionValue(restoreSampleState.sampleMorph);
-    state.volumeYaw = restoreViewState.volumeYaw;
-    state.volumePitch = restoreViewState.volumePitch;
-    state.sphereYaw = restoreViewState.sphereYaw;
-    state.spherePitch = restoreViewState.spherePitch;
-    state.sphereRotationMatrix = cloneSessionValue(restoreViewState.sphereRotationMatrix);
-    state.sphereRotateAxisObject = cloneSessionValue(restoreViewState.sphereRotateAxisObject);
-    updateSliderReadouts(state.selectedCoords);
-    updateControlCaps();
-    await refreshSlice();
-    if (state.selection) await refreshSelectionAnalytics();
-    updateRenderMovieDialogActions();
-    updateExportButtonState();
-  }
+  return offlineRenderController.runOfflineRenderFromDialog();
 }
 
 function modifierDragMode(metaDown, shiftDown) {
@@ -6704,16 +5400,6 @@ function updateModeButtons() {
   els.modeZoomBtn.classList.toggle("activeMode", mode === "zoom");
 }
 
-function playbackAxisLength(axis) {
-  const hidden = hiddenDim();
-  if (axis === SAMPLE_MORPH_AXIS) {
-    return isSampleMorphMode() ? axisSize("sample") : 1;
-  }
-  if (isAxisProjectionActive(axis)) return 1;
-  if ((isVolumeMode() || isSphereMode()) && axis === hidden) return 1;
-  return axisSize(axis);
-}
-
 function sampleMorphDeltaTSec() {
   return Math.max(0.01, state.sampleMorphDeltaT || 0.5);
 }
@@ -6736,43 +5422,21 @@ function volumeFrameResolution(tileCount = 1) {
   return clamp(Math.round(scaled * 0.55), min, max);
 }
 
-function updatePlaybackButtons() {
-  const hidden = hiddenDim();
-  const activeAxis = isPlaying() ? state.playbackAxis : null;
-  const buttonState = [
-    [els.timePlayBtn, "t"],
-    [els.freqPlayBtn, "nu"],
-    [els.hiddenPlayBtn, hidden],
-  ];
-
-  for (const [btn, axis] of buttonState) {
-    const axisLen = playbackAxisLength(axis);
-    const locked = isAxisSelectorLocked(axis);
-    const active = !locked && activeAxis === axis;
-    btn.disabled = locked || axisLen <= 1;
-    btn.textContent = active ? "Pause" : "Play";
-    btn.classList.toggle("activePlay", active);
-  }
-}
-
 function setNavigatorProjectionState(canvas, projected) {
   if (!canvas) return;
   canvas.classList.toggle("isProjected", Boolean(projected));
 }
 
-function updatePlayUi() {
-  els.playSpeedSelect.value = String(state.playbackFps);
+function updateSampleMorphPlaybackStatus() {
   if (els.sampleMorphDeltaSelect) {
     els.sampleMorphDeltaSelect.value = String(state.sampleMorphDeltaT);
   }
-  updatePlaybackButtons();
-  if (els.sampleMorphStatus) {
-    if (!isSampleMorphMode() || !state.sampleMorph.fromCanvas || !state.sampleMorph.toCanvas) {
-      els.sampleMorphStatus.textContent = "";
-    } else {
-      const pct = Math.round(clamp(state.sampleMorph.alpha, 0, 1) * 100);
-      els.sampleMorphStatus.textContent = `S${state.sampleMorph.fromSample} -> S${state.sampleMorph.toSample} (${pct}%)`;
-    }
+  if (!els.sampleMorphStatus) return;
+  if (!isSampleMorphMode() || !state.sampleMorph.fromCanvas || !state.sampleMorph.toCanvas) {
+    els.sampleMorphStatus.textContent = "";
+  } else {
+    const pct = Math.round(clamp(state.sampleMorph.alpha, 0, 1) * 100);
+    els.sampleMorphStatus.textContent = `S${state.sampleMorph.fromSample} -> S${state.sampleMorph.toSample} (${pct}%)`;
   }
 }
 
@@ -7091,6 +5755,7 @@ function updateControlCaps() {
   els.planeSelect.disabled = isVolumeMode() || isSphereMode() || !hasThirdSpatialDimension();
   const msAvailable = canUseMultiSpectral();
   if (!msAvailable) state.multiSpectral = false;
+  state.multiSpectralComputeBackend = normalizeComputeBackendPreference(state.multiSpectralComputeBackend);
   if (state.multiSpectralNuAxisScale !== "log") state.multiSpectralNuAxisScale = "linear";
   if (!Number.isFinite(state.multiSpectralDeslope)) state.multiSpectralDeslope = 0;
   state.multiSpectralDeslope = clamp(state.multiSpectralDeslope, -8, 8);
@@ -7102,6 +5767,10 @@ function updateControlCaps() {
   els.multiSpectralBtn.classList.toggle("activeAux", state.multiSpectral);
   if (els.spectralMapControls) {
     els.spectralMapControls.style.display = msAvailable && state.multiSpectral ? "grid" : "none";
+  }
+  if (els.computeBackendSelect) {
+    els.computeBackendSelect.value = state.multiSpectralComputeBackend;
+    els.computeBackendSelect.disabled = !msAvailable || !state.multiSpectral;
   }
   if (els.msNuAxisLogBtn) {
     const logAxis = state.multiSpectralNuAxisScale === "log";
@@ -7170,6 +5839,7 @@ function updateControlCaps() {
   updateColorNormalizationControls();
   updateSpatialProfileTitle(state.profiles ? state.profiles.spatial_profile : null);
   updateHoverReadout();
+  updateBackendStatusUi();
 }
 
 function setFluxScale(mode) {
@@ -7226,6 +5896,7 @@ function rerenderMultispectralFromCache() {
     const primary = state.currentMultispectralTiles[activeIdx] || state.currentMultispectralTiles[0] || null;
     state.currentMultispectralSlice = primary;
     state.currentMultispectralBands = primary ? primary.bands || null : null;
+    updateBackendStatusUi();
     const selectedCoords = primary ? primary.selected_coords || indicesToCoords(primary.selected_indices) : null;
     const tiles = state.currentMultispectralTiles.map((ms) =>
       createRgbCanvas(ms.shape[0], ms.shape[1], ms.values.r, ms.values.g, ms.values.b, ms)
@@ -7237,6 +5908,7 @@ function rerenderMultispectralFromCache() {
   if (state.currentMultispectralSlice) {
     const ms = state.currentMultispectralSlice;
     state.currentMultispectralBands = ms.bands || null;
+    updateBackendStatusUi();
     renderFrame(
       createRgbCanvas(ms.shape[0], ms.shape[1], ms.values.r, ms.values.g, ms.values.b, ms),
       ms.selected_coords || indicesToCoords(ms.selected_indices),
@@ -7253,10 +5925,6 @@ function scheduleMultispectralLocalRerender() {
   if (state._multispectralRerenderRaf) return;
   state._multispectralRerenderRaf = window.requestAnimationFrame(() => {
     state._multispectralRerenderRaf = 0;
-    if (multispectralFrameActive()) {
-      void refreshMultispectralControlsFromServer();
-      return;
-    }
     rerenderMultispectralFromCache();
   });
 }
@@ -7581,66 +6249,74 @@ function drawOrientationAndScale(viewRect, drawRect, options = null) {
 }
 
 function drawFrameAndOverlays() {
+  const renderStartedAt = performance.now();
   syncCanvasToDisplaySize(els.canvas);
   const ctx = els.canvas.getContext("2d");
   const s = canvasPixelRatio(els.canvas);
   ctx.clearRect(0, 0, els.canvas.width, els.canvas.height);
   ctx.fillStyle = "#070a11";
   ctx.fillRect(0, 0, els.canvas.width, els.canvas.height);
-
-  if (!state.frameCanvas && !(state.frameTiles && state.frameTiles.length)) return;
-
-  const baseViewRect = getViewRect();
-  const renderGeometry = getRenderGeometry(baseViewRect);
-  const viewRect = renderGeometry.viewRect;
-  let drawRect;
-  state.drawTiles = [];
-  const smoothUpscale = spatialScaleFactor() !== 1 && !isVolumeMode() && !isSphereMode();
-  ctx.imageSmoothingEnabled = smoothUpscale;
-  if (ctx.imageSmoothingEnabled && "imageSmoothingQuality" in ctx) {
-    ctx.imageSmoothingQuality = "high";
-  }
-
-  if (state.frameTiles && state.frameTiles.length) {
-    const gridRects = getGridDrawRects(viewRect);
-    drawRect = { x: gridRects.x, y: gridRects.y, w: gridRects.w, h: gridRects.h };
-    state.drawTiles = gridRects.tiles;
-
-    for (let i = 0; i < state.frameTiles.length && i < gridRects.tiles.length; i += 1) {
-      const tileCanvas = state.frameTiles[i];
-      const tileRect = gridRects.tiles[i];
-      const srcRect = canvasViewSourceRect(tileCanvas, viewRect);
-      drawImageWithPlaneFlip(ctx, tileCanvas, srcRect, tileRect);
-
-      const includeSampleLabels = !renderOverlayDrawOverride || renderOverlayDrawOverride.includeSampleLabels !== false;
-      if (isSamplesMode() && includeSampleLabels && Number.isInteger(state.sampleGridIndices[i])) {
-        const label = `S${state.sampleGridIndices[i]}`;
-        ctx.save();
-        ctx.font = `${Math.round(11 * s)}px sans-serif`;
-        ctx.fillStyle = "#d9e6f5";
-        ctx.textBaseline = "top";
-        const lx = (tileRect.cellX ?? tileRect.x) + 8 * s;
-        const ly = (tileRect.cellY ?? tileRect.y) + 7 * s;
-        ctx.fillText(label, lx, ly);
-        ctx.restore();
-      }
+  const hasFrame = Boolean(state.frameCanvas || (state.frameTiles && state.frameTiles.length));
+  try {
+    if (!hasFrame) {
+      state.drawTiles = [];
+      state.drawRect = null;
+      return;
     }
-  } else {
-    drawRect = renderGeometry.drawRect;
-    state.drawTiles = [drawRect];
-    const srcRect = canvasViewSourceRect(state.frameCanvas, viewRect);
-    drawImageWithPlaneFlip(ctx, state.frameCanvas, srcRect, drawRect);
-  }
-  state.drawRect = drawRect;
-  if (els.colorbarPanel) {
-    const cssBarW = colorbarReferenceCssWidth(baseViewRect, s);
-    els.colorbarPanel.style.width = `${cssBarW}px`;
-  }
+    const baseViewRect = getViewRect();
+    const renderGeometry = getRenderGeometry(baseViewRect);
+    const viewRect = renderGeometry.viewRect;
+    let drawRect;
+    state.drawTiles = [];
+    const smoothUpscale = spatialScaleFactor() !== 1 && !isVolumeMode() && !isSphereMode();
+    ctx.imageSmoothingEnabled = smoothUpscale;
+    if (ctx.imageSmoothingEnabled && "imageSmoothingQuality" in ctx) {
+      ctx.imageSmoothingQuality = "high";
+    }
 
-  drawOrientationAndScale(viewRect, drawRect, renderOverlayDrawOverride);
-  drawEvpaOverlay(viewRect, drawRect);
-  drawSelectionOverlay(viewRect, drawRect);
-  drawZoomDragOverlay(viewRect, drawRect);
+    if (state.frameTiles && state.frameTiles.length) {
+      const gridRects = getGridDrawRects(viewRect);
+      drawRect = { x: gridRects.x, y: gridRects.y, w: gridRects.w, h: gridRects.h };
+      state.drawTiles = gridRects.tiles;
+
+      for (let i = 0; i < state.frameTiles.length && i < gridRects.tiles.length; i += 1) {
+        const tileCanvas = state.frameTiles[i];
+        const tileRect = gridRects.tiles[i];
+        const srcRect = canvasViewSourceRect(tileCanvas, viewRect);
+        drawImageWithPlaneFlip(ctx, tileCanvas, srcRect, tileRect);
+
+        const includeSampleLabels = !renderOverlayDrawOverride || renderOverlayDrawOverride.includeSampleLabels !== false;
+        if (isSamplesMode() && includeSampleLabels && Number.isInteger(state.sampleGridIndices[i])) {
+          const label = `S${state.sampleGridIndices[i]}`;
+          ctx.save();
+          ctx.font = `${Math.round(11 * s)}px sans-serif`;
+          ctx.fillStyle = "#d9e6f5";
+          ctx.textBaseline = "top";
+          const lx = (tileRect.cellX ?? tileRect.x) + 8 * s;
+          const ly = (tileRect.cellY ?? tileRect.y) + 7 * s;
+          ctx.fillText(label, lx, ly);
+          ctx.restore();
+        }
+      }
+    } else {
+      drawRect = renderGeometry.drawRect;
+      state.drawTiles = [drawRect];
+      const srcRect = canvasViewSourceRect(state.frameCanvas, viewRect);
+      drawImageWithPlaneFlip(ctx, state.frameCanvas, srcRect, drawRect);
+    }
+    state.drawRect = drawRect;
+    if (els.colorbarPanel) {
+      const cssBarW = colorbarReferenceCssWidth(baseViewRect, s);
+      els.colorbarPanel.style.width = `${cssBarW}px`;
+    }
+
+    drawOrientationAndScale(viewRect, drawRect, renderOverlayDrawOverride);
+    drawEvpaOverlay(viewRect, drawRect);
+    drawSelectionOverlay(viewRect, drawRect);
+    drawZoomDragOverlay(viewRect, drawRect);
+  } finally {
+    recordViewerRender(renderStartedAt, hasFrame ? "viewer-frame" : "viewer-empty");
+  }
 }
 
 function minMax(values) {
@@ -8415,8 +7091,11 @@ function sphereRenderDimensions(options = null) {
     return { renderW: outW, renderH: outH, outW, outH };
   }
   const scale = Math.sqrt(maxPixels / Math.max(1, fullPixels));
-  const renderW = clamp(Math.round(outW * scale), 192, outW);
-  const renderH = clamp(Math.round(outH * scale), 128, outH);
+  // Keep one shared preview scale so square/circular sphere projections stay stable in motion.
+  const minScale = Math.max(192 / Math.max(1, outW), 128 / Math.max(1, outH));
+  const previewScale = clamp(Math.max(scale, minScale), 1 / Math.max(outW, outH), 1);
+  const renderW = clamp(Math.round(outW * previewScale), 1, outW);
+  const renderH = clamp(Math.round(outH * previewScale), 1, outH);
   return { renderW, renderH, outW, outH };
 }
 
@@ -8847,15 +7526,8 @@ function createSphereCanvasCpu(slice, rangeOverride = null, options = null) {
   const npix = state.sphereMeta.npix;
   const dataNside = state.sphereMeta.nside;
   const renderNside = sphereRenderNside(dataNside);
-  const values = slice && Array.isArray(slice.values) ? slice.values : null;
-  const rgbValues =
-    slice &&
-    slice.values &&
-    Array.isArray(slice.values.r) &&
-    Array.isArray(slice.values.g) &&
-    Array.isArray(slice.values.b)
-      ? slice.values
-      : null;
+  const values = slice && isNumericArrayLike(slice.values) ? slice.values : null;
+  const rgbValues = slice && isRgbValuePayload(slice.values) ? slice.values : null;
   const scalarMode = Boolean(values && values.length >= npix);
   const rgbMode = Boolean(
     rgbValues && rgbValues.r.length >= npix && rgbValues.g.length >= npix && rgbValues.b.length >= npix
@@ -8980,15 +7652,8 @@ function createSphereCanvasCpu(slice, rangeOverride = null, options = null) {
 
 function createSphereCanvas(slice, rangeOverride = null, options = null) {
   if (!isSphereDataset()) return null;
-  const values = slice && Array.isArray(slice.values) ? slice.values : null;
-  const rgbValues =
-    slice &&
-    slice.values &&
-    Array.isArray(slice.values.r) &&
-    Array.isArray(slice.values.g) &&
-    Array.isArray(slice.values.b)
-      ? slice.values
-      : null;
+  const values = slice && isNumericArrayLike(slice.values) ? slice.values : null;
+  const rgbValues = slice && isRgbValuePayload(slice.values) ? slice.values : null;
   const npix = state.sphereMeta?.npix || 0;
   const scalarMode = Boolean(values && values.length >= npix);
   const rgbMode = Boolean(
@@ -9180,7 +7845,7 @@ function bilinearSamplePlane(values, width, height, fx, fy) {
 }
 
 function resampleScalarPlaneValues(values, sourceW, sourceH, logicalW, logicalH, stepX, stepY, targetW, targetH) {
-  if (!Array.isArray(values) || values.length !== sourceW * sourceH) return null;
+  if (!isNumericArrayLike(values) || values.length !== sourceW * sourceH) return null;
   const sx = Math.max(1, Number.isFinite(stepX) ? Math.floor(stepX) : 1);
   const sy = Math.max(1, Number.isFinite(stepY) ? Math.floor(stepY) : 1);
   const out = new Array(targetW * targetH);
@@ -9202,7 +7867,7 @@ function resampleScalarPlaneValues(values, sourceW, sourceH, logicalW, logicalH,
 }
 
 function resampleScalarSliceForSpatialScale(slice, logicalW, logicalH, targetW, targetH) {
-  if (!slice || !Array.isArray(slice.shape) || slice.shape.length < 2 || !Array.isArray(slice.values)) return null;
+  if (!slice || !Array.isArray(slice.shape) || slice.shape.length < 2 || !isNumericArrayLike(slice.values)) return null;
   const sourceW = Math.max(1, Number.parseInt(slice.shape[0], 10));
   const sourceH = Math.max(1, Number.parseInt(slice.shape[1], 10));
   const [stepX, stepY] = payloadSamplingStep(slice);
@@ -9228,7 +7893,7 @@ function resampleScalarSliceForSpatialScale(slice, logicalW, logicalH, targetW, 
 }
 
 function resampleRgbPayloadForSpatialScale(payload, logicalW, logicalH, targetW, targetH) {
-  if (!payload || !payload.values || !Array.isArray(payload.values.r) || !Array.isArray(payload.values.g) || !Array.isArray(payload.values.b)) {
+  if (!payload || !isRgbValuePayload(payload.values)) {
     return null;
   }
   const [sourceWRaw, sourceHRaw] = payloadShape2d(payload);
@@ -9352,19 +8017,50 @@ function createSingleCanvas(slice, rangeOverride = null, options = null) {
   return applySliceUpscale(cpuCanvas, fullW, fullH);
 }
 
-function createRgbRasterCanvas(width, height, redVals, greenVals, blueVals) {
+function createRgbRasterCanvas(width, height, redVals, greenVals, blueVals, preview = null) {
   const img = els.canvas.getContext("2d").createImageData(width, height);
+  const gainR = Number.isFinite(preview?.gains?.[0]) ? preview.gains[0] : 1;
+  const gainG = Number.isFinite(preview?.gains?.[1]) ? preview.gains[1] : 1;
+  const gainB = Number.isFinite(preview?.gains?.[2]) ? preview.gains[2] : 1;
+  const chromaBoost = Number.isFinite(preview?.chromaBoost) ? preview.chromaBoost : 1;
+  const applyChromaBoost = Math.abs(chromaBoost - 1) > 1.0e-6;
+  const luma = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
   for (let x = 0; x < width; x += 1) {
     for (let y = 0; y < height; y += 1) {
       const src = x * height + y;
-      const r = clamp(Number.isFinite(redVals[src]) ? redVals[src] : 0, 0, 1);
-      const g = clamp(Number.isFinite(greenVals[src]) ? greenVals[src] : 0, 0, 1);
-      const b = clamp(Number.isFinite(blueVals[src]) ? blueVals[src] : 0, 0, 1);
+      const sourceR = Math.max(0, Number.isFinite(redVals[src]) ? redVals[src] : 0);
+      const sourceG = Math.max(0, Number.isFinite(greenVals[src]) ? greenVals[src] : 0);
+      const sourceB = Math.max(0, Number.isFinite(blueVals[src]) ? blueVals[src] : 0);
+      const targetBrightness = multispectralPreviewBrightness(luma(sourceR, sourceG, sourceB), preview);
+      let r = sourceR * gainR;
+      let g = sourceG * gainG;
+      let b = sourceB * gainB;
+      if (applyChromaBoost) {
+        const gray = (r + g + b) / 3;
+        r = Math.max(0, gray + (r - gray) * chromaBoost);
+        g = Math.max(0, gray + (g - gray) * chromaBoost);
+        b = Math.max(0, gray + (b - gray) * chromaBoost);
+      } else {
+        r = Math.max(0, r);
+        g = Math.max(0, g);
+        b = Math.max(0, b);
+      }
+      const adjustedLuma = luma(r, g, b);
+      if (adjustedLuma > 0) {
+        const scale = targetBrightness / adjustedLuma;
+        r *= scale;
+        g *= scale;
+        b *= scale;
+      } else {
+        r = 0;
+        g = 0;
+        b = 0;
+      }
       const dst = (y * width + x) * 4;
-      img.data[dst + 0] = Math.round(r * 255);
-      img.data[dst + 1] = Math.round(g * 255);
-      img.data[dst + 2] = Math.round(b * 255);
+      img.data[dst + 0] = Math.round(clamp(r, 0, 1) * 255);
+      img.data[dst + 1] = Math.round(clamp(g, 0, 1) * 255);
+      img.data[dst + 2] = Math.round(clamp(b, 0, 1) * 255);
       img.data[dst + 3] = 255;
     }
   }
@@ -9411,11 +8107,13 @@ function createRgbCanvas(width, height, redVals, greenVals, blueVals, payload = 
     }
   }
 
+  const preview = buildMultispectralLocalPreview(payload);
+
   if (rgbBackendMode(renderWidth, renderHeight) === "gpu") {
     const renderer = ensureRgbGpuRenderer();
     if (renderer) {
       try {
-        const gpu = renderer.render(renderWidth, renderHeight, renderR, renderG, renderB);
+        const gpu = renderer.render(renderWidth, renderHeight, renderR, renderG, renderB, preview);
         if (gpu) {
           if (scaled) {
             setCanvasLogicalSize(gpu, shape.logicalW, shape.logicalH);
@@ -9432,7 +8130,7 @@ function createRgbCanvas(width, height, redVals, greenVals, blueVals, payload = 
     }
   }
 
-  const off = createRgbRasterCanvas(renderWidth, renderHeight, renderR, renderG, renderB);
+  const off = createRgbRasterCanvas(renderWidth, renderHeight, renderR, renderG, renderB, preview);
   if (scaled) {
     setCanvasLogicalSize(off, shape.logicalW, shape.logicalH);
     return off;
@@ -9621,7 +8319,7 @@ function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null, o
   off.width = width;
   off.height = height;
 
-  if (!volume || !Array.isArray(volume.shape) || volume.shape.length !== 3 || !Array.isArray(volume.values)) {
+  if (!volume || !Array.isArray(volume.shape) || volume.shape.length !== 3 || !isNumericArrayLike(volume.values)) {
     return off;
   }
 
@@ -10072,6 +8770,7 @@ function blendCanvasPair(fromCanvas, toCanvas, alpha, reuseCanvas = null) {
   if (!fromCanvas) return toCanvas;
   if (!toCanvas || alpha <= 0) return fromCanvas;
   if (alpha >= 1) return toCanvas;
+  const mix = clamp(alpha, 0, 1);
   const w = fromCanvas.width;
   const h = fromCanvas.height;
   let out = reuseCanvas;
@@ -10083,10 +8782,19 @@ function blendCanvasPair(fromCanvas, toCanvas, alpha, reuseCanvas = null) {
   const ctx = out.getContext("2d");
   ctx.clearRect(0, 0, w, h);
   ctx.imageSmoothingEnabled = false;
+  // Crossfade explicitly so morph playback interpolates between samples
+  // instead of adding the next frame on top of the current one.
+  ctx.globalCompositeOperation = "source-over";
   ctx.globalAlpha = 1;
   ctx.drawImage(fromCanvas, 0, 0);
-  ctx.globalAlpha = clamp(alpha, 0, 1);
+  ctx.globalCompositeOperation = "destination-in";
+  ctx.globalAlpha = 1 - mix;
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha = mix;
   ctx.drawImage(toCanvas, 0, 0);
+  ctx.globalCompositeOperation = "source-over";
   ctx.globalAlpha = 1;
   setCanvasLogicalSize(out, canvasLogicalWidth(fromCanvas), canvasLogicalHeight(fromCanvas));
   if (fromCanvas && fromCanvas.__healpixIndexMap) {
@@ -10271,6 +8979,7 @@ function renderSampleMorphFrame() {
   state.currentMultispectralBands = morphMultispectral
     ? sampleMorphMultispectralBands(state.sampleMorph.fromSlice, state.sampleMorph.toSlice, alpha)
     : null;
+  updateBackendStatusUi();
   if (sampleMorphEvpaActive()) {
     state.evpaTicksBySample = {};
     state.evpaTicks = interpolateEvpaTicks(state.sampleMorph.fromEvpaTicks, state.sampleMorph.toEvpaTicks, alpha);
@@ -10281,19 +8990,19 @@ function renderSampleMorphFrame() {
 
 async function fetchSampleMorphSlice(sampleIdx, maxPixels = null, multispectral = isMultiSpectralActive()) {
   if (!isDerivedPolModeActive() && multispectral) {
-    return fetchJson(`/api/datasets/${state.dataId}/multispectral?${buildMultispectralParams(sampleIdx, maxPixels).toString()}`);
+    return fetchMultispectralPayload(buildMultispectralParams(sampleIdx, maxPixels));
   }
   if (isDerivedPolModeActive()) {
     return fetchDerivedSlice(sampleIdx, maxPixels);
   }
-  return fetchJson(
-    `/api/datasets/${state.dataId}/slice?${buildSliceParams(
+  return fetchSlicePayload(
+    buildSliceParams(
       undefined,
       sampleIdx,
       state.values.pol,
       sampleModeForApi(),
       maxPixels
-    ).toString()}`
+    )
   );
 }
 
@@ -10724,7 +9433,7 @@ function evpaResolutionScaleFactor() {
 }
 
 function computeStats(values) {
-  if (!Array.isArray(values) || !values.length) return { min: 0, max: 1, mean: 0, std: 0 };
+  if (!isNumericArrayLike(values) || !values.length) return { min: 0, max: 1, mean: 0, std: 0 };
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
   let sum = 0;
@@ -10750,7 +9459,7 @@ function computeStats(values) {
 
 function mapDerivedPolarizationPayload(mode, payloadsByPol) {
   const ref = payloadsByPol[0] || payloadsByPol[1] || payloadsByPol[2] || payloadsByPol[3];
-  if (!ref || !Array.isArray(ref.values)) {
+  if (!ref || !isNumericArrayLike(ref.values)) {
     throw new Error("no Stokes data available for derived polarization view");
   }
 
@@ -10810,12 +9519,16 @@ function mapDerivedPolarizationPayload(mode, payloadsByPol) {
   };
 }
 
-async function fetchDerivedSlice(sampleOverride, maxPixels = null) {
+async function fetchDerivedSlice(sampleOverride, maxPixels = null, options = {}) {
   const mode = state.derivedPolMode;
+  const axisOverride =
+    options && options.axisOverride && typeof options.axisOverride === "object" ? options.axisOverride : null;
   if (!isDerivedPolModeActive()) {
-    return fetchJson(
-      `/api/datasets/${state.dataId}/slice?${buildSliceParams(undefined, sampleOverride, state.values.pol, state.sampleMode, maxPixels).toString()}`
-    );
+    let params = buildSliceParams(undefined, sampleOverride, state.values.pol, state.sampleMode, maxPixels);
+    if (axisOverride && axisOverride.axis) {
+      params = paramsWithAxisIndex(params, axisOverride.axis, axisOverride.index);
+    }
+    return fetchSlicePayload(params, options);
   }
   const effectiveSampleMode = state.sampleMode === "std" || state.sampleMode === "rel_uncert" ? "mean" : sampleModeForApi();
   const channels = derivedPolChannels(mode);
@@ -10824,17 +9537,19 @@ async function fetchDerivedSlice(sampleOverride, maxPixels = null) {
   }
 
   const fetched = await Promise.all(
-    channels.map((polIdx) =>
-      fetchJson(
-        `/api/datasets/${state.dataId}/slice?${buildSliceParams(
-          undefined,
-          sampleOverride,
-          polIdx,
-          effectiveSampleMode,
-          maxPixels
-        ).toString()}`
-      )
-    )
+    channels.map((polIdx) => {
+      let params = buildSliceParams(
+        undefined,
+        sampleOverride,
+        polIdx,
+        effectiveSampleMode,
+        maxPixels
+      );
+      if (axisOverride && axisOverride.axis) {
+        params = paramsWithAxisIndex(params, axisOverride.axis, axisOverride.index);
+      }
+      return fetchSlicePayload(params, options);
+    })
   );
   const byPol = {};
   for (let i = 0; i < channels.length; i += 1) {
@@ -10843,13 +9558,15 @@ async function fetchDerivedSlice(sampleOverride, maxPixels = null) {
   return mapDerivedPolarizationPayload(mode, byPol);
 }
 
-async function fetchVolume(sampleOverride) {
-  return fetchJson(`/api/datasets/${state.dataId}/volume?${buildVolumeParams(sampleOverride).toString()}`);
+async function fetchVolume(sampleOverride, options = {}) {
+  return fetchVolumePayload(buildVolumeParams(sampleOverride), options);
 }
 
-async function fetchDerivedVolume(sampleOverride) {
+async function fetchDerivedVolume(sampleOverride, options = {}) {
   const mode = state.derivedPolMode;
-  if (!isDerivedPolModeActive()) return fetchVolume(sampleOverride);
+  const axisOverride =
+    options && options.axisOverride && typeof options.axisOverride === "object" ? options.axisOverride : null;
+  if (!isDerivedPolModeActive()) return fetchVolume(sampleOverride, options);
 
   const effectiveSampleMode = state.sampleMode === "std" || state.sampleMode === "rel_uncert" ? "mean" : sampleModeForApi();
   const channels = derivedPolChannels(mode);
@@ -10858,11 +9575,13 @@ async function fetchDerivedVolume(sampleOverride) {
   }
 
   const fetched = await Promise.all(
-    channels.map((polIdx) =>
-      fetchJson(
-        `/api/datasets/${state.dataId}/volume?${buildVolumeParams(sampleOverride, polIdx, effectiveSampleMode).toString()}`
-      )
-    )
+    channels.map((polIdx) => {
+      let params = buildVolumeParams(sampleOverride, polIdx, effectiveSampleMode);
+      if (axisOverride && axisOverride.axis) {
+        params = paramsWithAxisIndex(params, axisOverride.axis, axisOverride.index);
+      }
+      return fetchVolumePayload(params, options);
+    })
   );
   const byPol = {};
   for (let i = 0; i < channels.length; i += 1) {
@@ -10877,6 +9596,9 @@ function sampleMorphVolumeResolution() {
 
 function rerenderVolumeFrame() {
   if (!isVolumeMode()) return;
+  if (state.volumeDrag) {
+    ensureVisibleUpdate("volume-drag", { spatialMode: "volume" });
+  }
   if (isSampleMorphMode() && state.sampleMorph.fromVolume && state.sampleMorph.toVolume) {
     const resolution = sampleMorphVolumeResolution();
     const sharedStats = isValidRangeStats(state.fixedColorRange)
@@ -10906,6 +9628,9 @@ function rerenderVolumeFrame() {
 
 function rerenderSphereFrame() {
   if (!isSphereMode()) return;
+  if (state.sphereDrag) {
+    ensureVisibleUpdate("sphere-drag", { spatialMode: "sphere" });
+  }
   const fastPreview = Boolean(state.sphereDrag);
   if (isSampleMorphMode() && state.sampleMorph.fromSlice && state.sampleMorph.toSlice) {
     const sharedStats = isValidRangeStats(state.fixedColorRange)
@@ -10981,6 +9706,136 @@ function rerenderSphereFrame() {
   }
 }
 
+function axisPlaybackPrefetchIndices(axis) {
+  if (!axis || isAxisSelectorLocked(axis) || isAxisProjectionActive(axis)) return [];
+  const length = axisSize(axis);
+  if (!(length > 1)) return [];
+  const [w0, w1] = getAxisWindow(axis, length);
+  const span = w1 - w0 + 1;
+  if (span <= 1) return [];
+  const lookahead = Math.min(PLAYBACK_PREFETCH_LOOKAHEAD_MAX, span - 1);
+  const current = clamp(state.values[axis], w0, w1);
+  const out = [];
+  let next = current;
+  for (let i = 0; i < lookahead; i += 1) {
+    next = next >= w1 ? w0 : next + 1;
+    out.push(next);
+  }
+  return out;
+}
+
+function paramsWithAxisIndex(params, axis, index) {
+  const next = new URLSearchParams(params);
+  next.set(axis, String(index));
+  return next;
+}
+
+async function prefetchAxisPlaybackFrame(axis) {
+  if (!state.dataId || !axis || isSampleMorphMode()) return;
+  const nextIndices = axisPlaybackPrefetchIndices(axis);
+  if (!nextIndices.length) return;
+
+  const lodMaxPixels = !isSphereMode() ? spatialLodMaxPixels(playbackMaxPixelsForFrame()) : null;
+
+  if (isVolumeMode()) {
+    if (state.sampleMode === "single") {
+      const sampleIndices = state.sampleGridIndices.slice();
+      await Promise.all(
+        nextIndices.flatMap((nextIndex) =>
+          sampleIndices.map((sampleIdx) =>
+            isDerivedPolModeActive()
+              ? fetchDerivedVolume(sampleIdx, { playback: true, axisOverride: { axis, index: nextIndex } })
+              : fetchVolumePayload(paramsWithAxisIndex(buildVolumeParams(sampleIdx), axis, nextIndex), { playback: true })
+          )
+        )
+      );
+      return;
+    }
+    if (isDerivedPolModeActive()) {
+      await Promise.all(
+        nextIndices.map((nextIndex) =>
+          fetchDerivedVolume(undefined, { playback: true, axisOverride: { axis, index: nextIndex } })
+        )
+      );
+      return;
+    }
+    await Promise.all(
+      nextIndices.map((nextIndex) =>
+        fetchVolumePayload(paramsWithAxisIndex(buildVolumeParams(undefined), axis, nextIndex), { playback: true })
+      )
+    );
+    return;
+  }
+
+  if (isMultiSpectralActive()) {
+    if (state.sampleMode === "single") {
+      const sampleIndices = state.sampleGridIndices.slice();
+      await Promise.all(
+        nextIndices.flatMap((nextIndex) =>
+          sampleIndices.map((sampleIdx) =>
+            fetchMultispectralPayload(
+              paramsWithAxisIndex(buildMultispectralParams(sampleIdx, lodMaxPixels), axis, nextIndex),
+              { playback: true }
+            )
+          )
+        )
+      );
+      return;
+    }
+    await Promise.all(
+      nextIndices.map((nextIndex) =>
+        fetchMultispectralPayload(
+          paramsWithAxisIndex(buildMultispectralParams(undefined, lodMaxPixels), axis, nextIndex),
+          { playback: true }
+        )
+      )
+    );
+    return;
+  }
+
+  if (state.sampleMode === "single") {
+    const sampleIndices = state.sampleGridIndices.slice();
+    await Promise.all(
+      nextIndices.flatMap((nextIndex) =>
+        sampleIndices.map((sampleIdx) =>
+          isDerivedPolModeActive()
+            ? fetchDerivedSlice(sampleIdx, lodMaxPixels, { playback: true, axisOverride: { axis, index: nextIndex } })
+            : fetchSlicePayload(
+                paramsWithAxisIndex(
+                  buildSliceParams(undefined, sampleIdx, state.values.pol, state.sampleMode, lodMaxPixels),
+                  axis,
+                  nextIndex
+                ),
+                { playback: true }
+              )
+        )
+      )
+    );
+    return;
+  }
+
+  if (isDerivedPolModeActive()) {
+    await Promise.all(
+      nextIndices.map((nextIndex) =>
+        fetchDerivedSlice(undefined, lodMaxPixels, { playback: true, axisOverride: { axis, index: nextIndex } })
+      )
+    );
+    return;
+  }
+  await Promise.all(
+    nextIndices.map((nextIndex) =>
+      fetchSlicePayload(
+        paramsWithAxisIndex(
+          buildSliceParams(undefined, undefined, state.values.pol, state.sampleMode, lodMaxPixels),
+          axis,
+          nextIndex
+        ),
+        { playback: true }
+      )
+    )
+  );
+}
+
 async function setSpatialMode(mode) {
   if (mode !== "slice" && mode !== "volume" && mode !== "sphere") return;
   if (mode === "slice" && isSphereDataset()) return;
@@ -11010,11 +9865,18 @@ async function setSpatialMode(mode) {
 
 async function refreshSlice(options = {}) {
   if (!state.dataId) return;
+  ensureVisibleUpdate(options.playback === true ? "playback-refresh" : "slice-refresh", {
+    dataId: state.dataId,
+    plane: state.plane,
+    sampleMode: state.sampleMode,
+    spatialMode: state.spatialMode,
+  });
   const epoch = activeEpoch();
   const ensureActive = () => assertEpoch(epoch);
   try {
   state.hoverProbe = null;
   const playbackMode = options.playback === true;
+  const deferFixedColorRange = options.deferFixedColorRange === true && !playbackMode;
   const playbackLodMaxPixels = playbackMode && !isSphereMode() ? playbackMaxPixelsForFrame() : null;
   const lodMaxPixels = !isSphereMode() ? spatialLodMaxPixels(playbackLodMaxPixels) : null;
   if (state.sampleMode === "single") {
@@ -11031,7 +9893,8 @@ async function refreshSlice(options = {}) {
   }
 
   const evpaPromise = state.showEvpa && !isVolumeMode() && !isSphereMode() ? refreshEvpaTicks() : Promise.resolve();
-  if (!playbackMode) {
+  const pendingFixedColorRange = deferFixedColorRange ? refreshFixedColorRange() : null;
+  if (!playbackMode && !deferFixedColorRange) {
     await refreshFixedColorRange();
     ensureActive();
   }
@@ -11042,6 +9905,7 @@ async function refreshSlice(options = {}) {
     state.currentMultispectralBands = null;
     state.currentMultispectralSlice = null;
     state.currentMultispectralTiles = null;
+    updateBackendStatusUi();
     state.evpaTicks = [];
     state.evpaTicksBySample = {};
     if (isSampleMorphMode()) {
@@ -11053,7 +9917,11 @@ async function refreshSlice(options = {}) {
     } else if (state.sampleMode === "single") {
       const sampleIndices = state.sampleGridIndices.slice();
       const volumes = await Promise.all(
-        sampleIndices.map((sampleIdx) => (isDerivedPolModeActive() ? fetchDerivedVolume(sampleIdx) : fetchVolume(sampleIdx)))
+        sampleIndices.map((sampleIdx) =>
+          isDerivedPolModeActive()
+            ? fetchDerivedVolume(sampleIdx, { playback: playbackMode })
+            : fetchVolume(sampleIdx, { playback: playbackMode })
+        )
       );
       ensureActive();
       await evpaPromise;
@@ -11061,7 +9929,9 @@ async function refreshSlice(options = {}) {
       state.currentVolumeTiles = volumes;
       state.currentVolume = null;
     } else {
-      const volume = isDerivedPolModeActive() ? await fetchDerivedVolume(undefined) : await fetchVolume(undefined);
+      const volume = isDerivedPolModeActive()
+        ? await fetchDerivedVolume(undefined, { playback: playbackMode })
+        : await fetchVolume(undefined, { playback: playbackMode });
       ensureActive();
       await evpaPromise;
       ensureActive();
@@ -11095,6 +9965,7 @@ async function refreshSlice(options = {}) {
     await evpaPromise;
     ensureActive();
     state.currentMultispectralBands = null;
+    updateBackendStatusUi();
     const preserveAlpha =
       !state.sampleMorph.initializing && (playbackMode || Boolean(state.sampleMorph.fromSlice && state.sampleMorph.toSlice));
     await prepareSampleMorphPair(lodMaxPixels, preserveAlpha);
@@ -11104,7 +9975,7 @@ async function refreshSlice(options = {}) {
     if (isMultiSpectralActive()) {
       const mosaics = await Promise.all(
         sampleIndices.map((sampleIdx) =>
-          fetchJson(`/api/datasets/${state.dataId}/multispectral?${buildMultispectralParams(sampleIdx, lodMaxPixels).toString()}`)
+          fetchMultispectralPayload(buildMultispectralParams(sampleIdx, lodMaxPixels), { playback: playbackMode })
         )
       );
       ensureActive();
@@ -11117,6 +9988,7 @@ async function refreshSlice(options = {}) {
       state.currentMultispectralBands = primary ? primary.bands || null : null;
       state.currentMultispectralTiles = mosaics;
       state.currentMultispectralSlice = primary || null;
+      updateBackendStatusUi();
       const selectedCoords = primary ? primary.selected_coords || indicesToCoords(primary.selected_indices) : null;
       const tiles = isSphereMode()
         ? mosaics.map((ms, idx) => createSingleCanvas(ms, null, { sphereIncludeIndexMap: idx === activeIdx }))
@@ -11126,8 +9998,10 @@ async function refreshSlice(options = {}) {
       const slices = await Promise.all(
         sampleIndices.map((sampleIdx) =>
           isDerivedPolModeActive()
-            ? fetchDerivedSlice(sampleIdx, lodMaxPixels)
-            : fetchJson(`/api/datasets/${state.dataId}/slice?${buildSliceParams(undefined, sampleIdx, state.values.pol, state.sampleMode, lodMaxPixels).toString()}`)
+            ? fetchDerivedSlice(sampleIdx, lodMaxPixels, { playback: playbackMode })
+            : fetchSlicePayload(buildSliceParams(undefined, sampleIdx, state.values.pol, state.sampleMode, lodMaxPixels), {
+                playback: playbackMode,
+              })
         )
       );
       ensureActive();
@@ -11136,6 +10010,7 @@ async function refreshSlice(options = {}) {
       state.currentMultispectralBands = null;
       state.currentMultispectralSlice = null;
       state.currentMultispectralTiles = null;
+      updateBackendStatusUi();
       const activeIdx = clamp(state.activeSampleTile, 0, Math.max(0, slices.length - 1));
       const primary = slices[activeIdx] || slices[0] || null;
       state.currentMonoSlice = primary;
@@ -11152,7 +10027,9 @@ async function refreshSlice(options = {}) {
   } else {
     state.currentMonoSliceTiles = null;
     if (isMultiSpectralActive()) {
-      const ms = await fetchJson(`/api/datasets/${state.dataId}/multispectral?${buildMultispectralParams(undefined, lodMaxPixels).toString()}`);
+      const ms = await fetchMultispectralPayload(buildMultispectralParams(undefined, lodMaxPixels), {
+        playback: playbackMode,
+      });
       ensureActive();
       await evpaPromise;
       ensureActive();
@@ -11160,6 +10037,7 @@ async function refreshSlice(options = {}) {
       state.currentMultispectralBands = ms.bands || null;
       state.currentMultispectralSlice = ms;
       state.currentMultispectralTiles = null;
+      updateBackendStatusUi();
       renderFrame(
         isSphereMode() ? createSingleCanvas(ms) : createRgbCanvas(ms.shape[0], ms.shape[1], ms.values.r, ms.values.g, ms.values.b, ms),
         ms.selected_coords || indicesToCoords(ms.selected_indices),
@@ -11167,10 +10045,10 @@ async function refreshSlice(options = {}) {
       );
     } else {
       const slice = isDerivedPolModeActive()
-        ? await fetchDerivedSlice(undefined, lodMaxPixels)
-        : await fetchJson(
-            `/api/datasets/${state.dataId}/slice?${buildSliceParams(undefined, undefined, state.values.pol, state.sampleMode, lodMaxPixels).toString()}`
-          );
+        ? await fetchDerivedSlice(undefined, lodMaxPixels, { playback: playbackMode })
+        : await fetchSlicePayload(buildSliceParams(undefined, undefined, state.values.pol, state.sampleMode, lodMaxPixels), {
+            playback: playbackMode,
+          });
       ensureActive();
       await evpaPromise;
       ensureActive();
@@ -11178,6 +10056,7 @@ async function refreshSlice(options = {}) {
       state.currentMultispectralBands = null;
       state.currentMultispectralSlice = null;
       state.currentMultispectralTiles = null;
+      updateBackendStatusUi();
       const intensityUnit = isDerivedPolModeActive() ? derivedPolUnit(state.derivedPolMode) : null;
       renderFrame(
         createSingleCanvas(slice),
@@ -11189,6 +10068,11 @@ async function refreshSlice(options = {}) {
   }
 
   if (!playbackMode) {
+    if (pendingFixedColorRange) {
+      await pendingFixedColorRange;
+      ensureActive();
+      rerenderCurrentFrameForColorNormalization();
+    }
     await refreshViewProfiles();
     ensureActive();
   } else {
@@ -11253,6 +10137,7 @@ function clearAxisWindow(axis) {
 function setAxisWindow(axis, start, end) {
   if (axis !== "t" && axis !== "nu") return;
   if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < 1) return;
+  startVisibleUpdate(`${axis}-window`, { axis });
   state.axisWindow[axis] = { start, end };
   delete state.profileZoom[axis];
   updateExportButtonState();
@@ -11840,88 +10725,6 @@ async function refreshViewProfiles() {
   drawNavigationGraphs();
 }
 
-function schedulePlaybackRefine() {
-  const token = (state.playbackRefineToken || 0) + 1;
-  state.playbackRefineToken = token;
-  setTimeout(async () => {
-    if (token !== state.playbackRefineToken) return;
-    if (isPlaying()) return;
-    if (isSampleMorphPlaybackActive()) return;
-    try {
-      await refreshSlice();
-      if (state.selection) await refreshSelectionAnalytics();
-    } catch (err) {
-      console.warn("playback refine failed:", err);
-    }
-  }, 0);
-}
-
-async function advancePlaybackAxisOnce(axis) {
-  const max = axisSize(axis) - 1;
-  const [w0, w1] = getAxisWindow(axis, max + 1);
-  const cur = clamp(state.values[axis], w0, w1);
-  const next = cur >= w1 ? w0 : cur + 1;
-  await setAxisIndex(axis, next, { playback: true });
-}
-
-async function advanceAxisPlayback(axis) {
-  await advancePlaybackAxisOnce(axis);
-}
-
-function stopPlayback(refine = false) {
-  const wasPlaying = state.playbackTimer !== null;
-  if (state.playbackTimer) {
-    clearTimeout(state.playbackTimer);
-    state.playbackTimer = null;
-  }
-  state.playbackAxis = null;
-  state.playbackRefineToken = (state.playbackRefineToken || 0) + 1;
-  updatePlayUi();
-  if (refine && wasPlaying) {
-    schedulePlaybackRefine();
-  }
-}
-
-function startPlayback(axis) {
-  if (!axis || axis === SAMPLE_MORPH_AXIS || isAxisSelectorLocked(axis) || playbackAxisLength(axis) <= 1) return;
-  stopSampleMorphPlayback();
-  stopPlayback(false);
-  state.playbackAxis = axis;
-  state.playbackPreviewMaxPixels = PLAYBACK_PREVIEW_BASE_MAX_PIXELS;
-  scheduleNextPlaybackTick(axis, 0);
-
-  updatePlayUi();
-}
-
-function toggleAxisPlayback(axis) {
-  if (isPlaying() && state.playbackAxis === axis) {
-    stopPlayback(true);
-  } else {
-    startPlayback(axis);
-  }
-}
-
-function restartPlaybackIfRunning() {
-  if (!isPlaying()) return;
-  const axis = state.playbackAxis;
-  if (!axis) {
-    stopPlayback(false);
-    return;
-  }
-  startPlayback(axis);
-}
-
-function restartSampleMorphPlaybackIfRunning() {
-  if (!isSampleMorphPlaybackActive()) return;
-  stopSampleMorphPlayback();
-  startSampleMorphPlayback();
-}
-
-function restartPlaybackTimersIfRunning() {
-  restartPlaybackIfRunning();
-  restartSampleMorphPlaybackIfRunning();
-}
-
 function applyZoomBox(zoomDrag) {
   const u0 = Math.min(zoomDrag.startU, zoomDrag.lastU);
   const u1 = Math.max(zoomDrag.startU, zoomDrag.lastU);
@@ -11974,6 +10777,7 @@ function applyZoomBox(zoomDrag) {
 function handleWheelZoom(ev) {
   if (!state.frameCanvas && !(state.frameTiles && state.frameTiles.length)) return;
   ev.preventDefault();
+  startVisibleUpdate("wheel-zoom", { spatialMode: state.spatialMode });
   if (isVolumeMode()) {
     const factor = ev.deltaY < 0 ? WHEEL_ZOOM_STEP_FACTOR : 1 / WHEEL_ZOOM_STEP_FACTOR;
     state.volumeZoom = clamp(state.volumeZoom * factor, VOLUME_ZOOM_MIN, VOLUME_ZOOM_MAX);
@@ -12064,6 +10868,7 @@ async function setAxisIndex(axis, idx, options = {}) {
   const next = clampIndexToWindow(axis, clamp(idx, 0, max));
   if (state.values[axis] === next) return;
 
+  startVisibleUpdate(options.playback === true ? "playback-step" : `${axis}-index`, { axis });
   state.values[axis] = next;
   updateSliderReadouts(state.selectedCoords);
 
@@ -12073,6 +10878,7 @@ async function setAxisIndex(axis, idx, options = {}) {
 
 async function toggleAxisProjection(axis) {
   if (!canProjectAxis(axis)) return;
+  startVisibleUpdate(`${axis}-projection`, { axis });
   const quantityBefore = intensityQuantityKey();
   const next = !isAxisProjected(axis);
   state.axisProjection[axis] = next;
@@ -12403,6 +11209,7 @@ function syncUiToState() {
   if (els.colorMapSelect) els.colorMapSelect.value = state.colorMap;
   if (els.colorRangeModeSelect) els.colorRangeModeSelect.value = state.colorRangeMode;
   if (els.sliceBackendSelect) els.sliceBackendSelect.value = state.sliceRender.backend;
+  if (els.computeBackendSelect) els.computeBackendSelect.value = normalizeComputeBackendPreference(state.multiSpectralComputeBackend);
   if (els.spatialResolutionSelect) els.spatialResolutionSelect.value = String(spatialScaleFactor());
   if (els.temporalResolutionSelect) els.temporalResolutionSelect.value = String(temporalScaleFactor());
   if (els.spectralResolutionSelect) els.spectralResolutionSelect.value = String(spectralScaleFactor());
@@ -12529,6 +11336,10 @@ async function refreshDatasetOptions(preferredDataId = null) {
   const list = await fetchJson("/api/datasets");
   assertEpoch(epoch);
   const visibleDatasets = Array.isArray(list.datasets) ? list.datasets.filter((ds) => !isSeededDatasetSummary(ds)) : [];
+  datasetSummaryById.clear();
+  for (const ds of visibleDatasets) {
+    if (ds && ds.data_id) datasetSummaryById.set(ds.data_id, ds);
+  }
   const previous = state.dataId;
   const selected = preferredDataId || previous;
   els.datasetSelect.innerHTML = "";
@@ -14752,6 +13563,7 @@ async function pickPathWithSystemDialog() {
 async function onDatasetChange() {
   const expectedEpoch = activeEpoch() + 1;
   bumpStateEpoch();
+  startVisibleUpdate("dataset-change", { dataId: els.datasetSelect.value || null });
   stopPlayback();
   stopSampleMorphPlayback();
   try {
@@ -14779,9 +13591,11 @@ async function onDatasetChange() {
     state.dataId = selectedId;
     refreshActiveTabLabel();
     setSystemPickerStatus("");
-    state.meta = await fetchJson(`/api/datasets/${state.dataId}/meta`);
-    assertEpoch(expectedEpoch);
+    const summary = datasetSummaryById.get(state.dataId) || null;
+    const provisionalMeta = buildProvisionalMetaFromDatasetSummary(summary);
+    const metaPromise = fetchJson(`/api/datasets/${state.dataId}/meta`);
     resetForDatasetChange(state);
+    state.meta = provisionalMeta;
     state.axisSettings = createDefaultAxisSettings();
     state.axisPlaneSwap = createDefaultAxisPlaneSwap();
     state.colorNormValueWindow = { min: null, max: null };
@@ -14811,7 +13625,13 @@ async function onDatasetChange() {
     resetView();
     updateControlCaps();
     drawSelectionGraphs();
-    await refreshSlice();
+    const slicePromise = refreshSlice({ deferFixedColorRange: true });
+    const fullMeta = await metaPromise;
+    assertEpoch(expectedEpoch);
+    state.meta = fullMeta;
+    state.sphereMeta = detectSphereMeta(state.meta);
+    updateControlCaps();
+    await slicePromise;
     refreshActiveTabLabel();
   } catch (err) {
     if (!isAbortError(err)) throw err;
@@ -14828,6 +13648,7 @@ async function init() {
   }
 
   await refreshDatasetOptions();
+  await loadAccelerationCapabilities();
   syncUiToState();
   updateModeButtonTooltips();
 
@@ -15196,9 +14017,15 @@ async function init() {
   }
   if (els.viewRotateRebaseBtn) {
     els.viewRotateRebaseBtn.addEventListener("click", () => {
-      if (!isSphereMode()) return;
-      resetSphereRotateAxisToViewerZ();
-      rerenderSphereFrame();
+      if (isVolumeMode()) {
+        resetVolumeOrientation();
+        rerenderVolumeFrame();
+      } else if (isSphereMode()) {
+        resetSphereRotateAxisToViewerZ();
+        rerenderSphereFrame();
+      } else {
+        return;
+      }
       updateViewRotateControls();
     });
   }
@@ -15254,6 +14081,14 @@ async function init() {
     updateControlCaps();
     await refreshSlice();
   });
+  if (els.computeBackendSelect) {
+    els.computeBackendSelect.addEventListener("change", async () => {
+      if (!canUseMultiSpectral()) return;
+      state.multiSpectralComputeBackend = normalizeComputeBackendPreference(els.computeBackendSelect.value);
+      updateControlCaps();
+      await refreshMultispectralControlsFromServer();
+    });
+  }
   if (els.msNuAxisLogBtn) {
     els.msNuAxisLogBtn.addEventListener("click", async () => {
       if (!canUseMultiSpectral()) return;
@@ -15825,8 +14660,7 @@ async function init() {
     state.profileZoomDrag = null;
     state.profileZoom = {};
     state.axisWindow = { t: null, nu: null };
-    state.volumeYaw = 0.65;
-    state.volumePitch = -0.45;
+    resetVolumeOrientation();
     state.volumeZoom = 1.0;
     state.viewRotateRate = 0;
     state.volumeDrag = null;
@@ -15882,6 +14716,7 @@ async function init() {
     screenToData,
     setAxisIndex,
     setAxisWindow,
+    startVisibleUpdate,
     clearHoverProbe,
     state,
     updateHoverProbeFromEvent,

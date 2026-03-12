@@ -1,10 +1,3 @@
-fastapi>=0.111,<1.0
-uvicorn[standard]>=0.30,<1.0
-numpy>=1.26,<3.0
-h5py>=3.10,<4.0
-astropy>=6.0,<7.0
-zarr>=2.18,<3.0
-pytest>=8.0,<9.0
-httpx>=0.27,<1.0
-python-multipart>=0.0.9,<1.0
-imageio-ffmpeg>=0.5.1,<1.0
+# Secondary compatibility wrapper.
+# Primary dependency definitions live in pyproject.toml.
+-e .[dev,native]
