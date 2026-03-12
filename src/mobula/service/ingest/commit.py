@@ -11,8 +11,7 @@ if TYPE_CHECKING:
 
 
 def commit_ingest_plan(service: IngestService, plan_id: str) -> IngestCommitResponse:
-    plan = service._sessions.get_plan(plan_id)
-    session = service._sessions.get_session(plan.inspection_id)
+    plan, session = service._sessions.get_plan_with_session(plan_id)
 
     if not plan.is_valid:
         raise ValueError("ingest plan is invalid; resolve errors before commit")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -13,7 +14,10 @@ if TYPE_CHECKING:
 
 
 def build_ingest_plan(service: IngestService, inspection_id: str, decision: MappingDecision) -> IngestPlan:
-    session = service._sessions.get_session(inspection_id)
+    session = service._sessions.touch_session(
+        inspection_id,
+        service._now() + timedelta(seconds=service._limits.session_ttl_seconds),
+    )
 
     selected_mappings = service._resolve_mappings(session, decision)
     mapping_by_input = {entry.raw_input_id: entry for entry in selected_mappings}

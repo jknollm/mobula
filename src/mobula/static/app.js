@@ -13349,6 +13349,18 @@ function buildIngestPlanDecision() {
   };
 }
 
+function formatIngestWizardError(err, fallbackMessage = "Import failed.") {
+  const raw = String(err?.message || err || "").trim();
+  const lower = raw.toLowerCase();
+  if (lower.includes("inspection session not found")) {
+    return "Import session expired or was cleared. Re-inspect the input file(s) and try again.";
+  }
+  if (lower.includes("ingest plan not found")) {
+    return "Import plan expired or was cleared. Rebuild the preview and try again.";
+  }
+  return raw || fallbackMessage;
+}
+
 async function buildIngestPreview() {
   try {
     setIngestStatus("Building ingest plan preview...");
@@ -13363,7 +13375,7 @@ async function buildIngestPreview() {
     setIngestStep("map");
     setIngestStatus(plan.is_valid ? "Preview is valid." : "Preview contains strict errors.", !plan.is_valid);
   } catch (err) {
-    setIngestStatus(`Preview failed: ${err.message}`, true);
+    setIngestStatus(`Preview failed: ${formatIngestWizardError(err, "Preview failed.")}`, true);
   }
 }
 
@@ -13417,7 +13429,7 @@ async function commitIngestPlan() {
     closeIngestDialog();
     setSystemPickerStatus(`Imported ${created.length} dataset(s): ${created.join(", ")}`);
   } catch (err) {
-    setIngestStatus(`Commit failed: ${err.message}`, true);
+    setIngestStatus(`Commit failed: ${formatIngestWizardError(err, "Commit failed.")}`, true);
   }
 }
 

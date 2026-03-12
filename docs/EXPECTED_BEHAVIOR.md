@@ -127,6 +127,8 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
   - commit import
 - Inspection warnings are advisory until they imply an invalid plan.
 - Plan errors block commit and must stay visible until resolved.
+- Active ingest work should refresh the temporary import session while the user is previewing or committing, so normal mapping/preview iteration does not expire mid-flow.
+- If an ingest session or plan does expire or is cleared, the wizard should show an explicit recovery message telling the user to re-inspect or rebuild, not a raw internal ID/error string.
 - HDF5 imports support:
   - choosing a primary numeric dataset
   - stacking same-shape keys under an explicit stack axis

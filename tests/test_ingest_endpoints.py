@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -707,6 +708,58 @@ def test_ingest_commit_missing_plan_returns_404(client) -> None:
     res = client.post("/api/ingest/commit", json={"plan_id": "plan-missing"})
     assert res.status_code == 404
     assert "ingest plan not found" in res.json()["detail"].lower()
+
+
+def test_ingest_plan_refreshes_session_ttl_to_allow_commit(
+    client_factory, base_dataset, monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("MOBULA_DATA_DIR", str(tmp_path / "mobula-data"))
+    monkeypatch.setenv("MOBULA_INGEST_SESSION_TTL_SECONDS", "5")
+
+    current = {"now": datetime(2026, 3, 12, 10, 0, 0, tzinfo=UTC)}
+
+    def fake_now(self) -> datetime:
+        return current["now"]
+
+    monkeypatch.setattr("mobula.service.ingest_service.IngestService._now", fake_now)
+    monkeypatch.setattr("mobula.service.ingest.session_store._IngestSessionStore._now", fake_now)
+
+    p = tmp_path / "ttl_refresh.h5"
+    _write_h5(p, np.arange(12, dtype=np.float32).reshape(3, 4), "x,y")
+
+    with client_factory(base_dataset) as client:
+        inspect_res = client.post("/api/ingest/inspect", data={"paths_json": json.dumps([str(p)])})
+        assert inspect_res.status_code == 200
+        inspection = inspect_res.json()
+        raw_input_id = inspection["files"][0]["raw_input"]["id"]
+        assert inspection["expires_at"] == (current["now"] + timedelta(seconds=5)).isoformat()
+
+        current["now"] = current["now"] + timedelta(seconds=4)
+        plan_res = client.post(
+            "/api/ingest/plan",
+            json={
+                "inspection_id": inspection["inspection_id"],
+                "decision": {
+                    "grouping_mode": "separate",
+                    "tab_mode": "single_tab",
+                    "file_mappings": [
+                        {
+                            "raw_input_id": raw_input_id,
+                            "dims": ["x", "y"],
+                        }
+                    ],
+                },
+            },
+        )
+        assert plan_res.status_code == 200
+        plan = plan_res.json()
+        assert plan["is_valid"] is True
+        assert plan["expires_at"] == (current["now"] + timedelta(seconds=5)).isoformat()
+
+        current["now"] = current["now"] + timedelta(seconds=2)
+        commit_res = client.post("/api/ingest/commit", json={"plan_id": plan["plan_id"]})
+        assert commit_res.status_code == 200
+        assert len(commit_res.json()["created_data_ids"]) == 1
 
 
 def test_ingest_commit_persists_preset_suggestions_for_future_inspections(

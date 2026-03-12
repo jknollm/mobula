@@ -62,6 +62,18 @@ class _IngestSessionStore:
                 raise LookupError(f"inspection session not found: {inspection_id}")
             return session
 
+    def touch_session(self, inspection_id: str, expires_at: datetime) -> _InspectionSession:
+        self.sweep()
+        with self._lock:
+            session = self._sessions.get(inspection_id)
+            if session is None:
+                raise LookupError(f"inspection session not found: {inspection_id}")
+            session.expires_at = expires_at
+            for plan in self._plans.values():
+                if plan.inspection_id == inspection_id:
+                    plan.expires_at = expires_at
+            return session
+
     def save_plan(self, plan: _PlanRecord) -> None:
         with self._lock:
             self._plans[plan.plan_id] = plan
@@ -73,6 +85,17 @@ class _IngestSessionStore:
             if plan is None:
                 raise LookupError(f"ingest plan not found: {plan_id}")
             return plan
+
+    def get_plan_with_session(self, plan_id: str) -> tuple[_PlanRecord, _InspectionSession]:
+        self.sweep()
+        with self._lock:
+            plan = self._plans.get(plan_id)
+            if plan is None:
+                raise LookupError(f"ingest plan not found: {plan_id}")
+            session = self._sessions.get(plan.inspection_id)
+            if session is None:
+                raise LookupError(f"inspection session not found: {plan.inspection_id}")
+            return plan, session
 
     def finalize_inspection(self, inspection_id: str) -> None:
         with self._lock:
