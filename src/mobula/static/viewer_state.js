@@ -291,6 +291,7 @@ export function createViewerState() {
     spatialMode: "slice",
     sphereMeta: null,
     sphereProjection: "mollweide",
+    sphereHorizontalFlip: true,
     sphereInsideScale: 0.2,
     sphereYaw: 0,
     spherePitch: 0,

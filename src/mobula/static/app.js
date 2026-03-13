@@ -428,6 +428,7 @@ function restoreState(snapshot) {
   merged.colorMap = normalizeColorMapKey(merged.colorMap);
   merged.axisSettings = normalizeAxisSettingsState(merged.axisSettings);
   merged.axisPlaneSwap = normalizeAxisPlaneSwapState(merged.axisPlaneSwap);
+  merged.sphereHorizontalFlip = merged.sphereHorizontalFlip !== false;
   merged.colorNormValueWindow = normalizeColorNormWindowValue(merged.colorNormValueWindow);
   merged.multiSpectralChannelRange = normalizeMultispectralChannelRange(merged.multiSpectralChannelRange);
   merged.multiSpectralNormalizeSpectrum = Boolean(merged.multiSpectralNormalizeSpectrum);
@@ -573,6 +574,7 @@ function debugStateSnapshot() {
       : null,
     spatialMode: state.spatialMode,
     sphere: {
+      flipX: state.sphereHorizontalFlip !== false,
       hasVectors: Boolean(state.sphereVectors),
       pitch: state.spherePitch,
       projection: state.sphereProjection,
@@ -899,6 +901,10 @@ function axisIsFlipped(dim) {
   return axisSetting(dim).flip === true;
 }
 
+function sphereHorizontalFlipEnabled() {
+  return state.sphereHorizontalFlip !== false;
+}
+
 function axisRawEndpoints(dim) {
   const n = axisSize(dim);
   if (n <= 1) return null;
@@ -982,6 +988,10 @@ function axisSettingsCustomizedCount() {
     ) count += 1;
   }
   return count;
+}
+
+function sphereFlipCustomizedCount() {
+  return isSphereDataset() && !sphereHorizontalFlipEnabled() ? 1 : 0;
 }
 
 function axisPlaneSwapCustomizedCount() {
@@ -4037,7 +4047,7 @@ function updateHoverReadout() {
 
 function updateAxisSettingsButtonState() {
   if (!els.axisSettingsBtn) return;
-  const count = axisSettingsCustomizedCount() + axisPlaneSwapCustomizedCount();
+  const count = axisSettingsCustomizedCount() + axisPlaneSwapCustomizedCount() + sphereFlipCustomizedCount();
   els.axisSettingsBtn.textContent = count > 0 ? `Axis Settings (${count})` : "Axis Settings";
   els.axisSettingsBtn.classList.toggle("activeAux", count > 0);
 }
@@ -4045,11 +4055,13 @@ function updateAxisSettingsButtonState() {
 function axisSettingsSummaryText() {
   const axisCount = axisSettingsCustomizedCount();
   const swapCount = axisPlaneSwapCustomizedCount();
-  const count = axisCount + swapCount;
+  const sphereCount = sphereFlipCustomizedCount();
+  const count = axisCount + swapCount + sphereCount;
   if (count <= 0) return "Using dataset-native axis coordinates.";
   const parts = [];
   if (axisCount > 0) parts.push(`${axisCount} axis setting${axisCount === 1 ? "" : "s"}`);
   if (swapCount > 0) parts.push(`${swapCount} plane swap${swapCount === 1 ? "" : "s"}`);
+  if (sphereCount > 0) parts.push(`${sphereCount} sphere orientation override${sphereCount === 1 ? "" : "s"}`);
   return `${parts.join(" + ")} customized.`;
 }
 
@@ -4058,7 +4070,11 @@ function applyAxisSettingsChange() {
   if (els.axisSettingsSummary) els.axisSettingsSummary.textContent = axisSettingsSummaryText();
   if (!state.dataId) return;
   updateSliderReadouts(state.selectedCoords);
-  drawFrameAndOverlays();
+  if (isSphereMode()) {
+    rerenderSphereFrame();
+  } else {
+    drawFrameAndOverlays();
+  }
   drawNavigationGraphs();
   drawSelectionGraphs();
   drawColorbar();
@@ -4133,12 +4149,50 @@ function renderAxisSettingsDialog() {
   }
 
   const dims = AXIS_CONTROL_DIMS.filter((dim) => axisSize(dim) > 1);
-  if (!dims.length) {
+  if (!dims.length && !isSphereDataset()) {
     const empty = document.createElement("div");
     empty.className = "axisSettingsEmpty";
     empty.textContent = "No varying axis available.";
     els.axisSettingsRows.appendChild(empty);
     return;
+  }
+
+  if (isSphereDataset()) {
+    const row = document.createElement("div");
+    row.className = "axisSettingsRow";
+
+    const headerWrap = document.createElement("div");
+    headerWrap.className = "axisSettingsHeader";
+    const header = document.createElement("div");
+    header.className = "axisSettingsAxis";
+    header.textContent = "Sphere map";
+    headerWrap.appendChild(header);
+
+    const meta = document.createElement("div");
+    meta.className = "axisSettingsMeta";
+    meta.textContent = sphereHorizontalFlipEnabled()
+      ? "Left-right flipped for astronomy-style sky maps."
+      : "Left-right unflipped for Earth-observation-style maps.";
+    headerWrap.appendChild(meta);
+    row.appendChild(headerWrap);
+
+    const actions = document.createElement("div");
+    actions.className = "axisSettingsActions";
+    const flipBtn = document.createElement("button");
+    flipBtn.type = "button";
+    flipBtn.className = "axisToggleBtn axisRevertBtn";
+    flipBtn.classList.toggle("isActive", sphereHorizontalFlipEnabled());
+    flipBtn.setAttribute("aria-pressed", sphereHorizontalFlipEnabled() ? "true" : "false");
+    flipBtn.textContent = "Flip left/right";
+    flipBtn.addEventListener("click", () => {
+      state.sphereHorizontalFlip = !sphereHorizontalFlipEnabled();
+      applyAxisSettingsChange();
+      renderAxisSettingsDialog();
+    });
+    actions.appendChild(flipBtn);
+    row.appendChild(actions);
+
+    els.axisSettingsRows.appendChild(row);
   }
 
   for (const dim of dims) {
@@ -4276,6 +4330,7 @@ async function resetAxisSettings() {
   const hadActivePlaneSwap = axisPlaneSwapEnabled(activePlane);
   state.axisSettings = createDefaultAxisSettings();
   state.axisPlaneSwap = createDefaultAxisPlaneSwap();
+  state.sphereHorizontalFlip = true;
   if (hadActivePlaneSwap) {
     await applyAxisPlaneSwapChange(activePlane);
     renderAxisSettingsDialog();
@@ -6728,11 +6783,12 @@ function ensureSphereRingToDataLut(vectors) {
 }
 
 function sphereCameraRayForPixel(px, py, width, height, projection) {
+  const xSign = sphereHorizontalFlipEnabled() ? -1 : 1;
   if (projection === "inside") {
     const nx = px / Math.max(1, width - 1);
     const ny = py / Math.max(1, height - 1);
     const insideScale = sphereInsideRenderScale();
-    const u = (nx - 0.5) / insideScale;
+    const u = ((nx - 0.5) * xSign) / insideScale;
     const v = (0.5 - ny) / insideScale;
     const inv = 1 / Math.sqrt(1 + u * u + v * v);
     return [inv, u * inv, v * inv];
@@ -6741,7 +6797,7 @@ function sphereCameraRayForPixel(px, py, width, height, projection) {
     const cx = 0.5 * (width - 1);
     const cy = 0.5 * (height - 1);
     const r = SPHERE_OUTSIDE_RADIUS * Math.min(width, height);
-    const y = (px - cx) / Math.max(1.0e-6, r);
+    const y = ((px - cx) * xSign) / Math.max(1.0e-6, r);
     const z = (cy - py) / Math.max(1.0e-6, r);
     const rr = y * y + z * z;
     if (rr > 1.0) return null;
@@ -6749,7 +6805,7 @@ function sphereCameraRayForPixel(px, py, width, height, projection) {
     return [x, y, z];
   }
   if (projection === "mollweide") {
-    const xProj = (px / Math.max(1, width - 1)) * (4 * Math.SQRT2) - 2 * Math.SQRT2;
+    const xProj = ((px / Math.max(1, width - 1)) * (4 * Math.SQRT2) - 2 * Math.SQRT2) * xSign;
     const yProj = Math.SQRT2 - (py / Math.max(1, height - 1)) * (2 * Math.SQRT2);
     const xn = xProj / (2 * Math.SQRT2);
     const yn = yProj / Math.SQRT2;
@@ -6768,7 +6824,7 @@ function sphereCameraRayForPixel(px, py, width, height, projection) {
 
 function ensureSphereRayGrid(width, height, projection) {
   const insideScale = projection === "inside" ? Math.round(sphereInsideRenderScale() * 1.0e6) / 1.0e6 : SPHERE_INSIDE_SCALE;
-  const key = `${projection}:${width}x${height}:${insideScale}:${SPHERE_OUTSIDE_RADIUS}`;
+  const key = `${projection}:${width}x${height}:${insideScale}:${SPHERE_OUTSIDE_RADIUS}:${sphereHorizontalFlipEnabled() ? "flip" : "native"}`;
   if (state.sphereRayGridKey === key && state.sphereRayGrid) return state.sphereRayGrid;
 
   const pixels = [];
@@ -7077,9 +7133,10 @@ function mollweideTheta(lat) {
 }
 
 function projectSphereVector(x, y, z, width, height, projection, allowOutside = false) {
+  const xSign = sphereHorizontalFlipEnabled() ? -1 : 1;
   if (projection === "inside") {
     if (x <= 1.0e-5) return null;
-    const u = y / x;
+    const u = (y / x) * xSign;
     const v = z / x;
     // Slight overscan (zoom-out) reduces frustum-edge artifacts at the viewport boundary.
     const scale = sphereInsideRenderScale();
@@ -7093,7 +7150,7 @@ function projectSphereVector(x, y, z, width, height, projection, allowOutside = 
     const r = SPHERE_OUTSIDE_RADIUS * Math.min(width, height);
     const cx = 0.5 * (width - 1);
     const cy = 0.5 * (height - 1);
-    const sx = cx + y * r;
+    const sx = cx + y * xSign * r;
     const sy = cy - z * r;
     if (!allowOutside && (sx < 0 || sy < 0 || sx >= width || sy >= height)) return null;
     return { x: sx, y: sy, depth: x };
@@ -7102,7 +7159,7 @@ function projectSphereVector(x, y, z, width, height, projection, allowOutside = 
   const lon = Math.atan2(y, x);
   const lat = Math.asin(clamp(z, -1, 1));
   const theta = mollweideTheta(lat);
-  const xProj = ((2 * Math.SQRT2) / Math.PI) * lon * Math.cos(theta);
+  const xProj = ((2 * Math.SQRT2) / Math.PI) * lon * Math.cos(theta) * xSign;
   const yProj = Math.SQRT2 * Math.sin(theta);
   const sx = ((xProj + 2 * Math.SQRT2) / (4 * Math.SQRT2)) * (width - 1);
   const sy = ((Math.SQRT2 - yProj) / (2 * Math.SQRT2)) * (height - 1);
@@ -7763,6 +7820,7 @@ function createSphereCanvas(slice, rangeOverride = null, options = null) {
           npix,
           nside: state.sphereMeta.nside,
           projection: state.sphereProjection || "mollweide",
+          flipX: sphereHorizontalFlipEnabled(),
           insideScale: sphereInsideRenderScale(),
           width,
           height,

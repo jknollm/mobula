@@ -591,3 +591,22 @@ def test_sphere_playback_keeps_outside_projection_circular(page: object, app_url
     playing_ratio = playing_bounds["width"] / max(1, playing_bounds["height"])
     assert abs(paused_ratio - 1.0) < 0.12
     assert abs(playing_ratio - 1.0) < 0.12
+
+
+@pytest.mark.browser
+def test_sphere_axis_settings_can_toggle_left_right_flip(page: object, app_url: str) -> None:
+    _wait_ui_ready(page, app_url)
+    _choose_dataset(page, "healpix-sky-time-nu-hd")
+
+    _wait_for_canvas_foreground(page, "#sliceCanvas")
+    page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().sphere.flipX === true")
+    before = page.locator("#sliceCanvas").evaluate("(canvas) => canvas.toDataURL()")
+
+    page.locator("#axisSettingsBtn:visible").first.click()
+    page.locator("#axisSettingsDialog:visible").get_by_role("button", name="Flip left/right").click()
+
+    page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().sphere.flipX === false")
+    page.wait_for_function(
+        "(previous) => document.querySelector('#sliceCanvas')?.toDataURL() !== previous",
+        arg=before,
+    )

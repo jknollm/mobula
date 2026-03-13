@@ -108,6 +108,7 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
 - Sphere projection behavior is stable by mode:
   - `Mollweide` preserves map aspect
   - `Inside` and `Outside` preserve a projection-stable circular or square basis
+  - sphere mode defaults to astronomy-style left-right orientation, and Axis Settings exposes a left-right flip toggle for alternate map conventions
 - Full-view and zoomed-view rendering follow a consistent contract:
   - zoomed-out view preserves source aspect and may show margins
   - zoomed-in view uses cover behavior to fill the main canvas

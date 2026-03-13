@@ -155,6 +155,7 @@ class GpuSphereRenderer {
       uniform int u_nside;
       uniform int u_npix;
       uniform int u_projection;
+      uniform int u_flip_x;
       uniform float u_inside_scale;
       uniform int u_width;
       uniform int u_height;
@@ -191,6 +192,7 @@ class GpuSphereRenderer {
           float nx = px / max(1.0, w - 1.0);
           float ny = py / max(1.0, h - 1.0);
           float u = (nx - 0.5) / max(1.0e-6, u_inside_scale);
+          if (u_flip_x == 1) u = -u;
           float v = (0.5 - ny) / max(1.0e-6, u_inside_scale);
           float inv = inversesqrt(1.0 + u * u + v * v);
           cam = vec3(inv, u * inv, v * inv);
@@ -202,6 +204,7 @@ class GpuSphereRenderer {
           float cy = 0.5 * (h - 1.0);
           float r = SPHERE_OUTSIDE_RADIUS * min(w, h);
           float y = (px - cx) / max(1.0e-6, r);
+          if (u_flip_x == 1) y = -y;
           float z = (cy - py) / max(1.0e-6, r);
           float rr = y * y + z * z;
           if (rr > 1.0) return false;
@@ -211,6 +214,7 @@ class GpuSphereRenderer {
         }
 
         float xProj = (px / max(1.0, w - 1.0)) * (4.0 * SQRT2) - 2.0 * SQRT2;
+        if (u_flip_x == 1) xProj = -xProj;
         float yProj = SQRT2 - (py / max(1.0, h - 1.0)) * (2.0 * SQRT2);
         float xn = xProj / (2.0 * SQRT2);
         float yn = yProj / SQRT2;
@@ -431,6 +435,7 @@ class GpuSphereRenderer {
       nside: gl.getUniformLocation(program, "u_nside"),
       npix: gl.getUniformLocation(program, "u_npix"),
       projection: gl.getUniformLocation(program, "u_projection"),
+      flipX: gl.getUniformLocation(program, "u_flip_x"),
       insideScale: gl.getUniformLocation(program, "u_inside_scale"),
       width: gl.getUniformLocation(program, "u_width"),
       height: gl.getUniformLocation(program, "u_height"),
@@ -635,6 +640,7 @@ class GpuSphereRenderer {
     gl.uniform1i(uniforms.nside, opts.nside);
     gl.uniform1i(uniforms.npix, opts.npix);
     gl.uniform1i(uniforms.projection, opts.projection);
+    gl.uniform1i(uniforms.flipX, opts.flipX ? 1 : 0);
     gl.uniform1f(uniforms.insideScale, opts.insideScale);
     gl.uniform1i(uniforms.width, opts.width);
     gl.uniform1i(uniforms.height, opts.height);
@@ -680,6 +686,7 @@ class GpuSphereRenderer {
       npix,
       nside,
       projection,
+      flipX = true,
       insideScale = 0.2,
       width,
       height,
@@ -800,6 +807,7 @@ class GpuSphereRenderer {
       nside,
       npix,
       projection: projectionMode,
+      flipX,
       insideScale: Math.max(0.05, Math.min(6.0, insideScale)),
       width,
       height,

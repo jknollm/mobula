@@ -45,6 +45,7 @@ export function resetForDatasetChange(state) {
   }
   state.sphereMeta = null;
   state.sphereProjection = "mollweide";
+  state.sphereHorizontalFlip = true;
   state.sphereInsideScale = 0.2;
   state.sphereYaw = 0;
   state.spherePitch = 0;
