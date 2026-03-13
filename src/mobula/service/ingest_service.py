@@ -257,7 +257,10 @@ class IngestService:
                     pre_warnings.append(
                         f"NPZ array 'values' not found; using '{selected_meta['path']}' as the best numeric data candidate."
                     )
-                if len(candidates_json) > 1 and (int(candidates_json[0]["score"]) - int(candidates_json[1]["score"])) <= 30:
+                if (
+                    len(candidates_json) > 1
+                    and (int(candidates_json[0]["score"]) - int(candidates_json[1]["score"])) <= 30
+                ):
                     pre_warnings.append(
                         "Multiple plausible NPZ arrays were detected; verify the selected Data Key in the ingest summary."
                     )
