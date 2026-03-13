@@ -129,13 +129,14 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
 - Plan errors block commit and must stay visible until resolved.
 - Active ingest work should refresh the temporary import session while the user is previewing or committing, so normal mapping/preview iteration does not expire mid-flow.
 - If an ingest session or plan does expire or is cleared, the wizard should show an explicit recovery message telling the user to re-inspect or rebuild, not a raw internal ID/error string.
+- If inspect fails before any ingest dialog opens, the viewer status area should still show the explicit reason instead of leaving the user with a silent failure or a generic busy message.
 - HDF5 imports support:
   - choosing a primary numeric dataset
   - stacking same-shape keys under an explicit stack axis
   - quick Stokes `I/Q/U/V` stacking when compatible members are found
 - A `pol` axis with size `3` is interpreted as `I,Q,U` and padded to `I,Q,U,V` during load.
 - Missing canonical axes are padded to singleton dimensions during ingest commit.
-- Drag-and-drop upload supports file-based FITS and HDF5 inputs. `.zarr` folders require path-based selection.
+- Drag-and-drop upload supports file-based FITS, HDF5, and NPZ inputs. `.zarr` folders require path-based selection.
 - Cancelling or restarting the ingest flow should leave the currently active dataset unchanged.
 
 ## Export And Save

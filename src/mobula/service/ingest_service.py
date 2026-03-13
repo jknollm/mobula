@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 from fastapi import UploadFile
 
-from mobula.data.loaders import _dim_from_ctype
+from mobula.data.loaders import _dim_from_ctype, infer_npz_dims, list_npz_array_candidates
 from mobula.data.schema import CANONICAL_DIMS, CubeDataset
 from mobula.paths import default_data_dir
 from mobula.service.api_models import (
@@ -92,7 +92,7 @@ from mobula.service.ingest.presets import _PresetStore
 from mobula.service.ingest.session_store import _IngestSessionStore
 from mobula.service.registry import DatasetRegistry
 
-SUPPORTED_INGEST_EXTS = {".h5", ".hdf5", ".fits", ".fit", ".fts", ".zarr"}
+SUPPORTED_INGEST_EXTS = {".h5", ".hdf5", ".fits", ".fit", ".fts", ".npz", ".zarr"}
 
 _HDF5_STOKES_STACK_PREFIX = "__stokes_stack__:"
 
@@ -131,6 +131,8 @@ class IngestService:
     def _format_name_from_suffix(suffix: str) -> str:
         if suffix in {".h5", ".hdf5"}:
             return "hdf5"
+        if suffix == ".npz":
+            return "npz"
         if suffix in {".fits", ".fit", ".fts"}:
             return "fits"
         if suffix == ".zarr":
@@ -239,6 +241,25 @@ class IngestService:
                 if len(candidates) > 1 and (candidates[0].score - candidates[1].score) <= 30:
                     pre_warnings.append(
                         "Multiple plausible HDF5 datasets were detected; verify the selected Data Key in the mapper toolbar."
+                    )
+        elif suffix == ".npz":
+            with np.load(path, allow_pickle=False) as npz:
+                candidates_json = list_npz_array_candidates(npz)
+                if not candidates_json:
+                    raise ValueError("NPZ file does not contain any real numeric arrays that can be displayed")
+                selected_meta = candidates_json[0]
+                shape = [int(x) for x in selected_meta["shape"]]
+                dtype = str(selected_meta["dtype"])
+                native_labels = list(infer_npz_dims(npz, str(selected_meta["path"]), tuple(shape)))
+                metadata["dataset_path"] = str(selected_meta["path"])
+                metadata["dataset_candidates"] = candidates_json[:12]
+                if str(selected_meta["path"]) != "values":
+                    pre_warnings.append(
+                        f"NPZ array 'values' not found; using '{selected_meta['path']}' as the best numeric data candidate."
+                    )
+                if len(candidates_json) > 1 and (int(candidates_json[0]["score"]) - int(candidates_json[1]["score"])) <= 30:
+                    pre_warnings.append(
+                        "Multiple plausible NPZ arrays were detected; verify the selected Data Key in the ingest summary."
                     )
         elif suffix in {".fits", ".fit", ".fts"}:
             from astropy.io import fits
@@ -622,6 +643,8 @@ class IngestService:
             rank = (int(stacked.score), int(stacked.ndim), int(stacked.size), stacked.path)
             ranked.append((rank, stacked))
         if not ranked:
+            if not list(file_obj.keys()):
+                raise ValueError("HDF5 file is empty; root group has no datasets or subgroups to inspect")
             raise ValueError("HDF5 file does not contain any numeric datasets that can be displayed")
 
         ranked.sort(key=lambda item: item[0], reverse=True)

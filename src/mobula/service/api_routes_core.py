@@ -14,7 +14,7 @@ from mobula.service.api_utils import _coords_summary, _dim_size, _safe_dataset, 
 from mobula.service.perf import timed_json_response
 from mobula.service.registry import DatasetRegistry
 
-SUPPORTED_LOCAL_DATASET_EXTS = {".h5", ".hdf5", ".fits", ".fit", ".fts", ".zarr"}
+SUPPORTED_LOCAL_DATASET_EXTS = {".h5", ".hdf5", ".fits", ".fit", ".fts", ".npz", ".zarr"}
 
 
 def _is_loadable_local_dataset(path: Path) -> bool:

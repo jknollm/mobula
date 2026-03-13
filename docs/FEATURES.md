@@ -10,10 +10,12 @@ This page summarizes what mobula can do today.
 - Local loading from:
   - HDF5 (`.h5`, `.hdf5`)
   - FITS (`.fits`, `.fit`, `.fts`)
+  - NumPy archives (`.npz`)
   - Zarr folders (`.zarr`) via path-based loading / direct API
 - Automatic axis inference from embedded labels, FITS headers, and filename heuristics
 - Drag-and-drop axis mapping in source-file order when inference is incomplete
 - HDF5 data-key selection, including same-shape key stacking and Stokes quick-pick helpers
+- NPZ inspect support with automatic selection of the best displayable real-valued array
 - Multi-file import intent selection: combine into one dataset or create separate tabs
 - Suggested mapping presets for repeated import layouts
 - Internal singleton padding to the full 7D model during ingest commit or optional legacy direct load

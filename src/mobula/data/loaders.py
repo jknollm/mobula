@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 import re
 from typing import Any
@@ -7,6 +8,29 @@ from typing import Any
 import numpy as np
 
 from .schema import CANONICAL_DIMS, CubeDataset, reorder_to_canonical
+
+_COORD_LIKE_TOKENS = (
+    "coord",
+    "axis",
+    "header",
+    "meta",
+    "wcs",
+    "unit",
+    "mask",
+    "flag",
+    "quality",
+    "weight",
+    "variance",
+    "uncertainty",
+    "error",
+    "index",
+    "indices",
+)
+
+_NPZ_COORD_KEYS = {
+    "nu": ("selected_frequency_hz", "frequency_hz", "frequencies_hz", "frequency", "frequencies", "freq_hz", "freq", "nu"),
+    "t": ("selected_time_s", "time_s", "times_s", "time", "times", "t"),
+}
 
 
 def _default_coords_from_shape(dims: tuple[str, ...], shape: tuple[int, ...]) -> dict[str, np.ndarray]:
@@ -144,6 +168,217 @@ def _axis_type_for_dim(dim: str, ctype: str | None = None) -> str:
     if dim == "sample":
         return "sample"
     return "spatial"
+
+
+def _npz_coord_like_name(name: str) -> bool:
+    lower = str(name).lower()
+    base = lower.rsplit("/", 1)[-1]
+    if any(token in lower for token in _COORD_LIKE_TOKENS):
+        return True
+    if any(base == candidate for keys in _NPZ_COORD_KEYS.values() for candidate in keys):
+        return True
+    return False
+
+
+def _npz_match_coord_axis(npz: Any, dim: str, shape: tuple[int, ...], used_axes: set[int]) -> int | None:
+    candidates = _NPZ_COORD_KEYS.get(dim, ())
+    preferred_axes = {
+        "nu": [max(0, len(shape) - 3), max(0, len(shape) - 1)],
+        "t": [max(0, len(shape) - 4), max(0, len(shape) - 2)],
+    }.get(dim, [])
+    for key in candidates:
+        if key not in npz:
+            continue
+        arr = np.asarray(npz[key])
+        if arr.ndim != 1 or arr.size < 1 or np.issubdtype(arr.dtype, np.complexfloating):
+            continue
+        matches = [axis for axis, size in enumerate(shape) if axis not in used_axes and int(size) == int(arr.shape[0])]
+        if not matches:
+            continue
+        for axis in preferred_axes:
+            if axis in matches:
+                return axis
+        return matches[0]
+    return None
+
+
+def infer_npz_dims(npz: Any, array_key: str, shape: tuple[int, ...]) -> tuple[str, ...]:
+    ndim = len(shape)
+    if ndim < 1:
+        raise ValueError("NPZ array rank must be >= 1")
+
+    dims: list[str | None] = [None] * ndim
+    used_axes: set[int] = set()
+    used_dims: set[str] = set()
+    lower = str(array_key or "").lower()
+
+    def assign(axis: int, dim: str) -> None:
+        if axis < 0 or axis >= ndim:
+            return
+        if dims[axis] is not None or dim in used_dims:
+            return
+        dims[axis] = dim
+        used_axes.add(axis)
+        used_dims.add(dim)
+
+    image_like_tokens = (
+        "sky",
+        "image",
+        "cube",
+        "dirty",
+        "model",
+        "residual",
+        "brightness",
+        "spectral_index",
+        "uncertainty",
+        "final",
+        "mean",
+        "std",
+    )
+    if ndim >= 2 and any(token in lower for token in image_like_tokens):
+        assign(ndim - 2, "x")
+        assign(ndim - 1, "y")
+
+    for dim in ("nu", "t"):
+        axis = _npz_match_coord_axis(npz, dim, shape, used_axes)
+        if axis is not None:
+            assign(axis, dim)
+
+    if ndim >= 1 and shape[0] == 1:
+        assign(0, "sample")
+    if ndim >= 2 and int(shape[1]) in {1, 3, 4}:
+        assign(1, "pol")
+    elif ndim >= 1 and int(shape[0]) in {1, 3, 4}:
+        assign(0, "pol")
+
+    if "vis" in lower and ndim >= 2:
+        assign(max(0, ndim - 1), "nu")
+
+    fill_order = ("sample", "pol", "t", "nu", "x", "y", "z")
+    for axis in range(ndim):
+        if dims[axis] is not None:
+            continue
+        for dim in fill_order:
+            if dim in used_dims:
+                continue
+            assign(axis, dim)
+            break
+
+    return tuple(str(dim) for dim in dims if dim is not None)
+
+
+def _npz_key_score(name: str, arr: np.ndarray, dims_attr: tuple[str, ...]) -> tuple[int, int, int, str]:
+    full = str(name).lower()
+    base = full.rsplit("/", 1)[-1]
+    ndim = int(arr.ndim)
+    size = int(arr.size)
+    score = 0
+
+    preferred = (
+        ("values", 240),
+        ("posterior_mean", 150),
+        ("posterior", 70),
+        ("mean_sky", 90),
+        ("sky", 75),
+        ("cube", 42),
+        ("image", 42),
+        ("science", 36),
+        ("data", 20),
+    )
+    for token, bonus in preferred:
+        if token == base:
+            score += bonus
+        elif token in full:
+            score += bonus
+            break
+
+    penalties = (
+        ("std", 55),
+        ("uncertainty", 70),
+        ("residual", 55),
+        ("dirty", 35),
+        ("reference", 45),
+        ("predictive", 35),
+        ("prior", 35),
+        ("vis", 140),
+    )
+    for token, penalty in penalties:
+        if token in full:
+            score -= penalty
+
+    if ndim >= 2:
+        score += 48
+    if ndim >= 3:
+        score += 42
+    if ndim >= 4:
+        score += 28
+    if ndim == 1:
+        score -= 45
+
+    if size > 0:
+        score += int(min(36, round(math.log10(float(size + 1)) * 8)))
+
+    if len(dims_attr) == ndim and len(set(dims_attr)) == ndim and all(dim in CANONICAL_DIMS for dim in dims_attr):
+        score += 30
+
+    if _npz_coord_like_name(name):
+        score -= 120 if ndim == 1 else 70
+
+    return score, ndim, size, name
+
+
+def list_npz_array_candidates(npz: Any) -> list[dict[str, Any]]:
+    ranked: list[tuple[tuple[int, int, int, str], dict[str, Any]]] = []
+    for name in getattr(npz, "files", []):
+        arr = np.asarray(npz[name])
+        if arr.ndim < 1 or int(arr.size) < 1:
+            continue
+        if not np.issubdtype(arr.dtype, np.number) or np.issubdtype(arr.dtype, np.complexfloating):
+            continue
+        dims_attr = infer_npz_dims(npz, name, tuple(int(x) for x in arr.shape))
+        rank = _npz_key_score(name, arr, dims_attr)
+        ranked.append(
+            (
+                rank,
+                {
+                    "path": str(name),
+                    "shape": [int(x) for x in arr.shape],
+                    "dtype": str(arr.dtype),
+                    "ndim": int(arr.ndim),
+                    "size": int(arr.size),
+                    "dims_attr": list(dims_attr),
+                    "score": int(rank[0]),
+                    "coordinate_like": _npz_coord_like_name(name),
+                    "kind": "dataset",
+                    "member_paths": [],
+                },
+            )
+        )
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [item[1] for item in ranked]
+
+
+def _default_npz_array_key(npz: Any) -> str:
+    candidates = list_npz_array_candidates(npz)
+    if not candidates:
+        raise ValueError("NPZ file does not contain any real numeric arrays that can be displayed")
+    return str(candidates[0]["path"])
+
+
+def _apply_npz_coords(npz: Any, dims: tuple[str, ...], shape: tuple[int, ...], coords: dict[str, np.ndarray], units: dict[str, str]) -> None:
+    for axis, dim in enumerate(dims):
+        for key in _NPZ_COORD_KEYS.get(dim, ()):
+            if key not in npz:
+                continue
+            arr = np.asarray(npz[key])
+            if arr.ndim != 1 or int(arr.shape[0]) != int(shape[axis]) or np.issubdtype(arr.dtype, np.complexfloating):
+                continue
+            coords[dim] = np.asarray(arr, dtype=np.float64).reshape(-1)
+            if dim == "nu":
+                units[dim] = "Hz"
+            elif dim == "t":
+                units[dim] = "s"
+            break
 
 
 def pad_dataset_to_canonical(dataset: CubeDataset) -> tuple[CubeDataset, tuple[str, ...]]:
@@ -434,6 +669,53 @@ def load_zarr(
     return dataset
 
 
+def load_npz(
+    path: str | Path,
+    array_key: str | None = None,
+    dims: tuple[str, ...] | None = None,
+    data_id: str | None = None,
+) -> CubeDataset:
+    path = Path(path).expanduser().resolve()
+    with np.load(path, allow_pickle=False) as npz:
+        selected_key = str(array_key or "").strip() or _default_npz_array_key(npz)
+        if selected_key not in npz:
+            raise KeyError(f"array '{selected_key}' not found in {path}")
+        raw = np.asarray(npz[selected_key])
+        if raw.ndim < 1:
+            raise ValueError(f"array '{selected_key}' contains scalar data, expected n-D array")
+        if not np.issubdtype(raw.dtype, np.number) or np.issubdtype(raw.dtype, np.complexfloating):
+            raise ValueError(f"array '{selected_key}' is not a supported real numeric array")
+
+        if dims is None:
+            dims = infer_npz_dims(npz, selected_key, tuple(int(x) for x in raw.shape))
+
+        values = np.asarray(raw, dtype=np.float32)
+        values, dims = reorder_to_canonical(values, dims)
+        coords = _default_coords_from_shape(dims, values.shape)
+        units = _default_units(dims)
+        _apply_npz_coords(npz, dims, tuple(int(x) for x in values.shape), coords, units)
+
+    provenance = {"source": "npz", "path": str(path), "array_key": selected_key}
+    values, coords, provenance = _normalize_stokes_iqu_to_iquv(values, dims, coords, provenance)
+
+    dataset = CubeDataset(
+        data_id=data_id or path.stem,
+        dims=dims,
+        coords=coords,
+        values=values,
+        units=units,
+        intensity_unit="arb",
+        wcs={
+            "frame": "unknown",
+            "source": "npz",
+            "axis_types": {dim: _axis_type_for_dim(dim) for dim in dims},
+        },
+        provenance=provenance,
+    )
+    dataset.validate()
+    return dataset
+
+
 def load_by_extension(path: str | Path, **kwargs: Any) -> CubeDataset:
     path = Path(path)
     suffix = path.suffix.lower()
@@ -441,6 +723,8 @@ def load_by_extension(path: str | Path, **kwargs: Any) -> CubeDataset:
         return load_hdf5(path, **kwargs)
     if suffix in {".fits", ".fit", ".fts"}:
         return load_fits(path, **kwargs)
+    if suffix in {".npz"}:
+        return load_npz(path, **kwargs)
     if suffix in {".zarr"}:
         return load_zarr(path, **kwargs)
     raise ValueError(f"unsupported file extension: {suffix}")

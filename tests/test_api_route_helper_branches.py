@@ -57,15 +57,18 @@ def test_run_ffmpeg_reports_stdout_when_stderr_is_empty(monkeypatch) -> None:
 
 def test_is_loadable_local_dataset_requires_zarr_directory(tmp_path: Path) -> None:
     h5_path = tmp_path / "cube.h5"
+    npz_path = tmp_path / "cube.npz"
     zarr_dir = tmp_path / "cube.zarr"
     zarr_file = tmp_path / "not_a_dir.zarr"
     txt_path = tmp_path / "cube.txt"
     h5_path.write_bytes(b"test")
+    npz_path.write_bytes(b"test")
     zarr_dir.mkdir()
     zarr_file.write_bytes(b"test")
     txt_path.write_bytes(b"test")
 
     assert api_routes_core._is_loadable_local_dataset(h5_path) is True
+    assert api_routes_core._is_loadable_local_dataset(npz_path) is True
     assert api_routes_core._is_loadable_local_dataset(zarr_dir) is True
     assert api_routes_core._is_loadable_local_dataset(zarr_file) is False
     assert api_routes_core._is_loadable_local_dataset(txt_path) is False

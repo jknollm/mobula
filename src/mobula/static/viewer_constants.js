@@ -88,7 +88,7 @@ export const PROFILE_THEME = {
   spatial: "#52efbc",
 };
 
-export const SUPPORTED_DROP_UPLOAD_EXTS = new Set([".h5", ".hdf5", ".fits", ".fit", ".fts"]);
+export const SUPPORTED_DROP_UPLOAD_EXTS = new Set([".h5", ".hdf5", ".fits", ".fit", ".fts", ".npz"]);
 export const INGEST_CANONICAL_DIMS = ["sample", "pol", "t", "nu", "x", "y", "z"];
 export const INGEST_SPHERE_ALIAS_DIM = "sphere";
 export const INGEST_UI_DIMS = [...INGEST_CANONICAL_DIMS, INGEST_SPHERE_ALIAS_DIM];

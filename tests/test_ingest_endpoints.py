@@ -24,6 +24,16 @@ def _write_h5_at_path(path: Path, dataset_path: str, values: np.ndarray, dims: s
         ds.attrs["intensity_unit"] = "Jy"
 
 
+def _write_npz(path: Path) -> None:
+    np.savez(
+        path,
+        posterior_mean_sky=np.arange(1 * 1 * 4 * 6 * 8, dtype=np.float32).reshape(1, 1, 4, 6, 8),
+        posterior_std_sky=np.ones((1, 1, 4, 6, 8), dtype=np.float32),
+        selected_frequency_hz=np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float64),
+        data_vis=np.ones((1, 16, 4), dtype=np.complex64),
+    )
+
+
 def test_ingest_inspect_plan_commit_separate(client, tmp_path: Path) -> None:
     p = tmp_path / "single.h5"
     _write_h5(p, np.arange(12, dtype=np.float32).reshape(3, 4), "x,y")
@@ -334,6 +344,60 @@ def test_ingest_hdf5_commit_reuses_inspected_dataset_path(client, tmp_path: Path
     meta_res = client.get(f"/api/datasets/{created}/meta")
     assert meta_res.status_code == 200
     assert meta_res.json()["shape"] == [1, 1, 1, 1, 4, 5, 1]
+
+
+def test_ingest_npz_inspect_uses_best_numeric_array_when_values_missing(client, tmp_path: Path) -> None:
+    p = tmp_path / "science_arrays.npz"
+    _write_npz(p)
+
+    inspect_res = client.post("/api/ingest/inspect", data={"paths_json": json.dumps([str(p)])})
+    assert inspect_res.status_code == 200
+    payload = inspect_res.json()
+    file_info = payload["files"][0]
+
+    assert file_info["parsed"]["format_metadata"]["dataset_path"] == "posterior_mean_sky"
+    assert file_info["recommended_dims"] == ["sample", "pol", "nu", "x", "y"]
+    candidates = file_info["parsed"]["format_metadata"]["dataset_candidates"]
+    assert any(row["path"] == "posterior_mean_sky" for row in candidates)
+    assert any("using 'posterior_mean_sky'" in msg for msg in file_info["warnings"])
+
+
+def test_ingest_npz_commit_uses_inspected_array(client, tmp_path: Path) -> None:
+    p = tmp_path / "science_arrays_commit.npz"
+    _write_npz(p)
+
+    inspect_res = client.post("/api/ingest/inspect", data={"paths_json": json.dumps([str(p)])})
+    assert inspect_res.status_code == 200
+    inspection = inspect_res.json()
+    raw_input_id = inspection["files"][0]["raw_input"]["id"]
+
+    plan_res = client.post(
+        "/api/ingest/plan",
+        json={
+            "inspection_id": inspection["inspection_id"],
+            "decision": {
+                "grouping_mode": "separate",
+                "tab_mode": "single_tab",
+                "file_mappings": [
+                    {
+                        "raw_input_id": raw_input_id,
+                        "dims": ["sample", "pol", "nu", "x", "y"],
+                    }
+                ],
+            },
+        },
+    )
+    assert plan_res.status_code == 200
+    plan = plan_res.json()
+    assert plan["is_valid"] is True
+
+    commit_res = client.post("/api/ingest/commit", json={"plan_id": plan["plan_id"]})
+    assert commit_res.status_code == 200
+    created = commit_res.json()["created_data_ids"][0]
+
+    meta_res = client.get(f"/api/datasets/{created}/meta")
+    assert meta_res.status_code == 200
+    assert meta_res.json()["shape"] == [1, 1, 1, 4, 6, 8, 1]
 
 
 def test_ingest_hdf5_commit_respects_explicit_dataset_path_override(client, tmp_path: Path) -> None:
@@ -690,6 +754,18 @@ def test_ingest_inspect_rejects_non_list_paths_json(client) -> None:
     res = client.post("/api/ingest/inspect", data={"paths_json": json.dumps({"path": "/tmp/demo.h5"})})
     assert res.status_code == 400
     assert "json list" in res.json()["detail"].lower()
+
+
+def test_ingest_inspect_rejects_empty_hdf5_with_explicit_error(client, tmp_path: Path) -> None:
+    h5py = pytest.importorskip("h5py")
+    p = tmp_path / "empty.h5"
+    with h5py.File(p, "w"):
+        pass
+
+    res = client.post("/api/ingest/inspect", data={"paths_json": json.dumps([str(p)])})
+    assert res.status_code == 400
+    assert "empty" in res.json()["detail"].lower()
+    assert "root group" in res.json()["detail"].lower()
 
 
 def test_ingest_plan_missing_inspection_returns_404(client) -> None:

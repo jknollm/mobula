@@ -58,7 +58,7 @@ async def inspect_inputs(service: IngestService, paths: list[str], uploads: list
             suffix = Path(filename).suffix.lower()
             if suffix not in service.SUPPORTED_INGEST_EXTS or suffix == ".zarr":
                 raise ValueError(
-                    "drag-and-drop supports FITS and HDF5 uploads only; use local path selection for .zarr folders"
+                    "drag-and-drop supports FITS, HDF5, and NPZ uploads only; use local path selection for .zarr folders"
                 )
             input_id = f"raw-{base_idx + up_idx + 1}"
             target = session_dir / f"{uuid4().hex[:8]}-{Path(filename).name}"

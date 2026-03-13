@@ -29,6 +29,7 @@ For HDF5 files with multiple numeric arrays, the UI can also add an HDF5 key-sel
 
 - HDF5: `.h5`, `.hdf5`
 - FITS: `.fits`, `.fit`, `.fts`
+- NumPy archives: `.npz`
 - Zarr: `.zarr` (directory, path-based loading)
 
 ## Loader Behavior by Format
@@ -85,6 +86,12 @@ Notes:
 
 - `.zarr` is supported through path-based loading and the legacy direct-load API.
 - Drag-and-drop upload is file-only and does not support `.zarr` folders.
+
+### NPZ
+
+- Inspect enumerates real-valued numeric arrays in the archive and picks the highest-scoring display candidate by default.
+- Companion one-dimensional arrays such as `selected_frequency_hz` or `time` are reused as axis coordinates when their lengths match the selected array.
+- Complex-valued arrays are ignored for default selection.
 
 ## Manual Axis Mapping
 

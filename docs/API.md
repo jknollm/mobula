@@ -61,14 +61,14 @@ Parses one or many local paths and/or uploaded files, infers axis/grouping candi
 Request format: multipart form data.
 
 - `paths_json`: JSON list of absolute local paths (optional)
-- `files`: uploaded files (`.h5`, `.hdf5`, `.fits`, `.fit`, `.fts`) (optional)
+- `files`: uploaded files (`.h5`, `.hdf5`, `.fits`, `.fit`, `.fts`, `.npz`) (optional)
 
 At least one source is required.
 
 Notes:
 
 - Path-based inspect accepts `.zarr` folders; multipart upload does not.
-- HDF5 inspection metadata includes numeric dataset candidates and the currently preferred default key when available.
+- HDF5 and NPZ inspection metadata include numeric dataset candidates and the currently preferred default key when available.
 
 Response includes:
 

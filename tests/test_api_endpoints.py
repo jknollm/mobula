@@ -243,6 +243,24 @@ def test_load_local_hdf5_success(client, tmp_path: Path) -> None:
     assert "tiny-h5" in listed
 
 
+def test_load_local_npz_success(client, tmp_path: Path) -> None:
+    p = tmp_path / "science_arrays.npz"
+    np.savez(
+        p,
+        posterior_mean_sky=np.arange(1 * 1 * 4 * 6 * 8, dtype=np.float32).reshape(1, 1, 4, 6, 8),
+        posterior_std_sky=np.ones((1, 1, 4, 6, 8), dtype=np.float32),
+        selected_frequency_hz=np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float64),
+        data_vis=np.ones((1, 16, 4), dtype=np.complex64),
+    )
+
+    res = client.post("/api/load-local", json={"path": str(p), "data_id": "tiny-npz"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["loaded"] == "tiny-npz"
+    assert body["dims"] == ["sample", "pol", "nu", "x", "y"]
+    assert body["shape"] == [1, 1, 4, 6, 8]
+
+
 def test_load_local_with_manual_dims_and_padding(client, tmp_path: Path) -> None:
     h5py = pytest.importorskip("h5py")
     p = tmp_path / "manual_axes.h5"
@@ -286,6 +304,28 @@ def test_upload_local_hdf5_success(client, tmp_path: Path) -> None:
     list_res = client.get("/api/datasets")
     listed = {d["data_id"] for d in list_res.json()["datasets"]}
     assert "upload-h5" in listed
+
+
+def test_upload_local_npz_success(client, tmp_path: Path) -> None:
+    p = tmp_path / "upload.npz"
+    np.savez(
+        p,
+        posterior_mean_sky=np.arange(1 * 1 * 4 * 6 * 8, dtype=np.float32).reshape(1, 1, 4, 6, 8),
+        selected_frequency_hz=np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float64),
+    )
+
+    with p.open("rb") as fh:
+        res = client.post(
+            "/api/upload-local",
+            data={"data_id": "upload-npz"},
+            files={"file": ("upload.npz", fh, "application/octet-stream")},
+        )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["loaded"] == "upload-npz"
+    assert body["dims"] == ["sample", "pol", "nu", "x", "y"]
+    assert body["shape"] == [1, 1, 4, 6, 8]
+    assert body["path"] == "upload.npz"
 
 
 def test_upload_local_uses_filename_stem_when_data_id_missing(client, tmp_path: Path) -> None:

@@ -12913,8 +12913,9 @@ function renderIngestInspectStep() {
       const selectedPath = String(file?.parsed?.format_metadata?.dataset_path || "");
       const candidateCount = ingestDatasetCandidates(file).length;
       const selectedCandidate = ingestDatasetCandidates(file).find((row) => String(row.path || "") === selectedPath);
+      const formatName = String(file?.raw_input?.format || "").toLowerCase();
       const keyMeta =
-        String(file?.raw_input?.format || "").toLowerCase() === "hdf5"
+        formatName === "hdf5" || formatName === "npz"
           ? ` | key=${selectedCandidate ? ingestDatasetCandidateLabel(selectedCandidate) : selectedPath || "?"}${
               candidateCount > 1 ? ` (${candidateCount} candidates)` : ""
             }`
@@ -13243,8 +13244,12 @@ async function startIngestInspect({ paths = [], files = [] } = {}) {
     }
     if (autoPresetApplied) setIngestStatus(`Applied suggested preset.`);
     else setIngestStatus("");
+    return inspection;
   } catch (err) {
-    setIngestStatus(`Inspect failed: ${err.message}`, true);
+    const message = formatIngestWizardError(err, "Inspect failed.");
+    setIngestStatus(`Inspect failed: ${message}`, true);
+    setSystemPickerStatus(`Inspect failed: ${message}`, true);
+    return null;
   }
 }
 
@@ -13351,14 +13356,15 @@ function buildIngestPlanDecision() {
 
 function formatIngestWizardError(err, fallbackMessage = "Import failed.") {
   const raw = String(err?.message || err || "").trim();
-  const lower = raw.toLowerCase();
+  const normalized = raw.replace(/^\d{3}:\s*/, "");
+  const lower = normalized.toLowerCase();
   if (lower.includes("inspection session not found")) {
     return "Import session expired or was cleared. Re-inspect the input file(s) and try again.";
   }
   if (lower.includes("ingest plan not found")) {
     return "Import plan expired or was cleared. Rebuild the preview and try again.";
   }
-  return raw || fallbackMessage;
+  return normalized || fallbackMessage;
 }
 
 async function buildIngestPreview() {
@@ -13533,11 +13539,12 @@ function installDatasetDropHandlers() {
       return;
     }
 
-    await startIngestInspect({ files: validFiles });
+    const inspection = await startIngestInspect({ files: validFiles });
+    if (!inspection) return;
     if (invalid.length) {
       setSystemPickerStatus(`Ignored ${invalid.length} unsupported file(s): ${invalid[0]}`, false);
     } else {
-      setSystemPickerStatus(`Inspecting ${validFiles.length} dropped file(s).`);
+      setSystemPickerStatus(`Inspection ready for ${validFiles.length} dropped file(s).`);
     }
   });
 }
@@ -13560,8 +13567,9 @@ async function pickPathWithSystemDialog() {
     }
 
     if (payload.loadable) {
-      await startIngestInspect({ paths: [payload.path] });
-      setSystemPickerStatus(`Inspecting selected path: ${payload.path}`);
+      const inspection = await startIngestInspect({ paths: [payload.path] });
+      if (!inspection) return;
+      setSystemPickerStatus(`Inspection ready for selected path: ${payload.path}`);
       return;
     }
 

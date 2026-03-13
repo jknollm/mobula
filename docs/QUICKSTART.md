@@ -18,7 +18,7 @@ Open `http://127.0.0.1:8000`.
 - Demo datasets are labeled with `[DEMO]`.
 - For spherical workflows, pick `healpix-sky-time-nu-hd`.
 - Or click **Load Data** to open the ingest flow for a local dataset path.
-- Or drag and drop local `.h5`, `.hdf5`, `.fits`, `.fit`, or `.fts` files into the central viewer panel.
+- Or drag and drop local `.h5`, `.hdf5`, `.fits`, `.fit`, `.fts`, or `.npz` files into the central viewer panel.
 - In the ingest dialogs, choose combine-vs-separate for multi-file imports, review any HDF5 data-key selection, map axes in source order, then click **Commit Import**.
 
 ## 3. Inspect slices

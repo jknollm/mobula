@@ -42,7 +42,7 @@ Symptom:
 
 Fix:
 
-- Use supported extensions: `.h5`, `.hdf5`, `.fits`, `.fit`, `.fts`, `.zarr`.
+- Use supported extensions: `.h5`, `.hdf5`, `.fits`, `.fit`, `.fts`, `.npz`, `.zarr`.
 
 Symptom:
 

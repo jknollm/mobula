@@ -123,6 +123,7 @@ Supported local formats:
 
 - HDF5: `.h5`, `.hdf5`
 - FITS: `.fits`, `.fit`, `.fts`
+- NumPy archives: `.npz`
 - Zarr: `.zarr` directory (path-based loading / direct API)
 
 Current UI flow:
@@ -150,7 +151,7 @@ Behavior notes:
 - mobula reorders mapped axes internally; you do not need to rewrite them into the internal axis order yourself.
 - A `pol` axis with 3 channels is treated as `I,Q,U` and padded to `I,Q,U,V` with `V=0`.
 - Ingest commit pads missing axes to singleton size in the full internal 7D model.
-- Drag-and-drop import is file-only; `.zarr` folders are not supported through browser drag-and-drop.
+- Drag-and-drop import is file-only; `.h5`, `.hdf5`, `.fits`, `.fit`, `.fts`, and `.npz` are supported, while `.zarr` folders are not.
 
 ## Performance Behavior
 

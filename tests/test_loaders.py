@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from mobula.data.loaders import load_by_extension, load_fits, load_hdf5, load_zarr, pad_dataset_to_canonical
+from mobula.data.loaders import load_by_extension, load_fits, load_hdf5, load_npz, load_zarr, pad_dataset_to_canonical
 
 
 def test_load_hdf5_reads_dims_units_and_coords(tmp_path: Path) -> None:
@@ -224,11 +224,31 @@ def test_load_zarr_requires_requested_data_key(tmp_path: Path) -> None:
         load_zarr(p)
 
 
+def test_load_npz_prefers_display_cube_and_applies_frequency_coords(tmp_path: Path) -> None:
+    p = tmp_path / "science_arrays.npz"
+    np.savez(
+        p,
+        posterior_mean_sky=np.arange(1 * 1 * 4 * 6 * 8, dtype=np.float32).reshape(1, 1, 4, 6, 8),
+        posterior_std_sky=np.ones((1, 1, 4, 6, 8), dtype=np.float32),
+        selected_frequency_hz=np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float64),
+        data_vis=np.ones((1, 16, 4), dtype=np.complex64),
+    )
+
+    out = load_npz(p, data_id="npz-ds")
+    assert out.data_id == "npz-ds"
+    assert out.provenance["array_key"] == "posterior_mean_sky"
+    assert out.dims == ("sample", "pol", "nu", "x", "y")
+    assert out.shape == (1, 1, 4, 6, 8)
+    np.testing.assert_allclose(out.coords["nu"], np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float64))
+    assert out.units["nu"] == "Hz"
+
+
 @pytest.mark.parametrize(
     "suffix",
     [
         ".h5",
         ".fits",
+        ".npz",
         ".zarr",
     ],
 )
@@ -243,6 +263,9 @@ def test_load_by_extension_dispatches(tmp_path: Path, suffix: str) -> None:
         fits = pytest.importorskip("astropy.io.fits")
         p = tmp_path / "dispatch.fits"
         fits.PrimaryHDU(data=np.zeros((2, 2), dtype=np.float32)).writeto(p)
+    elif suffix == ".npz":
+        p = tmp_path / "dispatch.npz"
+        np.savez(p, values=np.zeros((2, 2), dtype=np.float32))
     else:
         zarr = pytest.importorskip("zarr")
         p = tmp_path / "dispatch.zarr"
