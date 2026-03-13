@@ -113,7 +113,7 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
   - zoomed-in view uses cover behavior to fill the main canvas
   - zoom reset returns to the original centered full-view behavior
 - The shared `3D Rotate` helper stays available in both 3D spatial modes:
-  - in volume mode, the helper resets the volume orientation to the default view
+  - in volume mode, the helper rebases the volume rotate axis to the current viewer-up axis without changing the current pose
   - in sphere mode, the helper rebases the spin axis to the current viewer-forward axis
 
 ## Ingest Wizard

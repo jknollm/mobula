@@ -499,13 +499,13 @@ def test_volume_mode_on_compatible_dataset(page: object, app_url: str) -> None:
 
 
 @pytest.mark.browser
-def test_volume_rotate_reset_restores_default_orientation(page: object, app_url: str) -> None:
+def test_volume_rotate_rebase_preserves_pose_and_updates_spin_axis(page: object, app_url: str) -> None:
     _wait_ui_ready(page, app_url)
     _choose_dataset(page, "time-5d-volume-samples-hd")
 
     page.locator("#spatialVolumeBtn:visible").first.click()
     page.wait_for_selector("#viewRotateRebaseBtn:visible")
-    assert page.locator("#viewRotateRebaseBtn:visible").first.inner_text() == "Reset"
+    assert page.locator("#viewRotateRebaseBtn:visible").first.inner_text() == "Rebase"
 
     box = page.locator("#sliceCanvas:visible").first.bounding_box()
     assert box is not None
@@ -516,17 +516,27 @@ def test_volume_rotate_reset_restores_default_orientation(page: object, app_url:
     page.wait_for_function(
         "() => {"
         "  const volume = window.__mobulaDebug.getStateSnapshot().volume;"
-        "  return Math.abs(volume.yaw - 0.65) > 0.01 || Math.abs(volume.pitch + 0.45) > 0.01;"
+        "  return Array.isArray(volume.rotationMatrix)"
+        "    && volume.rotationMatrix.length === 9"
+        "    && (Math.abs(volume.rotationMatrix[0] - 0.7960837985490559) > 0.01"
+        "      || Math.abs(volume.rotationMatrix[4] - 0.9004471023526769) > 0.01);"
         "}"
     )
+    before = page.evaluate("() => window.__mobulaDebug.getStateSnapshot().volume")
+    assert isinstance(before["rotationMatrix"], list)
+    assert len(before["rotationMatrix"]) == 9
 
     page.locator("#viewRotateRebaseBtn:visible").first.click()
-    page.wait_for_function(
-        "() => {"
-        "  const volume = window.__mobulaDebug.getStateSnapshot().volume;"
-        "  return Math.abs(volume.yaw - 0.65) < 0.001 && Math.abs(volume.pitch + 0.45) < 0.001;"
-        "}"
-    )
+    after = page.evaluate("() => window.__mobulaDebug.getStateSnapshot().volume")
+    assert isinstance(after["rotationMatrix"], list)
+    assert isinstance(after["rotateAxisObject"], list)
+    assert after["rotationMatrix"] == pytest.approx(before["rotationMatrix"], abs=1.0e-6)
+
+    expected_axis = before["rotationMatrix"][3:6]
+    axis_norm = sum(component * component for component in expected_axis) ** 0.5
+    assert axis_norm > 0
+    expected_axis = [component / axis_norm for component in expected_axis]
+    assert after["rotateAxisObject"] == pytest.approx(expected_axis, abs=1.0e-6)
 
 
 @pytest.mark.browser

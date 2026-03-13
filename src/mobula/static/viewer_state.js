@@ -143,6 +143,12 @@ export function mat3Transpose(m) {
   return [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]];
 }
 
+export function mat3RotationX(angle) {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  return [1, 0, 0, 0, c, -s, 0, s, c];
+}
+
 export function mat3RotationY(angle) {
   const c = Math.cos(angle);
   const s = Math.sin(angle);
@@ -203,6 +209,12 @@ export function sphereRotationMatrixFromYawPitch(yawRaw, pitchRaw) {
   return mat3Mul(mat3RotationY(pitch), mat3RotationZ(yaw));
 }
 
+export function volumeRotationMatrixFromYawPitch(yawRaw, pitchRaw) {
+  const yaw = Number.isFinite(yawRaw) ? yawRaw : 0;
+  const pitch = Number.isFinite(pitchRaw) ? pitchRaw : 0;
+  return mat3Mul(mat3RotationY(yaw), mat3RotationX(pitch));
+}
+
 export function normalizeSphereRotationMatrix(raw, yawRaw = 0, pitchRaw = 0) {
   if (!(Array.isArray(raw) || ArrayBuffer.isView(raw)) || raw.length < 9) {
     return sphereRotationMatrixFromYawPitch(yawRaw, pitchRaw);
@@ -216,8 +228,25 @@ export function normalizeSphereRotationMatrix(raw, yawRaw = 0, pitchRaw = 0) {
   return out;
 }
 
+export function normalizeVolumeRotationMatrix(raw, yawRaw = 0, pitchRaw = 0) {
+  if (!(Array.isArray(raw) || ArrayBuffer.isView(raw)) || raw.length < 9) {
+    return volumeRotationMatrixFromYawPitch(yawRaw, pitchRaw);
+  }
+  const out = new Array(9);
+  for (let i = 0; i < 9; i += 1) {
+    const v = Number(raw[i]);
+    if (!Number.isFinite(v)) return volumeRotationMatrixFromYawPitch(yawRaw, pitchRaw);
+    out[i] = v;
+  }
+  return out;
+}
+
 export function normalizeSphereRotateAxisObject(raw) {
   return normalizeVec3(raw, [0, 0, 1]);
+}
+
+export function normalizeVolumeRotateAxisObject(raw) {
+  return normalizeVec3(raw, [0, 1, 0]);
 }
 
 export function createViewerState() {
@@ -407,6 +436,11 @@ export function createViewerState() {
     panelWidths: { left: null, right: null },
     volumeYaw: 0.65,
     volumePitch: -0.45,
+    volumeRotationMatrix: volumeRotationMatrixFromYawPitch(0.65, -0.45),
+    volumeRotateAxisObject: normalizeVec3(
+      mat3MulVec3(mat3Transpose(volumeRotationMatrixFromYawPitch(0.65, -0.45)), [0, 1, 0]),
+      [0, 1, 0]
+    ),
     volumeZoom: 1.0,
     volumeRender: {
       quality: "balanced",

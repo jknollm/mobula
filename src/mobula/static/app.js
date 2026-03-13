@@ -39,6 +39,7 @@ import {
   createViewerState,
   mat3Mul,
   mat3MulVec3,
+  mat3RotationX,
   mat3RotationAxis,
   mat3RotationY,
   mat3RotationZ,
@@ -48,12 +49,15 @@ import {
   normalizeAxisSettingsState,
   normalizeSphereRotateAxisObject,
   normalizeSphereRotationMatrix,
+  normalizeVolumeRotateAxisObject,
+  normalizeVolumeRotationMatrix,
   normalizeVec3,
   normalizeViewRotateDirection,
   normalizeViewRotateRate,
   normalizeViewRotateSpeed,
   orthonormalizeRotationMatrix,
   sphereRotationMatrixFromYawPitch,
+  volumeRotationMatrixFromYawPitch,
 } from "./viewer_state.js?v=20260306b";
 import { createPerfStore, perfEnabledFromLocation } from "./viewer_perf.js?v=20260306c";
 import { createPlaybackController } from "./viewer_playback.js?v=20260306d";
@@ -90,6 +94,11 @@ function ensureSphereRotationState() {
   state.sphereRotateAxisObject = normalizeSphereRotateAxisObject(state.sphereRotateAxisObject);
 }
 
+function ensureVolumeRotationState() {
+  state.volumeRotationMatrix = normalizeVolumeRotationMatrix(state.volumeRotationMatrix, state.volumeYaw, state.volumePitch);
+  state.volumeRotateAxisObject = normalizeVolumeRotateAxisObject(state.volumeRotateAxisObject);
+}
+
 function activeSphereRotationMatrix() {
   const m = state.sphereRotationMatrix;
   if ((Array.isArray(m) || ArrayBuffer.isView(m)) && m.length >= 9) {
@@ -97,6 +106,15 @@ function activeSphereRotationMatrix() {
   }
   state.sphereRotationMatrix = sphereRotationMatrixFromYawPitch(state.sphereYaw, state.spherePitch);
   return state.sphereRotationMatrix;
+}
+
+function activeVolumeRotationMatrix() {
+  const m = state.volumeRotationMatrix;
+  if ((Array.isArray(m) || ArrayBuffer.isView(m)) && m.length >= 9) {
+    return m;
+  }
+  state.volumeRotationMatrix = volumeRotationMatrixFromYawPitch(state.volumeYaw, state.volumePitch);
+  return state.volumeRotationMatrix;
 }
 
 function setSphereOrientationFromYawPitch(yaw, pitch, options = {}) {
@@ -108,6 +126,55 @@ function setSphereOrientationFromYawPitch(yaw, pitch, options = {}) {
   } else {
     state.sphereRotateAxisObject = normalizeSphereRotateAxisObject(state.sphereRotateAxisObject);
   }
+}
+
+function syncVolumeYawPitchFromMatrix() {
+  const m = activeVolumeRotationMatrix();
+  const fx = Number(m[2]) || 0;
+  const fy = Number(m[5]) || 0;
+  const fz = Number(m[8]) || 1;
+  const yaw = Math.atan2(fx, Math.max(1.0e-9, fz));
+  const pitch = clamp(Math.atan2(-fy, Math.max(1.0e-9, Math.hypot(fx, fz))), -1.45, 1.45);
+  state.volumeYaw = normalizeAngleRad(yaw);
+  state.volumePitch = pitch;
+}
+
+function defaultVolumeRotateAxisObject() {
+  const base = volumeRotationMatrixFromYawPitch(DEFAULT_VOLUME_YAW, DEFAULT_VOLUME_PITCH);
+  return normalizeVolumeRotateAxisObject(mat3MulVec3(mat3Transpose(base), [0, 1, 0]));
+}
+
+function setVolumeOrientationFromYawPitch(yaw, pitch, options = {}) {
+  state.volumeYaw = Number.isFinite(yaw) ? yaw : DEFAULT_VOLUME_YAW;
+  state.volumePitch = Number.isFinite(pitch) ? pitch : DEFAULT_VOLUME_PITCH;
+  state.volumeRotationMatrix = volumeRotationMatrixFromYawPitch(state.volumeYaw, state.volumePitch);
+  if (options.resetAxis === true) {
+    state.volumeRotateAxisObject = defaultVolumeRotateAxisObject();
+  } else {
+    state.volumeRotateAxisObject = normalizeVolumeRotateAxisObject(state.volumeRotateAxisObject);
+  }
+}
+
+function applyVolumeDragRotation(startMatrixRaw, dxRaw, dyRaw, speedRaw) {
+  ensureVolumeRotationState();
+  const startMatrix = normalizeVolumeRotationMatrix(startMatrixRaw, state.volumeYaw, state.volumePitch);
+  const dx = Number.isFinite(dxRaw) ? dxRaw : 0;
+  const dy = Number.isFinite(dyRaw) ? dyRaw : 0;
+  const speed = Number.isFinite(speedRaw) ? speedRaw : 0.012;
+  const viewerPitch = mat3RotationX(dy * speed);
+  const objectYaw = mat3RotationY(dx * speed);
+  state.volumeRotationMatrix = orthonormalizeRotationMatrix(mat3Mul(mat3Mul(viewerPitch, startMatrix), objectYaw));
+  syncVolumeYawPitchFromMatrix();
+}
+
+function applyVolumeAutoRotateDelta(deltaRaw) {
+  const delta = Number.isFinite(deltaRaw) ? deltaRaw : 0;
+  if (delta === 0) return;
+  ensureVolumeRotationState();
+  const axisObj = normalizeVolumeRotateAxisObject(state.volumeRotateAxisObject);
+  const rot = mat3RotationAxis(axisObj, delta);
+  state.volumeRotationMatrix = orthonormalizeRotationMatrix(mat3Mul(state.volumeRotationMatrix, rot));
+  syncVolumeYawPitchFromMatrix();
 }
 
 function applySphereDragRotation(startMatrixRaw, dxRaw, dyRaw, speedRaw) {
@@ -136,9 +203,14 @@ function resetSphereRotateAxisToViewerZ() {
   state.sphereRotateAxisObject = normalizeSphereRotateAxisObject(mat3MulVec3(inv, [0, 0, 1]));
 }
 
+function resetVolumeRotateAxisToViewerY() {
+  ensureVolumeRotationState();
+  const inv = mat3Transpose(state.volumeRotationMatrix);
+  state.volumeRotateAxisObject = normalizeVolumeRotateAxisObject(mat3MulVec3(inv, [0, 1, 0]));
+}
+
 function resetVolumeOrientation() {
-  state.volumeYaw = DEFAULT_VOLUME_YAW;
-  state.volumePitch = DEFAULT_VOLUME_PITCH;
+  setVolumeOrientationFromYawPitch(DEFAULT_VOLUME_YAW, DEFAULT_VOLUME_PITCH, { resetAxis: true });
 }
 
 const state = createViewerState();
@@ -508,6 +580,14 @@ function debugStateSnapshot() {
     },
     volume: {
       pitch: state.volumePitch,
+      rotateAxisObject:
+        Array.isArray(state.volumeRotateAxisObject) || ArrayBuffer.isView(state.volumeRotateAxisObject)
+          ? Array.from(state.volumeRotateAxisObject).slice(0, 3)
+          : null,
+      rotationMatrix:
+        Array.isArray(state.volumeRotationMatrix) || ArrayBuffer.isView(state.volumeRotationMatrix)
+          ? Array.from(state.volumeRotationMatrix).slice(0, 9)
+          : null,
       yaw: state.volumeYaw,
     },
     values: { ...state.values },
@@ -1635,7 +1715,7 @@ function stepViewRotate(ts) {
   const delta = VIEW_ROTATE_BASE_RATE_RAD_PER_SEC * rate * dtSec;
   if (delta !== 0) {
     if (isVolumeMode()) {
-      state.volumeYaw = normalizeAngleRad((state.volumeYaw || 0) + delta);
+      applyVolumeAutoRotateDelta(delta);
     } else if (isSphereMode()) {
       applySphereAutoRotateDelta(delta);
     }
@@ -1691,8 +1771,8 @@ function updateViewRotateControls() {
   if (els.viewRotateRebaseBtn) {
     setVisible(els.viewRotateRebaseBtn, volumeMode || sphereMode);
     els.viewRotateRebaseBtn.disabled = !modeActive || (!volumeMode && !sphereMode);
-    els.viewRotateRebaseBtn.textContent = volumeMode ? "Reset" : "Rebase";
-    els.viewRotateRebaseBtn.title = volumeMode ? "Reset volume orientation" : "Rebase sphere rotate axis";
+    els.viewRotateRebaseBtn.textContent = "Rebase";
+    els.viewRotateRebaseBtn.title = volumeMode ? "Rebase volume rotate axis to the current view" : "Rebase sphere rotate axis";
     els.viewRotateRebaseBtn.setAttribute("aria-label", els.viewRotateRebaseBtn.title);
   }
   ensureViewRotateLoop();
@@ -5315,7 +5395,7 @@ const offlineRenderController = createOfflineRenderController({
   prepareSampleMorphPair,
   advanceSampleMorphPlayback,
   normalizeViewRotateRate,
-  normalizeAngleRad,
+  applyVolumeAutoRotateDelta,
   rerenderVolumeFrame,
   isVolumeMode,
   isSphereMode,
@@ -8349,14 +8429,9 @@ function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null, o
     maxPositive = Math.max(minPositive, mm.max);
   }
 
-  const yaw = state.volumeYaw;
-  const pitch = state.volumePitch;
+  const rot = activeVolumeRotationMatrix();
   const planeScale = 1.05 / clamp(state.volumeZoom, VOLUME_ZOOM_MIN, VOLUME_ZOOM_MAX);
   const planeScaleX = planeScale * (width / Math.max(1, height));
-  const cy = Math.cos(yaw);
-  const sy = Math.sin(yaw);
-  const cp = Math.cos(pitch);
-  const sp = Math.sin(pitch);
   const qCfg = volumeQualityConfig();
   const stepScale = clamp(volumeSpatialRenderFactor(), 0.75, 1.75);
   const steps = clamp(Math.round(Math.max(nx, ny, nz) * qCfg.stepMul * stepScale), 24, 180);
@@ -8387,13 +8462,9 @@ function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null, o
       const cyv = rays[ri + 1];
       const cz = rays[ri + 2];
 
-      const x1 = cx;
-      const y1 = cyv * cp + cz * sp;
-      const z1 = -cyv * sp + cz * cp;
-
-      const ox = x1 * cy - z1 * sy;
-      const oy = y1;
-      const oz = x1 * sy + z1 * cy;
+      const ox = cx * rot[0] + cyv * rot[1] + cz * rot[2];
+      const oy = cx * rot[3] + cyv * rot[4] + cz * rot[5];
+      const oz = cx * rot[6] + cyv * rot[7] + cz * rot[8];
       const ring = healpixVecToRingPix(nside, ox, oy, oz);
       const vi = ring * 3;
       const rx = vectors[vi + 0];
@@ -8493,13 +8564,9 @@ function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null, o
         const cyv = -v * planeScale;
         const cz = depth;
 
-        const x1 = cx;
-        const y1 = cyv * cp + cz * sp;
-        const z1 = -cyv * sp + cz * cp;
-
-        const ox = x1 * cy - z1 * sy;
-        const oy = y1;
-        const oz = x1 * sy + z1 * cy;
+        const ox = cx * rot[0] + cyv * rot[1] + cz * rot[2];
+        const oy = cx * rot[3] + cyv * rot[4] + cz * rot[5];
+        const oz = cx * rot[6] + cyv * rot[7] + cz * rot[8];
 
         if (Math.abs(ox) > 1 || Math.abs(oy) > 1 || Math.abs(oz) > 1) continue;
 
@@ -14038,7 +14105,7 @@ async function init() {
   if (els.viewRotateRebaseBtn) {
     els.viewRotateRebaseBtn.addEventListener("click", () => {
       if (isVolumeMode()) {
-        resetVolumeOrientation();
+        resetVolumeRotateAxisToViewerY();
         rerenderVolumeFrame();
       } else if (isSphereMode()) {
         resetSphereRotateAxisToViewerZ();
@@ -14708,6 +14775,7 @@ async function init() {
     axisFromNavKind,
     axisFromProfileKind,
     axisSize,
+    applyVolumeDragRotation,
     applySphereDragRotation,
     applyZoomBox,
     clamp,

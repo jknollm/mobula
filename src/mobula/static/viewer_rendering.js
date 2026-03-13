@@ -37,7 +37,7 @@ export function createOfflineRenderController(deps) {
     prepareSampleMorphPair,
     advanceSampleMorphPlayback,
     normalizeViewRotateRate,
-    normalizeAngleRad,
+    applyVolumeAutoRotateDelta,
     rerenderVolumeFrame,
     isVolumeMode,
     isSphereMode,
@@ -378,6 +378,8 @@ export function createOfflineRenderController(deps) {
     const restoreViewState = {
       volumeYaw: state.volumeYaw,
       volumePitch: state.volumePitch,
+      volumeRotationMatrix: cloneSessionValue(state.volumeRotationMatrix),
+      volumeRotateAxisObject: cloneSessionValue(state.volumeRotateAxisObject),
       sphereYaw: state.sphereYaw,
       spherePitch: state.spherePitch,
       sphereRotationMatrix: cloneSessionValue(state.sphereRotationMatrix),
@@ -444,7 +446,7 @@ export function createOfflineRenderController(deps) {
           if (renderJob.cancelRequested) throw makeRenderCancelError();
           if (i > 0) {
             if (isVolumeMode()) {
-              state.volumeYaw = normalizeAngleRad((state.volumeYaw || 0) + angleStep);
+              applyVolumeAutoRotateDelta(angleStep);
               rerenderVolumeFrame();
             } else if (isSphereMode()) {
               applySphereAutoRotateDelta(angleStep);
@@ -582,6 +584,8 @@ export function createOfflineRenderController(deps) {
       state.sampleMorph = cloneSessionValue(restoreSampleState.sampleMorph);
       state.volumeYaw = restoreViewState.volumeYaw;
       state.volumePitch = restoreViewState.volumePitch;
+      state.volumeRotationMatrix = cloneSessionValue(restoreViewState.volumeRotationMatrix);
+      state.volumeRotateAxisObject = cloneSessionValue(restoreViewState.volumeRotateAxisObject);
       state.sphereYaw = restoreViewState.sphereYaw;
       state.spherePitch = restoreViewState.spherePitch;
       state.sphereRotationMatrix = cloneSessionValue(restoreViewState.sphereRotationMatrix);

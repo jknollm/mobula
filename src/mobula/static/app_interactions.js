@@ -3,6 +3,7 @@ export function bindCanvasInteractions(ctx) {
     axisFromNavKind,
     axisFromProfileKind,
     axisSize,
+    applyVolumeDragRotation,
     applySphereDragRotation,
     applyZoomBox,
     clamp,
@@ -222,13 +223,16 @@ export function bindCanvasInteractions(ctx) {
         state.volumeDrag = {
           startClientX: ev.clientX,
           startClientY: ev.clientY,
-          startYaw: state.volumeYaw,
-          startPitch: state.volumePitch,
+          startRotationMatrix:
+            Array.isArray(state.volumeRotationMatrix) && state.volumeRotationMatrix.length >= 9
+              ? state.volumeRotationMatrix.slice(0, 9)
+              : null,
+          speed: 0.012,
         };
-      volumeDragLastRenderAt = 0;
+        volumeDragLastRenderAt = 0;
+      }
+      return;
     }
-    return;
-  }
 
     if (isSphereMode()) {
       state.activeSampleTile = p.tile || 0;
@@ -344,8 +348,9 @@ export function bindCanvasInteractions(ctx) {
     if (state.volumeDrag) {
       const dx = ev.clientX - state.volumeDrag.startClientX;
       const dy = ev.clientY - state.volumeDrag.startClientY;
-      state.volumeYaw = state.volumeDrag.startYaw + dx * 0.012;
-      state.volumePitch = clamp(state.volumeDrag.startPitch + dy * 0.012, -1.2, 1.2);
+      if (typeof applyVolumeDragRotation === "function") {
+        applyVolumeDragRotation(state.volumeDrag.startRotationMatrix, dx, dy, state.volumeDrag.speed);
+      }
       scheduleVolumeDragRender();
       return;
     }

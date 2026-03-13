@@ -1360,8 +1360,7 @@ class GpuVolumeRenderer {
       uniform float u_opacity;
       uniform float u_gamma;
       uniform float u_cutoff;
-      uniform float u_yaw;
-      uniform float u_pitch;
+      uniform mat3 u_volume_rot;
       uniform float u_zoom;
       uniform int u_sphere_projection;
       uniform float u_sphere_inside_scale;
@@ -1378,19 +1377,7 @@ class GpuVolumeRenderer {
       }
 
       vec3 rotatePos(vec3 p) {
-        float cy = cos(u_yaw);
-        float sy = sin(u_yaw);
-        float cp = cos(u_pitch);
-        float sp = sin(u_pitch);
-
-        float x1 = p.x;
-        float y1 = p.y * cp + p.z * sp;
-        float z1 = -p.y * sp + p.z * cp;
-        return vec3(
-          x1 * cy - z1 * sy,
-          y1,
-          x1 * sy + z1 * cy
-        );
+        return u_volume_rot * p;
       }
 
       float sampleVolume(vec3 uvw) {
@@ -1652,8 +1639,7 @@ class GpuVolumeRenderer {
       opacity: gl.getUniformLocation(this.program, "u_opacity"),
       gamma: gl.getUniformLocation(this.program, "u_gamma"),
       cutoff: gl.getUniformLocation(this.program, "u_cutoff"),
-      yaw: gl.getUniformLocation(this.program, "u_yaw"),
-      pitch: gl.getUniformLocation(this.program, "u_pitch"),
+      volumeRot: gl.getUniformLocation(this.program, "u_volume_rot"),
       zoom: gl.getUniformLocation(this.program, "u_zoom"),
       sphereProjection: gl.getUniformLocation(this.program, "u_sphere_projection"),
       sphereInsideScale: gl.getUniformLocation(this.program, "u_sphere_inside_scale"),
@@ -1812,8 +1798,23 @@ class GpuVolumeRenderer {
     gl.uniform1f(this.uniforms.opacity, clamp(state.volumeRender.opacity, 0.1, 12.0));
     gl.uniform1f(this.uniforms.gamma, clamp(state.volumeRender.gamma, 0.4, 2.4));
     gl.uniform1f(this.uniforms.cutoff, 0.0);
-    gl.uniform1f(this.uniforms.yaw, state.volumeYaw);
-    gl.uniform1f(this.uniforms.pitch, state.volumePitch);
+    const volumeRotRowMajor =
+      (Array.isArray(state.volumeRotationMatrix) || ArrayBuffer.isView(state.volumeRotationMatrix)) &&
+      state.volumeRotationMatrix.length >= 9
+        ? state.volumeRotationMatrix
+        : [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    const volumeRot = [
+      volumeRotRowMajor[0],
+      volumeRotRowMajor[3],
+      volumeRotRowMajor[6],
+      volumeRotRowMajor[1],
+      volumeRotRowMajor[4],
+      volumeRotRowMajor[7],
+      volumeRotRowMajor[2],
+      volumeRotRowMajor[5],
+      volumeRotRowMajor[8],
+    ];
+    gl.uniformMatrix3fv(this.uniforms.volumeRot, false, volumeRot);
     gl.uniform1f(this.uniforms.zoom, clamp(state.volumeZoom, GPU_VOLUME_ZOOM_MIN, GPU_VOLUME_ZOOM_MAX));
     gl.uniform1i(this.uniforms.sphereProjection, sphereProjectionMode);
     gl.uniform1f(this.uniforms.sphereInsideScale, sphereInsideScale);

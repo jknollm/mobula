@@ -5,13 +5,36 @@
   </picture>
 </p>
 
-mobula is a local interactive viewer for high-dimensional cube data built around a fixed internal axis model:
+mobula is a local-first viewer for exploring complex scientific cube data without breaking analytical context.
 
-```text
-sample, pol, t, nu, x, y, z
-```
+It is built for workflows where spatial structure, time, spectrum, polarization, sample variation, and uncertainty all matter at once. Instead of treating those as separate tools or post-hoc checks, mobula keeps them linked in one interactive workspace so you can pivot between views without rebuilding your interpretation from scratch.
 
-It includes a FastAPI backend, a browser UI, built-in demo datasets, and local FITS/HDF5/Zarr loading.
+Today that means a FastAPI backend plus a browser UI for loading local datasets, inspecting them in slice/volume/sphere views, and moving fluidly between spatial, temporal, spectral, polarization, and uncertainty-oriented analysis.
+
+## What We Are Building
+
+mobula is aimed at a few product-level goals:
+
+- One coordinated exploration workflow across spatial, temporal, spectral, polarization, sample, and uncertainty domains
+- Uncertainty as a first-class part of interpretation, not something deferred until the end
+- Stable, predictable behavior when users change plane, mode, dataset, or rendering path
+- Local, inspectable, reproducible analysis that does not depend on a remote service
+
+The running contract for intended viewer behavior lives in [docs/EXPECTED_BEHAVIOR.md](./docs/EXPECTED_BEHAVIOR.md). When the app and the docs disagree, that mismatch should be made explicit and resolved deliberately.
+
+## Current Product Shape
+
+The app currently provides:
+
+- Guided local ingest for FITS, HDF5, NPZ, and Zarr-based data
+- A fixed internal axis model: `sample, pol, t, nu, x, y, z`
+- Linked 2D slice views across `XY`, `YZ`, and `ZX`
+- 3D volume rendering for valid spatial cubes
+- HEALPix sphere views for compatible spherical datasets
+- Selection-driven time, spectral, and hidden-axis profiles
+- Sample-aware viewing modes including `single`, `mean`, `std`, `rel_uncert`, mosaics, and morph playback
+- Polarization workflows including `I/Q/U/V`, EVPA overlays, and derived polarization quantities
+- Local export and snapshot flows tied to the currently rendered state
 
 ## Quick Start
 
@@ -61,19 +84,7 @@ mobula --host 127.0.0.1 --port 8000 --reload
 - [Software Publication Package](./publication/README.md)
 - [Contributing](./CONTRIBUTING.md)
 
-## Key Capabilities
-
-- Interactive 2D slice navigation across `XY`, `YZ`, `ZX`
-- Volume rendering over `x,y,z`
-- HEALPix sphere mode (`Mollweide`, `Inside`, `Outside`) for spherical datasets
-- Time/spectral/hidden-spatial playback and linked profile graphs
-- Sample-aware views (`single`, `mean`, `std`, `rel_uncert`) and sample mosaics
-- Polarization tools (I/Q/U/V, EVPA overlay, derived polarization modes)
-- Color map/range controls and multiple flux scales
-- Ingest wizard with inferred axis mapping, multi-file combine/separate choices, HDF5 key selection, and preset reuse
-- Local file loading via native picker, drag-and-drop for file-based datasets, and legacy direct-load API
-
-## Manual Startup
+## Local Development
 
 ```bash
 python3 -m venv .venv
@@ -112,11 +123,12 @@ Regenerate brand banners:
 python scripts/generate_brand_banners.py
 ```
 
-## Current Scope
+## Scope And Delivery
 
 - Local data workflows only
-- Python package install supported (`mobula` CLI)
+- Python package install supported via the `mobula` CLI
 - Frontend served as static assets by FastAPI
+- Acceleration paths are optional and should improve responsiveness without hiding behavior
 
 ## Native Acceleration Install
 
