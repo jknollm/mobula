@@ -16,6 +16,14 @@ mobula is an agentically coded project. Contributions can be human-authored, age
 - Run the relevant checks before opening a PR
 - Do not treat generated output as self-justifying; review it like any other change
 
+## Licensing Notes
+
+mobula is released under the MIT License.
+
+- Existing files do not need to be backfilled with per-file license headers
+- New source files should include a single-line SPDX identifier when practical: `SPDX-License-Identifier: MIT`
+- Keep SPDX headers concise; do not paste the full license text into each file unless there is a specific reason
+
 ## Development Workflow
 
 1. Create a branch for your change.

@@ -112,6 +112,14 @@ window.__mobulaDebug.getStateSnapshot()
 
 mobula is an agentically coded project. We use coding agents as part of normal development, but the repository standard stays the same: changes should be understandable, testable, and documented when they affect user-visible behavior or contributor expectations.
 
+## License Header Policy
+
+mobula uses a repo-level MIT license, and we are not retrofitting headers across all existing files.
+
+- For new source files, prefer a minimal SPDX header when practical: `SPDX-License-Identifier: MIT`
+- Do not churn existing files just to add license headers
+- If a file format has an established comment style, use that style for the SPDX line
+
 ## Change Checklist
 
 - Update [EXPECTED_BEHAVIOR](./EXPECTED_BEHAVIOR.md) when user-visible behavior changes.

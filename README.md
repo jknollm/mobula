@@ -131,6 +131,10 @@ python scripts/generate_brand_banners.py
 - Frontend served as static assets by FastAPI
 - Acceleration paths are optional and should improve responsiveness without hiding behavior
 
+## License
+
+mobula is released under the [MIT License](./LICENSE).
+
 ## Native Acceleration Install
 
 - `./run_demo.sh` and `requirements.txt` install `.[dev,native]`.
