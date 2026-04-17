@@ -7,6 +7,15 @@ Thanks for contributing to mobula.
 - Read [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md)
 - Confirm local app start and test run
 
+## Agentic Development
+
+mobula is an agentically coded project. Contributions can be human-authored, agent-assisted, or a mix of both, but every change merged here should still be easy to inspect, explain, and verify.
+
+- Keep diffs focused and readable
+- Update docs when behavior or project messaging changes
+- Run the relevant checks before opening a PR
+- Do not treat generated output as self-justifying; review it like any other change
+
 ## Development Workflow
 
 1. Create a branch for your change.

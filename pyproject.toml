@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mobula"
 version = "0.1.0"
-description = "Interactive local viewer for high-dimensional cube data."
+description = "Interactive local viewer for high-dimensional cube data, built as an agentically coded project."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

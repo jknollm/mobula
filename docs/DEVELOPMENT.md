@@ -108,6 +108,10 @@ window.__mobulaDebug.getStateSnapshot()
 - `requirements.txt` is a secondary compatibility wrapper for local tooling; do not edit it as the primary dependency definition.
 - Frontend assets live in `src/mobula/static/`.
 
+## Agentic Development Policy
+
+mobula is an agentically coded project. We use coding agents as part of normal development, but the repository standard stays the same: changes should be understandable, testable, and documented when they affect user-visible behavior or contributor expectations.
+
 ## Change Checklist
 
 - Update [EXPECTED_BEHAVIOR](./EXPECTED_BEHAVIOR.md) when user-visible behavior changes.
