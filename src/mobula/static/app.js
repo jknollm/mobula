@@ -34,6 +34,7 @@ import { normalizeComputeBackendPreference, probeRenderCapabilities } from "./vi
 import { lookupViewerElements } from "./viewer_dom.js?v=20260306b";
 import {
   VIEW_ROTATE_RATE_STEP_LEVELS,
+  createAxisSettingsForMetadata,
   createDefaultAxisPlaneSwap,
   createDefaultAxisSettings,
   createViewerState,
@@ -58,7 +59,7 @@ import {
   orthonormalizeRotationMatrix,
   sphereRotationMatrixFromYawPitch,
   volumeRotationMatrixFromYawPitch,
-} from "./viewer_state.js?v=20260306b";
+} from "./viewer_state.js?v=20260803c";
 import { createPerfStore, perfEnabledFromLocation } from "./viewer_perf.js?v=20260306c";
 import { createPlaybackController } from "./viewer_playback.js?v=20260306d";
 import { createMovieRecordingController } from "./viewer_recording.js?v=20260306a";
@@ -13941,11 +13942,13 @@ async function onDatasetChange() {
     const fullMeta = await metaPromise;
     assertEpoch(expectedEpoch);
     state.meta = fullMeta;
+    state.axisSettings = createAxisSettingsForMetadata(fullMeta);
     await loadSceneContext(state.dataId);
     assertEpoch(expectedEpoch);
     state.sphereMeta = detectSphereMeta(state.meta);
     updateControlCaps();
     await slicePromise;
+    drawFrameAndOverlays();
     refreshActiveTabLabel();
   } catch (err) {
     if (!isAbortError(err)) throw err;

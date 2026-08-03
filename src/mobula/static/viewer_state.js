@@ -24,6 +24,17 @@ export function createDefaultAxisSettings() {
   return out;
 }
 
+export function createAxisSettingsForMetadata(meta) {
+  const out = createDefaultAxisSettings();
+  const orientation = String(meta?.wcs?.axis_orientation || "").trim().toLowerCase();
+  if (orientation === "resolve_tangent_plane_v1") {
+    // Resolve arrays use (x, y), with positive x west and positive y north.
+    // Canvas x already grows in the desired direction; canvas y grows downward.
+    out.y.flip = true;
+  }
+  return out;
+}
+
 export function createDefaultAxisPlaneSwap() {
   const out = {};
   for (const key of PLANE_KEYS) out[key] = false;

@@ -632,3 +632,20 @@ def test_sphere_axis_settings_can_toggle_left_right_flip(page: object, app_url: 
         "(previous) => document.querySelector('#sliceCanvas')?.toDataURL() !== previous",
         arg=before,
     )
+
+
+@pytest.mark.browser
+def test_resolve_tangent_plane_metadata_defaults_to_north_up(page: object, app_url: str) -> None:
+    def add_resolve_orientation(route: object) -> None:
+        response = route.fetch()
+        payload = response.json()
+        payload.setdefault("wcs", {})["axis_orientation"] = "resolve_tangent_plane_v1"
+        route.fulfill(response=response, json=payload)
+
+    page.route("**/api/datasets/*/meta", add_resolve_orientation)
+    _wait_ui_ready(page, app_url)
+    _choose_dataset(page, "movie-2d-pol-hd")
+
+    page.wait_for_function(
+        "() => document.querySelector('#axisSettingsBtn')?.textContent === 'Axis Settings (1)'"
+    )
