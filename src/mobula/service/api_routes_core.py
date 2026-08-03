@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 
 from mobula.data.scene import SceneRenderRequest, SceneValidationError
@@ -357,8 +358,12 @@ def _register_core_routes(router: APIRouter, registry: DatasetRegistry) -> None:
 
         def build_payload() -> dict[str, Any]:
             pol_labels = ds.provenance.get("pol_labels")
-            if pol_labels is None and "pol" in ds.dims and _dim_size(ds, "pol") == 4:
-                pol_labels = ["I", "Q", "U", "V"]
+            if pol_labels is None and "pol" in ds.dims:
+                coordinates = np.asarray(ds.coords["pol"])
+                if not np.issubdtype(coordinates.dtype, np.number):
+                    pol_labels = [str(value) for value in coordinates.tolist()]
+                elif _dim_size(ds, "pol") == 4:
+                    pol_labels = ["I", "Q", "U", "V"]
             return {
                 "data_id": ds.data_id,
                 "dims": list(ds.dims),

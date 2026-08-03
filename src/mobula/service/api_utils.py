@@ -45,13 +45,32 @@ def _coords_summary(ds: CubeDataset) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for dim in ds.dims:
         c = np.asarray(ds.coords[dim])
-        out[dim] = {
+        numeric = np.issubdtype(c.dtype, np.number)
+        summary: dict[str, Any] = {
             "size": int(c.shape[0]),
             "unit": ds.units[dim],
-            "min": float(c.min()) if c.size else None,
-            "max": float(c.max()) if c.size else None,
+            "min": float(c.min()) if c.size and numeric else None,
+            "max": float(c.max()) if c.size and numeric else None,
         }
+        if c.size and not numeric:
+            summary["labels"] = _coordinate_values(ds, dim)
+        out[dim] = summary
     return out
+
+
+def _coordinate_values(ds: CubeDataset, dim: str) -> list[float | str]:
+    values = np.asarray(ds.coords[dim]).reshape(-1)
+    if np.issubdtype(values.dtype, np.number):
+        return [float(value) for value in values]
+    return [str(value.item() if isinstance(value, np.generic) else value) for value in values]
+
+
+def _coordinate_value(ds: CubeDataset, dim: str, index: int) -> float | str:
+    values = np.asarray(ds.coords[dim]).reshape(-1)
+    value = values[index]
+    if np.issubdtype(values.dtype, np.number):
+        return float(value)
+    return str(value.item() if isinstance(value, np.generic) else value)
 
 
 def _is_power_of_two(v: int) -> bool:

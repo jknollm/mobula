@@ -52,7 +52,7 @@ class CubeDataset:
     provenance: dict[str, Any]
     mask: np.ndarray | None = None
     uncertainty: dict[str, Any] | None = None
-    _coord_list_cache: dict[str, list[float]] = field(default_factory=dict, init=False, repr=False, compare=False)
+    _coord_list_cache: dict[str, list[float | str]] = field(default_factory=dict, init=False, repr=False, compare=False)
     _serialized_axis_coords_cache: dict[tuple[str, ...], dict[str, Any]] = field(
         default_factory=dict,
         init=False,

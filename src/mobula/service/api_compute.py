@@ -9,6 +9,7 @@ from mobula.data.schema import CubeDataset
 from mobula.service.api_models import SampleMode
 from mobula.service.api_utils import (
     _apply_sample_mode_reduction,
+    _coordinate_value,
     _index_or_mid,
     _project_dims_by_mean,
     _uses_sample_reduction,
@@ -112,7 +113,7 @@ def _extract_2d_slice(
     z: int | None,
     pol_override: int | None = None,
     project_dims: tuple[str, ...] | list[str] | None = None,
-) -> tuple[np.ndarray, dict[str, int], dict[str, float]]:
+) -> tuple[np.ndarray, dict[str, int], dict[str, float | str]]:
     """Extract a canonical 2D slice with optional sample reduction and projected dims."""
     if plane_x == plane_y:
         raise HTTPException(status_code=400, detail="plane_x and plane_y must be different")
@@ -186,7 +187,10 @@ def _extract_2d_slice(
             detail=f"slice dim mismatch, expected [{plane_x},{plane_y}] got {arr_dims}",
         )
 
-    selected_coords = {dim: float(np.asarray(ds.coords[dim])[idx]) for dim, idx in selected_indices.items()}
+    selected_coords = {
+        dim: _coordinate_value(ds, dim, idx)
+        for dim, idx in selected_indices.items()
+    }
     return out, selected_indices, selected_coords
 
 
@@ -202,7 +206,7 @@ def _extract_3d_volume(
     z: int | None,
     pol_override: int | None = None,
     project_dims: tuple[str, ...] | list[str] | None = None,
-) -> tuple[np.ndarray, dict[str, int], dict[str, float]]:
+) -> tuple[np.ndarray, dict[str, int], dict[str, float | str]]:
     """Extract a canonical XYZ volume with optional sample reduction and projected dims."""
     for dim in ("x", "y", "z"):
         if dim not in ds.dims:
@@ -262,5 +266,8 @@ def _extract_3d_volume(
         perm = [arr_dims.index(d) for d in expected]
         arr = np.transpose(arr, perm)
 
-    selected_coords = {dim: float(np.asarray(ds.coords[dim])[idx]) for dim, idx in selected_indices.items()}
+    selected_coords = {
+        dim: _coordinate_value(ds, dim, idx)
+        for dim, idx in selected_indices.items()
+    }
     return arr, selected_indices, selected_coords

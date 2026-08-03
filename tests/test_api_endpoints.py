@@ -64,6 +64,53 @@ def test_meta_contains_expected_fields(client, base_dataset) -> None:
     assert body["sphere"] is None
 
 
+def test_meta_and_slice_preserve_categorical_polarization_coordinates(
+    client_factory,
+) -> None:
+    dataset = CubeDataset(
+        data_id="labeled-polarization",
+        dims=("sample", "pol", "x", "y"),
+        coords={
+            "sample": np.arange(2),
+            "pol": np.asarray(["I"]),
+            "x": np.linspace(-1.0, 1.0, 4),
+            "y": np.linspace(-1.0, 1.0, 5),
+        },
+        values=np.arange(40, dtype=np.float32).reshape(2, 1, 4, 5),
+        units={"sample": "1", "pol": "1", "x": "rad", "y": "rad"},
+        intensity_unit="Jy/sr",
+        wcs={},
+        provenance={"source": "labeled-coordinate-test"},
+    )
+    dataset.validate()
+
+    with client_factory(dataset) as client:
+        metadata = client.get("/api/datasets/labeled-polarization/meta")
+        slice_response = client.get(
+            "/api/datasets/labeled-polarization/slice",
+            params={
+                "sample_mode": "mean",
+                "pol": 0,
+                "plane_x": "x",
+                "plane_y": "y",
+                "response_format": "binary",
+            },
+        )
+
+    assert metadata.status_code == 200
+    assert metadata.json()["coords"]["pol"] == {
+        "size": 1,
+        "unit": "1",
+        "min": None,
+        "max": None,
+        "labels": ["I"],
+    }
+    assert metadata.json()["pol_labels"] == ["I"]
+    assert slice_response.status_code == 200
+    payload = _decode_binary_scalar_payload(slice_response.content)
+    assert payload["selected_coords"]["pol"] == "I"
+
+
 def test_lazy_demo_meta_does_not_materialize_dataset(client) -> None:
     before = client.get("/api/datasets").json()["datasets"]
     before_source = next(ds["source"] for ds in before if ds["data_id"] == "movie-2d-pol-hd")

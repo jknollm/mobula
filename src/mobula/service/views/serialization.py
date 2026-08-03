@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 
 from mobula.data.schema import CubeDataset
+from mobula.service.api_utils import _coordinate_values
 
 
 @dataclass(slots=True)
@@ -42,7 +43,7 @@ def serialize_axis_coords(ds: CubeDataset, dims: list[str]) -> dict[str, Any]:
     for dim in key:
         coord_list = ds._coord_list_cache.get(dim)
         if coord_list is None:
-            coord_list = np.asarray(ds.coords[dim], dtype=np.float64).tolist()
+            coord_list = _coordinate_values(ds, dim)
             ds._coord_list_cache[dim] = coord_list
         payload[dim] = coord_list
         payload[f"{dim}_unit"] = ds.units[dim]

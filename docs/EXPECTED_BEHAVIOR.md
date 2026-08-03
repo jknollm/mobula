@@ -156,6 +156,8 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
   may remain described by a provider, but must not be silently interpreted as a supported renderer.
 - Missing axes are explicit invariants. In particular, moving through time in a combined Scene keeps a component with an
   invariant time mapping constant instead of requiring that component to store repeated time planes.
+- Categorical coordinates such as polarization labels remain labels in dataset metadata and selected-coordinate state;
+  they are not coerced to numeric values.
 - Presentation recipes explicitly name their axes, participating component layers, output quantity/unit, renderers, and
   composition rule. Mobula does not infer scientific projection or unit-conversion rules from array shapes.
 - A Scene session offers its combined presentation and renderable component layers through one `Scene Layer` control.
