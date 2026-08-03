@@ -176,9 +176,9 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
   frame without requiring a second selection in the dataset picker.
 - Raster orientation follows explicit dataset WCS metadata. A Resolve tangent-plane layer is displayed west-right and
   north-up by default; the axis controls remain available for deliberate display flips.
-- A runtime request contains the visible plane, every non-visible axis selection, sample reduction, and output pixel
-  bound. Its response must contain exactly one two-dimensional plane. Mobula rejects higher-dimensional or oversized
-  responses and never registers remote Scene values as a `CubeDataset`.
+- A runtime request contains the visible plane, every non-visible axis selection, sample reduction, and an optional
+  output pixel bound. Its response must contain exactly one two-dimensional plane. Mobula rejects higher-dimensional or
+  oversized responses and never registers remote Scene values as a `CubeDataset`.
 - Mean and standard-deviation Scene slices retain the presentation recipe unit. Relative-uncertainty slices are
   dimensionless and use intensity unit `1`.
 - Exact explicit or regular-linear coordinate encodings are preserved in virtual metadata. If a provider omits both,
