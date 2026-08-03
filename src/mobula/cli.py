@@ -9,8 +9,6 @@ import webbrowser
 from pathlib import Path
 from urllib.parse import quote
 
-import uvicorn
-
 from mobula.install import (
     build_native_install_command,
     build_native_install_plan,
@@ -18,6 +16,10 @@ from mobula.install import (
     resolve_install_target,
 )
 from mobula.paths import default_data_dir
+
+
+def _scene_viewer_url(base_url: str, scene_id: str) -> str:
+    return f"{base_url.rstrip('/')}/?scene_id={quote(scene_id, safe='')}"
 
 
 def _build_serve_parser() -> argparse.ArgumentParser:
@@ -39,6 +41,12 @@ def _build_serve_parser() -> argparse.ArgumentParser:
         "--scene-snapshot",
         help="register a local mobula.scene-snapshot/v1 JSON manifest and open its Scene",
     )
+    parser.add_argument("--scene-source-url", help="authenticated mobula.scene-source/v1 runtime base URL")
+    parser.add_argument("--scene-source-token", help="bearer token for --scene-source-url")
+    parser.add_argument(
+        "--scene-source-token-env",
+        help="read the Scene source bearer token from this environment variable",
+    )
     parser.add_argument("--initial-scene", help="open this already registered Scene id")
     return parser
 
@@ -49,13 +57,19 @@ def _build_install_parser() -> argparse.ArgumentParser:
         description="Install host-native acceleration dependencies into the current Python environment.",
     )
     parser.add_argument("--apply", action="store_true", help="execute the pip install command")
-    parser.add_argument("--editable", action="store_true", help="use editable install when a local repo checkout is detected")
-    parser.add_argument("--include-dev", action="store_true", help="include the dev extra alongside native acceleration")
+    parser.add_argument(
+        "--editable", action="store_true", help="use editable install when a local repo checkout is detected"
+    )
+    parser.add_argument(
+        "--include-dev", action="store_true", help="include the dev extra alongside native acceleration"
+    )
     parser.add_argument("--no-upgrade", action="store_true", help="do not pass --upgrade to pip")
     return parser
 
 
 def _run_serve(argv: list[str]) -> None:
+    import uvicorn
+
     parser = _build_serve_parser()
     args = parser.parse_args(argv)
 
@@ -70,19 +84,44 @@ def _run_serve(argv: list[str]) -> None:
         snapshot_scene_id = str(payload.get("descriptor", {}).get("scene_id", "")).strip()
         if not snapshot_scene_id:
             parser.error("Scene snapshot descriptor has no scene_id")
+    if args.scene_snapshot and args.scene_source_url:
+        parser.error("--scene-snapshot and --scene-source-url are mutually exclusive")
+    if args.scene_source_token and args.scene_source_token_env:
+        parser.error("--scene-source-token and --scene-source-token-env are mutually exclusive")
+    source_token = str(args.scene_source_token or "")
+    if args.scene_source_token_env:
+        source_token = str(os.environ.get(args.scene_source_token_env, ""))
+        if not source_token:
+            parser.error(f"environment variable '{args.scene_source_token_env}' is empty or missing")
     initial_scene_id = str(args.initial_scene or snapshot_scene_id).strip()
+    if args.scene_source_url and not initial_scene_id:
+        parser.error("--scene-source-url requires --initial-scene")
+    if args.scene_source_url and not source_token:
+        parser.error("--scene-source-url requires a bearer token")
+    if source_token and not args.scene_source_url:
+        parser.error("Scene source token options require --scene-source-url")
     if initial_scene_id:
-        url = f"{url}/?scene_id={quote(initial_scene_id, safe='')}"
-    if snapshot_path is not None and args.reload:
-        parser.error("--reload cannot be combined with --scene-snapshot")
+        url = _scene_viewer_url(url, initial_scene_id)
+    if (snapshot_path is not None or args.scene_source_url) and args.reload:
+        parser.error("--reload cannot be combined with a runtime Scene source")
     if not args.no_browser:
         threading.Timer(0.8, lambda: webbrowser.open_new_tab(url)).start()
-    if snapshot_path is None:
+    if snapshot_path is None and not args.scene_source_url:
         uvicorn.run("mobula.main:app", host=args.host, port=args.port, reload=args.reload)
         return
     from mobula.main import create_app
 
-    uvicorn.run(create_app(scene_snapshot=snapshot_path), host=args.host, port=args.port, reload=False)
+    uvicorn.run(
+        create_app(
+            scene_snapshot=snapshot_path,
+            scene_source_url=args.scene_source_url,
+            scene_source_token=source_token,
+            scene_source_id=initial_scene_id,
+        ),
+        host=args.host,
+        port=args.port,
+        reload=False,
+    )
 
 
 def _run_install_acceleration(argv: list[str]) -> int:

@@ -17,6 +17,10 @@ from mobula.data.schema import CubeDataset
 SCENE_SNAPSHOT_VERSION = "mobula.scene-snapshot/v1"
 
 
+def _layer_key(recipe_id: str, target_kind: str, target_id: str) -> str:
+    return json.dumps([recipe_id, target_kind, target_id], separators=(",", ":"))
+
+
 class SnapshotSceneSource:
     """Read a local JSON+NPZ Scene handoff without provider-specific imports."""
 
@@ -44,8 +48,11 @@ class SnapshotSceneSource:
     async def render_layer(self, request: SceneRenderRequest) -> RenderedSceneLayer:
         request.validate()
         target_id = request.component_id if request.target == "component" else "combined"
-        layer_key = f"{request.recipe_id}:{target_id}"
+        layer_key = _layer_key(request.recipe_id, request.target, str(target_id))
         layer = self._layers.get(layer_key)
+        if layer is None:
+            # Read snapshots produced before target kind became part of the cache key.
+            layer = self._layers.get(f"{request.recipe_id}:{target_id}")
         if not isinstance(layer, dict):
             raise KeyError(f"Scene snapshot layer '{layer_key}' not found")
         with np.load(self.values_path, allow_pickle=False) as arrays:
@@ -70,6 +77,7 @@ class SnapshotSceneSource:
                 "snapshot_manifest": str(self.manifest_path),
                 "scene_id": self._descriptor.scene_id,
                 "recipe_id": request.recipe_id,
+                "target_kind": request.target,
                 "target_id": target_id,
             },
             mask=mask,
@@ -79,6 +87,7 @@ class SnapshotSceneSource:
         return RenderedSceneLayer(
             scene_id=self._descriptor.scene_id,
             recipe_id=request.recipe_id,
+            target_kind=request.target,
             target_id=str(target_id),
             dataset=dataset,
         )
@@ -87,7 +96,7 @@ class SnapshotSceneSource:
 def write_scene_snapshot(
     manifest_path: str | Path,
     descriptor: SceneDescriptor,
-    layers: dict[tuple[str, str], CubeDataset],
+    layers: dict[tuple[str, str] | tuple[str, str, str], CubeDataset],
 ) -> tuple[Path, Path]:
     """Write a compact local handoff. Each target is a presentation cube, not a scientific Scene flattening."""
     descriptor.validate()
@@ -95,7 +104,14 @@ def write_scene_snapshot(
     values_path = manifest.with_suffix(".npz")
     arrays: dict[str, np.ndarray] = {}
     layer_payload: dict[str, dict[str, Any]] = {}
-    for index, ((recipe_id, target_id), dataset) in enumerate(layers.items()):
+    for index, (target, dataset) in enumerate(layers.items()):
+        if len(target) == 2:
+            recipe_id, target_id = target
+            target_kind = "combined" if target_id == "combined" else "component"
+        else:
+            recipe_id, target_kind, target_id = target
+        if target_kind not in {"combined", "component"}:
+            raise ValueError(f"unknown Scene snapshot target kind: {target_kind}")
         dataset.validate()
         prefix = f"layer_{index}"
         values_key = f"{prefix}_values"
@@ -109,7 +125,7 @@ def write_scene_snapshot(
         if dataset.mask is not None:
             mask_key = f"{prefix}_mask"
             arrays[mask_key] = np.asarray(dataset.mask, dtype=bool)
-        layer_payload[f"{recipe_id}:{target_id}"] = {
+        layer_payload[_layer_key(recipe_id, target_kind, target_id)] = {
             "data_id": dataset.data_id,
             "dims": list(dataset.dims),
             "values_key": values_key,

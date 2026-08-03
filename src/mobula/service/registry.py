@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from hashlib import sha256
 from pathlib import Path
 from threading import Event, RLock
 from time import perf_counter
@@ -75,9 +76,13 @@ class DatasetRegistry:
         self._lazy_metadata: dict[str, Callable[[], dict[str, object]]] = {}
         self._pending_loads: dict[str, _PendingDatasetLoad] = {}
         self._scene_sources: dict[str, SceneSource] = {}
-        self._scene_materializations: dict[str, tuple[SceneDescriptor, str, str]] = {}
+        self._scene_materializations: dict[str, tuple[SceneDescriptor, str, str, str]] = {}
+        self._scene_materialization_keys: dict[str, tuple[str, str, str, str, str]] = {}
+        self._scene_layer_cache: dict[tuple[str, str, str, str, str], str] = {}
         default_manifest = default_seeded_manifest_path()
-        self._seeded_manifest_path = Path(seeded_manifest_path).expanduser().resolve() if seeded_manifest_path else default_manifest
+        self._seeded_manifest_path = (
+            Path(seeded_manifest_path).expanduser().resolve() if seeded_manifest_path else default_manifest
+        )
         self._register_lazy_defaults()
         self._register_seeded_local_datasets()
 
@@ -105,9 +110,7 @@ class DatasetRegistry:
             descriptor = await source.describe_scene()
             descriptor.validate()
             if descriptor.scene_id != scene_id:
-                raise ValueError(
-                    f"scene source registered as '{scene_id}' described itself as '{descriptor.scene_id}'"
-                )
+                raise ValueError(f"scene source registered as '{scene_id}' described itself as '{descriptor.scene_id}'")
             descriptors.append(descriptor)
         return descriptors
 
@@ -124,6 +127,29 @@ class DatasetRegistry:
         return descriptor
 
     async def render_scene(self, scene_id: str, request: SceneRenderRequest) -> RenderedSceneLayer:
+        request.validate()
+        target_id = request.component_id if request.target == "component" else "combined"
+        selection_key = json.dumps(
+            {
+                "exploration_indices": request.exploration_indices,
+                "spatial_window": request.spatial_window,
+                "sample_mode": request.sample_mode,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        cache_key = (scene_id, request.recipe_id, request.target, str(target_id), selection_key)
+        with self._lock:
+            cached_data_id = self._scene_layer_cache.get(cache_key)
+            cached_dataset = self._datasets.get(cached_data_id) if cached_data_id is not None else None
+        if cached_dataset is not None:
+            return RenderedSceneLayer(
+                scene_id=scene_id,
+                recipe_id=request.recipe_id,
+                target_kind=request.target,
+                target_id=str(target_id),
+                dataset=cached_dataset,
+            )
         if scene_id.startswith("cube:"):
             source: SceneSource = CubeSceneSource(self.get(scene_id.removeprefix("cube:")))
         else:
@@ -137,16 +163,29 @@ class DatasetRegistry:
         rendered.dataset.validate()
         if rendered.scene_id != descriptor.scene_id:
             raise ValueError("rendered layer scene_id does not match its source descriptor")
+        if rendered.target_kind != request.target or rendered.target_id != target_id:
+            raise ValueError("rendered layer target identity does not match its request")
+        with self._lock:
+            existing_dataset = self._datasets.get(rendered.dataset.data_id)
+            existing_cache_key = self._scene_materialization_keys.get(rendered.dataset.data_id)
+        if existing_dataset is not None and existing_cache_key != cache_key:
+            digest = sha256("\0".join(cache_key).encode("utf-8")).hexdigest()[:12]
+            rendered = replace(
+                rendered, dataset=replace(rendered.dataset, data_id=f"{rendered.dataset.data_id}-{digest}")
+            )
         self.add(rendered.dataset)
         with self._lock:
             self._scene_materializations[rendered.dataset.data_id] = (
                 descriptor,
                 rendered.recipe_id,
+                rendered.target_kind,
                 rendered.target_id,
             )
+            self._scene_materialization_keys[rendered.dataset.data_id] = cache_key
+            self._scene_layer_cache[cache_key] = rendered.dataset.data_id
         return rendered
 
-    def scene_context_for_dataset(self, data_id: str) -> tuple[SceneDescriptor, str, str] | None:
+    def scene_context_for_dataset(self, data_id: str) -> tuple[SceneDescriptor, str, str, str] | None:
         with self._lock:
             materialized = self._scene_materializations.get(data_id)
             dataset = self._datasets.get(data_id)
@@ -155,7 +194,7 @@ class DatasetRegistry:
         if dataset is None:
             return None
         descriptor = cube_scene_descriptor(dataset)
-        return descriptor, descriptor.default_recipe_id, "combined"
+        return descriptor, descriptor.default_recipe_id, "combined", "combined"
 
     def get(self, data_id: str) -> CubeDataset:
         dataset, _ = self.get_with_stats(data_id)

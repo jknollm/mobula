@@ -170,7 +170,13 @@ class SyntheticHybridSceneSource:
         )
         dataset.validate()
         await asyncio.sleep(0)
-        return RenderedSceneLayer(self.scene_id, request.recipe_id, target_id, dataset)
+        return RenderedSceneLayer(
+            scene_id=self.scene_id,
+            recipe_id=request.recipe_id,
+            target_kind=request.target,
+            target_id=target_id,
+            dataset=dataset,
+        )
 
 
 def synthetic_hybrid_scene_source(scene_id: str = "synthetic-hybrid") -> SyntheticHybridSceneSource:

@@ -202,6 +202,7 @@ def _register_core_routes(router: APIRouter, registry: DatasetRegistry) -> None:
         return {
             "scene_id": rendered.scene_id,
             "recipe_id": rendered.recipe_id,
+            "target_kind": rendered.target_kind,
             "target_id": rendered.target_id,
             "data_id": rendered.dataset.data_id,
             "dims": list(rendered.dataset.dims),
@@ -218,10 +219,11 @@ def _register_core_routes(router: APIRouter, registry: DatasetRegistry) -> None:
         context = registry.scene_context_for_dataset(dataset.data_id)
         if context is None:
             raise HTTPException(status_code=404, detail=f"dataset '{data_id}' has no Scene context")
-        descriptor, recipe_id, target_id = context
+        descriptor, recipe_id, target_kind, target_id = context
         return {
             "descriptor": descriptor.to_dict(),
             "active_recipe_id": recipe_id,
+            "active_target_kind": target_kind,
             "active_target_id": target_id,
         }
 

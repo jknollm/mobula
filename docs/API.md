@@ -414,7 +414,7 @@ For a process boundary, use `write_scene_snapshot(...)` or produce the equivalen
 `mobula.scene-snapshot/v1` handoff:
 
 - JSON manifest: `snapshot_version`, the full `mobula.scene/v1` descriptor, a relative `values_path`, and layer records
-  keyed as `<recipe_id>:combined` or `<recipe_id>:<component_id>`.
+  keyed by recipe id, target kind (`combined` or `component`), and target id.
 - NPZ values: each layer's value array and one coordinate array per presentation dimension, referenced by key from the
   manifest. An optional mask key is supported.
 
@@ -426,6 +426,67 @@ mobula --scene-snapshot /absolute/path/to/scene.json
 
 The app factory equivalent is `create_app(scene_snapshot=path)`. A running local service can also register a snapshot
 with `POST /api/scenes/register-snapshot` and a JSON body containing `{"path": "/absolute/path/to/scene.json"}`.
+
+## Authenticated Runtime Scene Source
+
+For producer-time reconstruction, Mobula can connect to a short-lived authenticated HTTP source instead of writing a
+snapshot. The `mobula.scene-source/v1` contract has two operations relative to the configured source URL:
+
+- `GET /descriptor`, with `Accept: application/json`.
+- `POST /render`, with a JSON request and `Accept: application/x-mobula-scene-layer+npz`.
+
+Both requests include:
+
+```text
+Authorization: Bearer <session-token>
+X-Mobula-Scene-Protocol: mobula.scene-source/v1
+```
+
+The descriptor response is:
+
+```json
+{
+  "protocol_version": "mobula.scene-source/v1",
+  "descriptor": {"schema_version": "mobula.scene/v1"}
+}
+```
+
+The render request is:
+
+```json
+{
+  "protocol_version": "mobula.scene-source/v1",
+  "request": {
+    "recipe_id": "combined-emission",
+    "target": "component",
+    "component_id": "background",
+    "exploration_indices": {},
+    "spatial_window": {},
+    "sample_mode": "single"
+  }
+}
+```
+
+The render response is one uncompressed NPZ envelope held in memory. Its exact archive keys are
+`__mobula_metadata__` (a uint8 UTF-8 JSON byte array), `values`, `coord_0`, `coord_1`, and so on, plus optional `mask`.
+The metadata keys are `protocol_version`, `scene_id`, `recipe_id`, `target_kind`, `target_id`, and `dataset`. The dataset
+object contains `data_id`, `dims`, `coordinate_keys`, `units`, `intensity_unit`, `wcs`, `provenance`, `uncertainty`,
+`values_key`, and `mask_key`. Target kind is independent of target id, so a component whose id is `combined` cannot
+collide with the combined presentation.
+
+Start Mobula against the runtime with:
+
+```text
+mobula \
+  --scene-source-url http://127.0.0.1:49152/session/abc \
+  --scene-source-token-env MOBULA_SCENE_TOKEN \
+  --initial-scene resolve-scene-id
+```
+
+`--scene-source-token` is also available, but an environment variable avoids exposing the token in the process command
+line. The app factory accepts `scene_source_url`, `scene_source_token`, and `scene_source_id`. Mobula performs remote
+requests asynchronously, validates protocol and Scene identity, and only requests a layer when that combined/component
+presentation is selected. No Resolve import or persistent handoff file is involved.
 
 Scene endpoints are:
 

@@ -11243,8 +11243,8 @@ function tabLabelForState(tabSnapshot, fallbackLabel) {
   return dataId;
 }
 
-function sceneLayerOptionValue(recipeId, targetId) {
-  return JSON.stringify({ recipeId, targetId });
+function sceneLayerOptionValue(recipeId, targetKind, targetId) {
+  return JSON.stringify({ recipeId, targetKind, targetId });
 }
 
 function sceneLayerOptions(session) {
@@ -11259,9 +11259,10 @@ function sceneLayerOptions(session) {
     if (!recipeId) continue;
     const recipeTitle = String(recipe?.title || recipeId);
     options.push({
-      value: sceneLayerOptionValue(recipeId, "combined"),
+      value: sceneLayerOptionValue(recipeId, "combined", "combined"),
       label: recipes.length > 1 ? `${recipeTitle} · Combined` : "Combined Scene",
       recipeId,
+      targetKind: "combined",
       targetId: "combined",
     });
     const seen = new Set();
@@ -11271,9 +11272,10 @@ function sceneLayerOptions(session) {
       seen.add(componentId);
       const componentTitle = String(titleById.get(componentId) || componentId);
       options.push({
-        value: sceneLayerOptionValue(recipeId, componentId),
+        value: sceneLayerOptionValue(recipeId, "component", componentId),
         label: recipes.length > 1 ? `${recipeTitle} · ${componentTitle}` : componentTitle,
         recipeId,
+        targetKind: "component",
         targetId: componentId,
       });
     }
@@ -11294,8 +11296,9 @@ function renderSceneLayerOptions() {
     els.sceneLayerSelect.appendChild(option);
   }
   const activeRecipe = String(state.sceneSession?.active_recipe_id || "");
+  const activeTargetKind = String(state.sceneSession?.active_target_kind || "combined");
   const activeTarget = String(state.sceneSession?.active_target_id || "combined");
-  const activeValue = sceneLayerOptionValue(activeRecipe, activeTarget);
+  const activeValue = sceneLayerOptionValue(activeRecipe, activeTargetKind, activeTarget);
   if (options.some((item) => item.value === activeValue)) {
     els.sceneLayerSelect.value = activeValue;
   }
@@ -11340,13 +11343,13 @@ async function onSceneLayerChange() {
     const sceneId = String(state.sceneSession.descriptor?.scene_id || "");
     if (!sceneId) return;
     setSystemPickerStatus("Preparing Scene layer…");
-    const component = selected.targetId === "combined" ? null : selected.targetId;
+    const component = selected.targetKind === "component" ? selected.targetId : null;
     const rendered = await fetchJson(`/api/scenes/${encodeURIComponent(sceneId)}/render`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         recipe_id: selected.recipeId,
-        target: component ? "component" : "combined",
+        target: selected.targetKind,
         component_id: component,
       }),
     });

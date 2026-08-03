@@ -9,6 +9,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from mobula.data.scene_remote import RemoteSceneSource
 from mobula.data.scene_snapshot import SnapshotSceneSource
 from mobula.service.api import build_router
 from mobula.service.registry import DatasetRegistry
@@ -31,12 +32,29 @@ def _resolve_static_dir() -> Path:
 STATIC_DIR = _resolve_static_dir()
 
 
-def create_app(scene_snapshot: str | Path | None = None) -> FastAPI:
+def create_app(
+    scene_snapshot: str | Path | None = None,
+    *,
+    scene_source_url: str | None = None,
+    scene_source_token: str | None = None,
+    scene_source_id: str | None = None,
+) -> FastAPI:
     registry = DatasetRegistry()
     registry.ensure_default_datasets()
+    if scene_snapshot is not None and scene_source_url is not None:
+        raise ValueError("scene_snapshot and scene_source_url are mutually exclusive")
+    if scene_source_url is None and (scene_source_token is not None or scene_source_id is not None):
+        raise ValueError("scene_source_token and scene_source_id require scene_source_url")
     if scene_snapshot is not None:
         snapshot_source = SnapshotSceneSource(scene_snapshot)
         registry.add_scene_source(snapshot_source.scene_id, snapshot_source)
+    if scene_source_url is not None:
+        remote_source = RemoteSceneSource(
+            scene_source_url,
+            scene_source_token or "",
+            expected_scene_id=scene_source_id or "",
+        )
+        registry.add_scene_source(remote_source.expected_scene_id, remote_source)
 
     application = FastAPI(
         title="mobula",

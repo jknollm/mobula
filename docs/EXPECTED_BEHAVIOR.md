@@ -166,4 +166,11 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
 - `mobula --scene-snapshot PATH` accepts the local `mobula.scene-snapshot/v1` JSON+NPZ handoff, starts the normal local
   service, and opens its default combined Scene. The snapshot is a launch handoff and does not imply a Zarr dependency
   or a requirement to persist every scientific component on one common native domain.
+- `mobula --scene-source-url ... --initial-scene ...` connects to an authenticated `mobula.scene-source/v1` runtime and
+  requests the descriptor and selected presentation layers asynchronously. The bearer token is sent in an authorization
+  header, never in the URL.
+- A runtime layer is transferred directly in memory and is only requested when selected; Mobula does not require the
+  producer to write a temporary Scene snapshot.
+- Layer identity includes recipe id, target kind, and target id. A component named `combined` remains distinct from the
+  recipe's reserved combined presentation.
 - An owning application may add `--no-browser` and open the local service itself.

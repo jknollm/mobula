@@ -251,6 +251,7 @@ class SceneRenderRequest:
 class RenderedSceneLayer:
     scene_id: str
     recipe_id: str
+    target_kind: RenderTargetKind
     target_id: str
     dataset: CubeDataset
 
@@ -426,6 +427,7 @@ class CubeSceneSource:
         return RenderedSceneLayer(
             scene_id=self._descriptor.scene_id,
             recipe_id="native",
+            target_kind=request.target,
             target_id="raster" if request.target == "component" else "combined",
             dataset=self._dataset,
         )
