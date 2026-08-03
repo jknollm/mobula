@@ -166,3 +166,4 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
 - `mobula --scene-snapshot PATH` accepts the local `mobula.scene-snapshot/v1` JSON+NPZ handoff, starts the normal local
   service, and opens its default combined Scene. The snapshot is a launch handoff and does not imply a Zarr dependency
   or a requirement to persist every scientific component on one common native domain.
+- An owning application may add `--no-browser` and open the local service itself.

@@ -26,6 +26,11 @@ def _build_serve_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=8000, help="bind port (default: 8000)")
     parser.add_argument("--reload", action="store_true", help="enable auto-reload for local development")
     parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="serve without opening a browser tab (for an owning launcher)",
+    )
+    parser.add_argument(
         "--data-dir",
         default=str(default_data_dir()),
         help="base data directory for seeded local datasets (default: ~/.mobula/data)",
@@ -70,7 +75,8 @@ def _run_serve(argv: list[str]) -> None:
         url = f"{url}/?scene_id={quote(initial_scene_id, safe='')}"
     if snapshot_path is not None and args.reload:
         parser.error("--reload cannot be combined with --scene-snapshot")
-    threading.Timer(0.8, lambda: webbrowser.open_new_tab(url)).start()
+    if not args.no_browser:
+        threading.Timer(0.8, lambda: webbrowser.open_new_tab(url)).start()
     if snapshot_path is None:
         uvicorn.run("mobula.main:app", host=args.host, port=args.port, reload=args.reload)
         return
