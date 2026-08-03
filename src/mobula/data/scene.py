@@ -22,6 +22,51 @@ class SceneValidationError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class SceneProfileReduction:
+    """One source-defined spatial reduction and its value semantics."""
+
+    reduction_id: str
+    value_quantity: str
+    value_unit: str
+
+    def validate(self) -> None:
+        if not self.reduction_id:
+            raise SceneValidationError("Scene profile reduction has no reduction_id")
+        if not self.value_quantity:
+            raise SceneValidationError("Scene profile reduction has no value_quantity")
+        if not self.value_unit:
+            raise SceneValidationError("Scene profile reduction has no value_unit")
+
+
+@dataclass(frozen=True, slots=True)
+class SceneProfileAccess:
+    """Advertise bounded one-dimensional profiles supported by a sparse source."""
+
+    axes: tuple[str, ...]
+    plane_axes: tuple[str, str]
+    reductions: tuple[SceneProfileReduction, ...]
+    include_members: bool = True
+    max_output_values: int = 65536
+
+    def validate(self) -> None:
+        if not self.axes or any(not axis for axis in self.axes):
+            raise SceneValidationError("Scene profile access must advertise at least one axis")
+        if len(set(self.axes)) != len(self.axes):
+            raise SceneValidationError("Scene profile access contains duplicate axes")
+        if len(self.plane_axes) != 2 or self.plane_axes[0] == self.plane_axes[1]:
+            raise SceneValidationError("Scene profile access requires two distinct plane axes")
+        if not self.reductions:
+            raise SceneValidationError("Scene profile access must advertise at least one reduction")
+        reduction_ids = [reduction.reduction_id for reduction in self.reductions]
+        if len(set(reduction_ids)) != len(reduction_ids):
+            raise SceneValidationError("Scene profile access contains duplicate reductions")
+        for reduction in self.reductions:
+            reduction.validate()
+        if self.max_output_values < 1:
+            raise SceneValidationError("Scene profile max_output_values must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class SceneAccess:
     """Advertise how numerical Scene values may be requested.
 
@@ -35,6 +80,7 @@ class SceneAccess:
     full_render: bool = True
     plane_axes: tuple[str, ...] = ()
     sample_modes: tuple[str, ...] = ()
+    profiles: SceneProfileAccess | None = None
 
     def validate(self) -> None:
         if self.mode not in {"materialized", "slice"}:
@@ -43,6 +89,10 @@ class SceneAccess:
             raise SceneValidationError("slice Scene access must not advertise full rendering")
         if self.mode == "slice" and not self.protocol_version:
             raise SceneValidationError("slice Scene access must advertise a protocol version")
+        if self.profiles is not None:
+            if self.mode != "slice":
+                raise SceneValidationError("Scene profiles require sparse slice access")
+            self.profiles.validate()
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,6 +286,20 @@ class SceneDescriptor:
             raise SceneValidationError("scene contains duplicate axis ids")
         for axis in self.axes:
             axis.validate()
+        if self.access.profiles is not None:
+            profile_access = self.access.profiles
+            unknown_profile_axes = set(profile_access.axes) - set(axis_ids)
+            unknown_plane_axes = set(profile_access.plane_axes) - set(axis_ids)
+            if unknown_profile_axes:
+                raise SceneValidationError(
+                    f"Scene profile access uses unknown axes: {sorted(unknown_profile_axes)}"
+                )
+            if unknown_plane_axes:
+                raise SceneValidationError(
+                    f"Scene profile access uses unknown plane axes: {sorted(unknown_plane_axes)}"
+                )
+            if self.access.plane_axes and tuple(self.access.plane_axes) != profile_access.plane_axes:
+                raise SceneValidationError("Scene profile plane axes must match sparse slice plane axes")
 
         component_ids = [component.component_id for component in self.components]
         if len(set(component_ids)) != len(component_ids):
@@ -343,6 +407,116 @@ class SceneSliceRequest:
             raise SceneValidationError("Scene slice selections must be non-negative")
 
 
+@dataclass(frozen=True, slots=True)
+class SceneProfilesRequest:
+    """One bounded, batched profile request over arbitrary presentation axes."""
+
+    recipe_id: str
+    target: RenderTargetKind = "combined"
+    component_id: str | None = None
+    profile_axes: tuple[str, ...] = ()
+    selections: dict[str, int] = field(default_factory=dict)
+    plane_axes: tuple[str, str] = ("x", "y")
+    spatial_window: dict[str, tuple[int, int]] = field(default_factory=dict)
+    spatial_reduction: str = "mean"
+    include_members: bool = True
+    max_output_values: int = 65536
+
+    def validate(self) -> None:
+        SceneRenderRequest(
+            recipe_id=self.recipe_id,
+            target=self.target,
+            component_id=self.component_id,
+        ).validate()
+        if not self.profile_axes or any(not axis for axis in self.profile_axes):
+            raise SceneValidationError("Scene profile request requires at least one profile axis")
+        if len(set(self.profile_axes)) != len(self.profile_axes):
+            raise SceneValidationError("Scene profile request contains duplicate profile axes")
+        if len(self.plane_axes) != 2 or self.plane_axes[0] == self.plane_axes[1]:
+            raise SceneValidationError("Scene profile request requires two distinct plane axes")
+        if set(self.spatial_window) != set(self.plane_axes):
+            raise SceneValidationError("Scene profile spatial_window must exactly match plane_axes")
+        for axis, bounds in self.spatial_window.items():
+            if len(bounds) != 2 or bounds[0] < 0 or bounds[1] <= bounds[0]:
+                raise SceneValidationError(f"Scene profile window for '{axis}' is invalid")
+        if not self.spatial_reduction:
+            raise SceneValidationError("Scene profile request has no spatial_reduction")
+        if self.max_output_values < 1:
+            raise SceneValidationError("Scene profile max_output_values must be positive")
+        if any(index < 0 for index in self.selections.values()):
+            raise SceneValidationError("Scene profile selections must be non-negative")
+
+
+@dataclass(slots=True)
+class RenderedSceneProfileSeries:
+    axis: str
+    axis_unit: str
+    coords: np.ndarray
+    series_mean: np.ndarray
+    series_std: np.ndarray
+    per_sample: np.ndarray
+    fixed_indices: dict[str, int]
+
+    def validate(self) -> None:
+        coords = np.asarray(self.coords)
+        mean = np.asarray(self.series_mean)
+        std = np.asarray(self.series_std)
+        members = np.asarray(self.per_sample)
+        if not self.axis:
+            raise SceneValidationError("rendered Scene profile has no axis")
+        if coords.ndim != 1 or mean.ndim != 1 or std.ndim != 1:
+            raise SceneValidationError("rendered Scene profile coordinate and summary arrays must be one-dimensional")
+        if coords.size < 1 or mean.size != coords.size or std.size != coords.size:
+            raise SceneValidationError("rendered Scene profile arrays have inconsistent lengths")
+        if members.ndim != 2 or members.shape[1] != coords.size:
+            raise SceneValidationError("rendered Scene profile member array has an invalid shape")
+        if (
+            mean.dtype.kind not in {"f", "i", "u"}
+            or std.dtype.kind not in {"f", "i", "u"}
+            or members.dtype.kind not in {"f", "i", "u"}
+        ):
+            raise SceneValidationError("rendered Scene profile values must be numeric")
+        if not np.all(np.isfinite(mean)) or not np.all(np.isfinite(std)) or not np.all(np.isfinite(members)):
+            raise SceneValidationError("rendered Scene profile contains non-finite values")
+        if coords.dtype.kind in {"f", "i", "u"} and not np.all(np.isfinite(coords)):
+            raise SceneValidationError("rendered Scene profile contains non-finite coordinates")
+        if np.any(std < 0):
+            raise SceneValidationError("rendered Scene profile standard deviation must be non-negative")
+        if any(index < 0 for index in self.fixed_indices.values()):
+            raise SceneValidationError("rendered Scene profile fixed indices must be non-negative")
+
+
+@dataclass(slots=True)
+class RenderedSceneProfiles:
+    scene_id: str
+    recipe_id: str
+    target_kind: RenderTargetKind
+    target_id: str
+    spatial_window: dict[str, tuple[int, int]]
+    spatial_reduction: str
+    pixel_count: int
+    value_quantity: str
+    value_unit: str
+    profiles: dict[str, RenderedSceneProfileSeries]
+
+    def validate(self) -> None:
+        if not self.scene_id or not self.recipe_id or not self.target_id:
+            raise SceneValidationError("rendered Scene profiles have incomplete identity")
+        if self.target_kind not in {"combined", "component"}:
+            raise SceneValidationError("rendered Scene profiles have an invalid target kind")
+        if not self.spatial_reduction or not self.value_quantity or not self.value_unit:
+            raise SceneValidationError("rendered Scene profiles have incomplete value semantics")
+        if self.pixel_count < 1:
+            raise SceneValidationError("rendered Scene profiles have an invalid pixel count")
+        if not self.profiles or set(self.profiles) != {series.axis for series in self.profiles.values()}:
+            raise SceneValidationError("rendered Scene profile keys do not match their axes")
+        for bounds in self.spatial_window.values():
+            if len(bounds) != 2 or bounds[0] < 0 or bounds[1] <= bounds[0]:
+                raise SceneValidationError("rendered Scene profiles have an invalid spatial window")
+        for series in self.profiles.values():
+            series.validate()
+
+
 @dataclass(slots=True)
 class RenderedSceneSlice:
     """A source-rendered 2-D plane with enough metadata for the viewer."""
@@ -413,6 +587,13 @@ class SliceSceneSource(SceneSource, Protocol):
     """Sparse-required source which exposes bounded 2-D planes only."""
 
     async def render_slice(self, request: SceneSliceRequest) -> RenderedSceneSlice: ...
+
+
+@runtime_checkable
+class ProfileSceneSource(SceneSource, Protocol):
+    """Sparse source which evaluates bounded one-dimensional profiles directly."""
+
+    async def render_profiles(self, request: SceneProfilesRequest) -> RenderedSceneProfiles: ...
 
 
 def _axis_from_cube(dataset: CubeDataset, dim: str) -> SceneAxis:
@@ -564,6 +745,24 @@ def scene_descriptor_from_dict(payload: dict[str, Any]) -> SceneDescriptor:
             full_render=bool(dict(payload.get("access", {})).get("full_render", True)),
             plane_axes=tuple(dict(payload.get("access", {})).get("plane_axes", ())),
             sample_modes=tuple(dict(payload.get("access", {})).get("sample_modes", ())),
+            profiles=(
+                SceneProfileAccess(
+                    axes=tuple(dict(dict(payload.get("access", {}))["profiles"]).get("axes", ())),
+                    plane_axes=tuple(dict(dict(payload.get("access", {}))["profiles"]).get("plane_axes", ())),
+                    reductions=tuple(
+                        SceneProfileReduction(**item)
+                        for item in dict(dict(payload.get("access", {}))["profiles"]).get("reductions", ())
+                    ),
+                    include_members=bool(
+                        dict(dict(payload.get("access", {}))["profiles"]).get("include_members", True)
+                    ),
+                    max_output_values=int(
+                        dict(dict(payload.get("access", {}))["profiles"]).get("max_output_values", 65536)
+                    ),
+                )
+                if dict(payload.get("access", {})).get("profiles") is not None
+                else None
+            ),
         ),
         schema_version=payload.get("schema_version", SCENE_SCHEMA_VERSION),
     )

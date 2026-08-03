@@ -876,6 +876,24 @@ function isSparseSceneView() {
   return state.meta?.scene_access === "slice" || state.sceneSession?.descriptor?.access?.mode === "slice";
 }
 
+function sparseSceneProfileCapability() {
+  if (!isSparseSceneView()) return null;
+  return state.meta?.scene_profiles || state.sceneSession?.descriptor?.access?.profiles || null;
+}
+
+function sparseSceneProfilesAvailable() {
+  const capability = sparseSceneProfileCapability();
+  if (!capability || !Array.isArray(capability.axes) || !Array.isArray(capability.plane_axes)) return false;
+  const p = planeDims();
+  return capability.plane_axes[0] === p.planeX && capability.plane_axes[1] === p.planeY;
+}
+
+function profileAxisAvailable(axis) {
+  if (!isSparseSceneView()) return true;
+  const capability = sparseSceneProfileCapability();
+  return sparseSceneProfilesAvailable() && capability.axes.includes(axis);
+}
+
 function axisPlaneSwapState() {
   if (!state.axisPlaneSwap || typeof state.axisPlaneSwap !== "object") {
     state.axisPlaneSwap = createDefaultAxisPlaneSwap();
@@ -5801,15 +5819,18 @@ function updateDomainVisibility() {
     tVarying || nuVarying || (!volumeMode && !sphereMode && hiddenSpatialVarying) || (sampleVarying && isSampleMorphMode())
   );
 
-  const profilesAvailable = !isSparseSceneView();
-  setVisible(els.timeProfileBlock, profilesAvailable && tVarying);
-  setVisible(els.spectrumProfileBlock, profilesAvailable && nuVarying);
-  setVisible(els.spatialProfileBlock, profilesAvailable && !sphereMode && hiddenSpatialVarying);
+  const profilesAvailable = !isSparseSceneView() || sparseSceneProfilesAvailable();
+  setVisible(els.timeProfileBlock, profilesAvailable && profileAxisAvailable("t") && tVarying);
+  setVisible(els.spectrumProfileBlock, profilesAvailable && profileAxisAvailable("nu") && nuVarying);
+  setVisible(
+    els.spatialProfileBlock,
+    profilesAvailable && profileAxisAvailable(hiddenAxis) && !sphereMode && hiddenSpatialVarying
+  );
 
   if (els.metricsHint) {
     const anyProfile = tVarying || nuVarying || hiddenSpatialVarying;
-    if (isSparseSceneView()) {
-      els.metricsHint.textContent = "Scene profiles require an explicit bounded source query and are not available yet.";
+    if (isSparseSceneView() && !profilesAvailable) {
+      els.metricsHint.textContent = "This Scene source does not advertise bounded profiles for the active plane.";
     } else if (sphereMode) {
       els.metricsHint.textContent = "Click for point or drag for area.";
     } else {
@@ -10264,6 +10285,7 @@ async function refreshSlice(options = {}) {
 
 function profileForAxis(source, axis) {
   if (!source) return null;
+  if (source.profiles && source.profiles[axis]) return source.profiles[axis];
   if (axis === "t") return source.time_profile || null;
   if (axis === "nu") return source.spectrum_profile || null;
   if (source.spatial_profile && source.spatial_profile.axis === axis) return source.spatial_profile;
@@ -10538,7 +10560,7 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
   const baseCoords = profile.coords.slice(startIdx, endIdx + 1);
   const axisName = profile.axis || "axis";
   const axisUnit = profile.axis_unit || "";
-  const fluxUnit = state.meta ? state.meta.intensity_unit || "arb" : "arb";
+  const fluxUnit = profile.value_unit || (state.meta ? state.meta.intensity_unit || "arb" : "arb");
   const perSample = (profile.per_sample || []).map((s) => s.slice(startIdx, endIdx + 1));
   const mean = (profile.series_mean || []).slice(startIdx, endIdx + 1);
   const std = (profile.series_std || []).slice(startIdx, endIdx + 1);
@@ -10792,7 +10814,7 @@ function limitHealpixIndexPayload(indices, maxCount = 24000) {
 }
 
 async function refreshSelectionAnalytics() {
-  if (!state.dataId || !state.selection || isSparseSceneView()) {
+  if (!state.dataId || !state.selection || (isSparseSceneView() && !sparseSceneProfilesAvailable())) {
     state.profiles = null;
     drawSelectionGraphs();
     return;
@@ -10848,10 +10870,10 @@ async function refreshSelectionAnalytics() {
 async function refreshViewProfiles() {
   if (
     !state.dataId ||
-    isSparseSceneView() ||
+    (isSparseSceneView() && !sparseSceneProfilesAvailable()) ||
     (!state.frameCanvas && !(state.frameTiles && state.frameTiles.length))
   ) {
-    if (isSparseSceneView()) {
+    if (isSparseSceneView() && !sparseSceneProfilesAvailable()) {
       state.viewProfiles = null;
       drawNavigationGraphs();
     }

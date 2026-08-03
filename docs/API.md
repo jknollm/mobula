@@ -360,6 +360,8 @@ Returns time and spectral profiles over an `x,y` ROI.
 ### `POST /api/datasets/{data_id}/profiles-plane`
 
 Returns time/spectral profiles for an arbitrary plane ROI and also returns the remaining spatial-axis profile when available.
+For a sparse virtual Scene whose descriptor advertises `access.profiles`, this endpoint sends one batched bounded
+profile request to the source. It never obtains a dense dataset or emulates a profile with repeated slice requests.
 
 ### `POST /api/datasets/{data_id}/profiles-healpix`
 
@@ -405,6 +407,7 @@ advertised numerical access mode:
 ```python
 async def describe_scene() -> SceneDescriptor: ...
 async def render_slice(request: SceneSliceRequest) -> RenderedSceneSlice: ...  # access.mode == "slice"
+async def render_profiles(request: SceneProfilesRequest) -> RenderedSceneProfiles: ...  # optional access.profiles
 async def render_layer(request: SceneRenderRequest) -> RenderedSceneLayer: ...  # legacy materialized access
 ```
 
@@ -432,12 +435,14 @@ with `POST /api/scenes/register-snapshot` and a JSON body containing `{"path": "
 ## Authenticated Runtime Scene Source
 
 For producer-time reconstruction, Mobula can connect to a short-lived authenticated HTTP source instead of writing a
-snapshot. The `mobula.scene-source/v2` contract has two operations relative to the configured source URL:
+snapshot. The `mobula.scene-source/v2` contract has two required operations and one optional advertised operation
+relative to the configured source URL:
 
 - `GET /descriptor`, with `Accept: application/json`.
 - `POST /slice`, with a JSON request and `Accept: application/x-mobula-scene-slice+npz`.
+- `POST /profiles`, with a JSON request and response, only when `access.profiles` is present.
 
-Both requests include:
+Runtime requests include:
 
 ```text
 Authorization: Bearer <session-token>
@@ -456,7 +461,17 @@ The descriptor response is:
       "protocol_version": "mobula.scene-source/v2",
       "full_render": false,
       "plane_axes": ["x", "y"],
-      "sample_modes": ["single", "mean", "std", "rel_uncert"]
+      "sample_modes": ["single", "mean", "std", "rel_uncert"],
+      "profiles": {
+        "axes": ["t", "nu"],
+        "plane_axes": ["x", "y"],
+        "reductions": [
+          {"reduction_id": "integral", "value_quantity": "flux_density", "value_unit": "Jy"},
+          {"reduction_id": "mean", "value_quantity": "specific_intensity", "value_unit": "Jy/sr"}
+        ],
+        "include_members": true,
+        "max_output_values": 65536
+      }
     }
   }
 }
@@ -487,6 +502,39 @@ object contains `plane_axes`, `coordinate_keys`, `units`, `intensity_unit`, `ful
 `selected_indices`, `selected_coords`, `wcs`, `provenance`, and `values_key`. Mobula rejects non-2-D, oversized, or
 identity-inconsistent responses. Target kind remains independent of target id.
 
+The optional batched profile request contains exactly these fields:
+
+```json
+{
+  "protocol_version": "mobula.scene-source/v2",
+  "request": {
+    "recipe_id": "combined-emission",
+    "target": "combined",
+    "component_id": null,
+    "profile_axes": ["t", "nu"],
+    "selections": {"pol": 0, "t": 17, "nu": 0},
+    "plane_axes": ["x", "y"],
+    "spatial_window": {"x": [100, 120], "y": [200, 225]},
+    "spatial_reduction": "integral",
+    "include_members": true,
+    "max_output_values": 65536
+  }
+}
+```
+
+`selections` contains every non-spatial presentation axis except ensemble `sample`, including axes also listed in
+`profile_axes`. Each returned profile ignores its own selected index and fixes other axes at their selected indices.
+Spatial windows are explicit half-open bounds. Mobula chooses `integral` when advertised, preserving the
+provider-declared flux quantity and unit; `mean` remains a separate provider-defined reduction.
+
+The source returns JSON with `{protocol_version, result}`. The result contains `scene_id`, `recipe_id`, `target_kind`,
+`target_id`, `spatial_window`, `spatial_reduction`, `pixel_count`, `value_quantity`, `value_unit`, and a `profiles` map.
+Each profile contains `axis`, `axis_unit`, `coords`, `series_mean`, `series_std`, `per_sample`, and `fixed_indices`.
+When member series are not requested, `per_sample` remains present as an empty list. Mobula validates identity, complete
+axis coordinates, fixed indices, reduction semantics, member count, and the total value budget.
+The source and registry contract accepts arbitrary descriptor axis ids. The current browser routes advertised `t`,
+`nu`, and hidden `x`/`y`/`z` profiles into its existing panels; it does not add a generic arbitrary-axis panel.
+
 Start Mobula against the runtime with:
 
 ```text
@@ -499,8 +547,8 @@ mobula \
 `--scene-source-token` is also available, but an environment variable avoids exposing the token in the process command
 line. The app factory accepts `scene_source_url`, `scene_source_token`, and `scene_source_id`. Mobula performs remote
 requests asynchronously and registers a stable virtual dataset from the descriptor when a combined/component
-presentation is selected. Numerical evaluation begins only with a viewer slice request. No Resolve import or persistent
-handoff file is involved.
+presentation is selected. Numerical evaluation begins only with a viewer slice or advertised bounded-profile request.
+No Resolve import or persistent handoff file is involved.
 
 Scene endpoints are:
 
@@ -510,6 +558,7 @@ Scene endpoints are:
 - `GET /api/datasets/{data_id}/scene`
 - `GET /api/datasets/{data_id}/meta`
 - `GET /api/datasets/{data_id}/slice`
+- `POST /api/datasets/{data_id}/profiles-plane`
 
 `POST /api/scenes/{scene_id}/render` remains available only for explicit legacy materialized sources. It rejects a
 source advertising sparse slice access.

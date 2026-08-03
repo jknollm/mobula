@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from mobula.data.scene import (
     CubeSceneSource,
     LinearCoordinates,
+    SceneProfilesRequest,
     SceneRenderRequest,
     SceneValidationError,
     cube_scene_descriptor,
@@ -62,6 +63,26 @@ def test_synthetic_hybrid_scene_models_invariant_and_projected_axes() -> None:
     np.testing.assert_allclose(combined.values, background_cube.values + point_cube.values)
     assert np.count_nonzero(point_cube.values[0, 0]) > 0
     assert not np.array_equal(point_cube.values[0, 0], point_cube.values[0, 1])
+
+
+def test_synthetic_profile_integral_applies_pixel_solid_angle() -> None:
+    source = SyntheticHybridSceneSource("profile-units")
+    common = {
+        "recipe_id": "combined-emission",
+        "profile_axes": ("t",),
+        "selections": {"t": 1, "nu": 1},
+        "plane_axes": ("x", "y"),
+        "spatial_window": {"x": (1, 5), "y": (2, 6)},
+        "include_members": True,
+    }
+    mean = asyncio.run(source.render_profiles(SceneProfilesRequest(**common, spatial_reduction="mean")))
+    integral = asyncio.run(source.render_profiles(SceneProfilesRequest(**common, spatial_reduction="integral")))
+    np.testing.assert_allclose(
+        integral.profiles["t"].per_sample,
+        mean.profiles["t"].per_sample * integral.pixel_count * source.pixel_area_sr,
+    )
+    assert (integral.value_quantity, integral.value_unit) == ("flux_density", "Jy")
+    assert (mean.value_quantity, mean.value_unit) == ("surface_brightness", "Jy/sr")
 
 
 def test_scene_descriptor_rejects_unknown_recipe_axis() -> None:
@@ -147,6 +168,7 @@ def test_sparse_scene_view_opens_without_render_and_delegates_only_a_plane() -> 
         def __init__(self) -> None:
             self.delegate = SyntheticHybridSceneSource("sparse-api")
             self.slice_requests = []
+            self.profile_requests = []
             self.dense_calls = 0
 
         async def describe_scene(self):
@@ -155,6 +177,10 @@ def test_sparse_scene_view_opens_without_render_and_delegates_only_a_plane() -> 
         async def render_slice(self, request):
             self.slice_requests.append(request)
             return await self.delegate.render_slice(request)
+
+        async def render_profiles(self, request):
+            self.profile_requests.append(request)
+            return await self.delegate.render_profiles(request)
 
         async def render_layer(self, request):
             self.dense_calls += 1
@@ -186,6 +212,12 @@ def test_sparse_scene_view_opens_without_render_and_delegates_only_a_plane() -> 
         meta = client.get(f"/api/datasets/{data_id}/meta")
         assert meta.status_code == 200
         assert meta.json()["scene_access"] == "slice"
+        assert meta.json()["scene_profiles"]["axes"] == ["t", "nu"]
+        assert meta.json()["scene_profiles"]["reductions"][0] == {
+            "reduction_id": "integral",
+            "value_quantity": "flux_density",
+            "value_unit": "Jy",
+        }
         assert meta.json()["coords"]["t"]["values"] == [0.0, 1.0, 2.0, 3.0]
 
         sliced = client.get(
@@ -221,6 +253,37 @@ def test_sparse_scene_view_opens_without_render_and_delegates_only_a_plane() -> 
         assert relative_uncertainty.status_code == 200
         assert relative_uncertainty.json()["intensity_unit"] == "1"
         assert "sample" not in source.slice_requests[-1].selections
+
+        profiled = client.post(
+            f"/api/datasets/{data_id}/profiles-plane",
+            json={
+                "plane_x": "x",
+                "plane_y": "y",
+                "u0": 1,
+                "u1": 5,
+                "v0": 2,
+                "v1": 6,
+                "sample": 1,
+                "t": 2,
+                "nu": 1,
+            },
+        )
+        assert profiled.status_code == 200
+        profile_body = profiled.json()
+        assert profile_body["spatial_reduction"] == "integral"
+        assert profile_body["value_quantity"] == "flux_density"
+        assert profile_body["value_unit"] == "Jy"
+        assert profile_body["pixel_count"] == 16
+        assert set(profile_body["profiles"]) == {"t", "nu"}
+        assert profile_body["time_profile"]["value_unit"] == "Jy"
+        assert len(profile_body["time_profile"]["per_sample"]) == 2
+        assert len(source.profile_requests) == 1
+        profile_request = source.profile_requests[0]
+        assert profile_request.profile_axes == ("t", "nu")
+        assert profile_request.selections == {"t": 2, "nu": 1}
+        assert profile_request.spatial_window == {"x": (1, 5), "y": (2, 6)}
+        assert profile_request.spatial_reduction == "integral"
+        assert source.dense_calls == 0
 
         dense_range = client.get(f"/api/datasets/{data_id}/intensity-range")
         assert dense_range.status_code == 409

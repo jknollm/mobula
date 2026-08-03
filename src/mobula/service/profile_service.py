@@ -5,6 +5,7 @@ from typing import Any
 import numpy as np
 from fastapi import HTTPException
 
+from mobula.data.scene import RenderedSceneProfiles
 from mobula.data.schema import CubeDataset
 from mobula.service.api_compute import _profile_series, _profile_series_for_region
 from mobula.service.api_models import HealpixProfilesRequest, PlaneProfilesRequest, ProfilesRequest, RoiStatsRequest
@@ -245,3 +246,44 @@ def build_roi_stats_response(ds: CubeDataset, req: RoiStatsRequest) -> dict[str,
         },
         "per_sample_means": per_sample_mean.tolist(),
     }
+
+
+def build_scene_profiles_response(data_id: str, rendered: RenderedSceneProfiles) -> dict[str, Any]:
+    """Adapt an axis-generic sparse result to the existing profile canvases."""
+    rendered.validate()
+    profiles: dict[str, dict[str, Any]] = {}
+    for axis, series in rendered.profiles.items():
+        mean = np.asarray(series.series_mean, dtype=np.float64).reshape(-1)
+        members = np.asarray(series.per_sample, dtype=np.float64)
+        profiles[axis] = {
+            "axis": axis,
+            "axis_unit": series.axis_unit,
+            "coords": np.asarray(series.coords).tolist(),
+            "sample_count": int(members.shape[0]) if members.shape[0] else 1,
+            "series_mean": mean.tolist(),
+            "series_std": np.asarray(series.series_std, dtype=np.float64).reshape(-1).tolist(),
+            "per_sample": members.tolist() if members.shape[0] else [mean.tolist()],
+            "fixed_indices": dict(series.fixed_indices),
+            "value_quantity": rendered.value_quantity,
+            "value_unit": rendered.value_unit,
+        }
+    out: dict[str, Any] = {
+        "data_id": data_id,
+        "plane": list(rendered.spatial_window),
+        "selection": {axis: list(bounds) for axis, bounds in rendered.spatial_window.items()},
+        "pixel_count": rendered.pixel_count,
+        "intensity_unit": rendered.value_unit,
+        "value_quantity": rendered.value_quantity,
+        "value_unit": rendered.value_unit,
+        "spatial_reduction": rendered.spatial_reduction,
+        "profiles": profiles,
+    }
+    if "t" in profiles:
+        out["time_profile"] = profiles["t"]
+    if "nu" in profiles:
+        out["spectrum_profile"] = profiles["nu"]
+    spatial_axes = [axis for axis in profiles if axis in {"x", "y", "z"}]
+    if spatial_axes:
+        out["spatial_axis"] = spatial_axes[0]
+        out["spatial_profile"] = profiles[spatial_axes[0]]
+    return out

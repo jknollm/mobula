@@ -1,16 +1,28 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
 import pytest
+
+from mobula.data.scene import SceneProfilesRequest, SceneSliceRequest
+from mobula.data.scene_remote import (
+    SCENE_SOURCE_PROTOCOL_VERSION,
+    SCENE_SLICE_MEDIA_TYPE,
+    encode_scene_profiles_payload,
+    encode_scene_slice_payload,
+)
+from mobula.data.synthetic_scene import SyntheticHybridSceneSource
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
@@ -68,6 +80,127 @@ def app_url() -> Iterator[str]:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=5.0)
+
+
+@pytest.fixture(scope="session")
+def sparse_scene_app_url() -> Iterator[str]:
+    pytest.importorskip("playwright.sync_api")
+    source = SyntheticHybridSceneSource("browser-sparse")
+    token = "browser-profile-secret"
+
+    class Handler(BaseHTTPRequestHandler):
+        def _send(self, status: int, body: bytes, content_type: str) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _authorized(self) -> bool:
+            return self.headers.get("Authorization") == f"Bearer {token}"
+
+        def do_GET(self) -> None:  # noqa: N802
+            if not self._authorized():
+                self._send(401, b"unauthorized", "text/plain")
+                return
+            if self.path != "/descriptor":
+                self._send(404, b"not found", "text/plain")
+                return
+            descriptor = asyncio.run(source.describe_scene())
+            body = json.dumps(
+                {"protocol_version": SCENE_SOURCE_PROTOCOL_VERSION, "descriptor": descriptor.to_dict()}
+            ).encode("utf-8")
+            self._send(200, body, "application/json")
+
+        def do_POST(self) -> None:  # noqa: N802
+            if not self._authorized():
+                self._send(401, b"unauthorized", "text/plain")
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            envelope = json.loads(self.rfile.read(length).decode("utf-8"))
+            raw = envelope["request"]
+            if self.path == "/slice":
+                request = SceneSliceRequest(
+                    **{
+                        **raw,
+                        "plane_axes": tuple(raw["plane_axes"]),
+                        "project_dims": tuple(raw["project_dims"]),
+                    }
+                )
+                rendered = asyncio.run(source.render_slice(request))
+                self._send(200, encode_scene_slice_payload(rendered), SCENE_SLICE_MEDIA_TYPE)
+                return
+            if self.path == "/profiles":
+                request = SceneProfilesRequest(
+                    **{
+                        **raw,
+                        "profile_axes": tuple(raw["profile_axes"]),
+                        "plane_axes": tuple(raw["plane_axes"]),
+                        "spatial_window": {
+                            axis: tuple(bounds) for axis, bounds in raw["spatial_window"].items()
+                        },
+                    }
+                )
+                rendered = asyncio.run(source.render_profiles(request))
+                self._send(200, encode_scene_profiles_payload(rendered), "application/json")
+                return
+            self._send(404, b"not found", "text/plain")
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    runtime = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    runtime_thread = threading.Thread(target=runtime.serve_forever, daemon=True)
+    runtime_thread.start()
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(SRC) if not env.get("PYTHONPATH") else f"{SRC}{os.pathsep}{env['PYTHONPATH']}"
+    port = _free_port()
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "mobula.cli",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--no-browser",
+            "--scene-source-url",
+            f"http://127.0.0.1:{runtime.server_port}",
+            "--scene-source-token",
+            token,
+            "--initial-scene",
+            source.scene_id,
+        ],
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    url = f"http://127.0.0.1:{port}"
+    deadline = time.time() + 30.0
+    try:
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                raise RuntimeError(f"sparse Scene uvicorn exited early with code {proc.returncode}")
+            try:
+                if httpx.get(f"{url}/api/health", timeout=1.0).status_code == 200:
+                    yield f"{url}/?scene_id=browser-sparse"
+                    return
+            except httpx.HTTPError:
+                time.sleep(0.2)
+        raise RuntimeError("timed out waiting for sparse Scene Mobula service")
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5.0)
+        runtime.shutdown()
+        runtime.server_close()
+        runtime_thread.join(timeout=5.0)
 
 
 @pytest.fixture()
@@ -242,6 +375,55 @@ def test_initial_scene_query_loads_its_default_dataset(
     assert any(f"/api/scenes/cube%3A{data_id}/views" in url for url in requested_urls)
     assert any(f"/api/datasets/{data_id}/slice" in url for url in requested_urls)
     assert not any("/render" in url for url in requested_urls)
+
+
+@pytest.mark.browser
+def test_sparse_scene_profiles_keep_roi_and_axis_navigation_in_flow(
+    page: object,
+    sparse_scene_app_url: str,
+) -> None:
+    requested_urls: list[str] = []
+    page.on("request", lambda request: requested_urls.append(request.url))
+    page.add_init_script(
+        """(() => {
+          window.__mobulaProfileLabels = [];
+          const original = CanvasRenderingContext2D.prototype.fillText;
+          CanvasRenderingContext2D.prototype.fillText = function(text, ...args) {
+            if (String(text).startsWith('Flux [')) window.__mobulaProfileLabels.push(String(text));
+            return original.call(this, text, ...args);
+          };
+        })()"""
+    )
+    page.goto(sparse_scene_app_url, wait_until="networkidle")
+    page.wait_for_function(
+        "() => {"
+        "  const s = window.__mobulaDebug?.getStateSnapshot?.();"
+        "  return !!s?.dataId && s.viewProfilesActive;"
+        "}"
+    )
+    assert page.locator("#timeProfileBlock:visible").count() == 1
+    assert page.locator("#spectrumProfileBlock:visible").count() == 1
+    assert page.locator("#spatialVolumeBtn:visible").count() == 0
+    assert any("/profiles-plane" in url for url in requested_urls)
+    assert not any("/render" in url for url in requested_urls)
+
+    _drag_roi(page, (0.2, 0.2), (0.7, 0.7))
+    page.wait_for_function(
+        "() => {"
+        "  const s = window.__mobulaDebug.getStateSnapshot();"
+        "  return !!s.selection && s.profilesActive;"
+        "}"
+    )
+    page.wait_for_function("() => window.__mobulaProfileLabels.includes('Flux [Jy]')")
+    selection_before = _debug_state(page)["selection"]
+
+    _wait_for_canvas_foreground(page, "#timeNavCanvas")
+    page.locator("#timePlayBtn:visible").first.click()
+    page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().values.t > 0")
+    page.locator("#timePlayBtn:visible").first.click()
+    page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().playback.active === false")
+    page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().profilesActive")
+    assert _debug_state(page)["selection"] == selection_before
 
 
 @pytest.mark.browser

@@ -181,10 +181,18 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
   oversized responses and never registers remote Scene values as a `CubeDataset`.
 - Mean and standard-deviation Scene slices retain the presentation recipe unit. Relative-uncertainty slices are
   dimensionless and use intensity unit `1`.
+- A sparse Scene which advertises bounded profiles enables the existing point, ROI, visible-view, and full-field
+  profile workflow. Time, spectral, and hidden-spatial profiles are requested together once per region; Mobula never
+  reconstructs them from repeated slices or a dense presentation cube.
+- Sparse profile selections use explicit half-open bounds on the active plane and preserve the current indices on all
+  other exploration axes. Switching between combined and component layers keeps the ROI and axis state while
+  refreshing the layer-dependent profiles.
+- When a source advertises both `integral` and `mean`, Mobula requests `integral`. Profile charts display the
+  provider-declared profile unit (for example `Jy`) rather than reusing the displayed plane's intensity unit.
 - Exact explicit or regular-linear coordinate encodings are preserved in virtual metadata. If a provider omits both,
   Mobula uses the axis index for navigation rather than inventing physical coordinates from a min/max range.
 - Sparse Scene views normalize from the returned plane. Operations which require an undeclared whole-domain query
-  (global ranges, profiles, volume, multispectral rendering, EVPA ticks, and data cutout export) remain visibly
+  (global ranges, unadvertised profiles, volume, multispectral rendering, EVPA ticks, and data cutout export) remain visibly
   unavailable until the source advertises a bounded query for them; they never trigger hidden dense work.
 - Layer identity includes recipe id, target kind, and target id. A component named `combined` remains distinct from the
   recipe's reserved combined presentation.

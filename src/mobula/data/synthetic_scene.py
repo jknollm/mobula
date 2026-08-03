@@ -11,11 +11,16 @@ from mobula.data.scene import (
     PresentationRecipe,
     RecipeLayer,
     RenderedSceneLayer,
+    RenderedSceneProfileSeries,
+    RenderedSceneProfiles,
     RenderedSceneSlice,
     SceneAccess,
     SceneAxis,
     SceneComponent,
     SceneDescriptor,
+    SceneProfileAccess,
+    SceneProfileReduction,
+    SceneProfilesRequest,
     SceneRenderRequest,
     SceneSliceRequest,
 )
@@ -32,6 +37,10 @@ class SyntheticHybridSceneSource:
         self._frequency = np.asarray([90.0, 110.0, 140.0], dtype=np.float32)
         self._x = np.linspace(-1.0, 1.0, 7, dtype=np.float32)
         self._y = np.linspace(-1.0, 1.0, 6, dtype=np.float32)
+        self.pixel_area_sr = float(
+            np.deg2rad(abs(float(self._x[1] - self._x[0])))
+            * np.deg2rad(abs(float(self._y[1] - self._y[0])))
+        )
         self._descriptor = self._build_descriptor()
 
     def _build_descriptor(self) -> SceneDescriptor:
@@ -108,13 +117,27 @@ class SyntheticHybridSceneSource:
             components=components,
             recipes=(recipe,),
             default_recipe_id=recipe.recipe_id,
-            provenance={"source": "synthetic", "purpose": "scene-contract"},
+            provenance={
+                "source": "synthetic",
+                "purpose": "scene-contract",
+                "pixel_area_sr": self.pixel_area_sr,
+            },
             access=SceneAccess(
                 mode="slice",
                 protocol_version="mobula.scene-source/v2",
                 full_render=False,
                 plane_axes=("x", "y"),
                 sample_modes=("single", "mean", "std", "rel_uncert"),
+                profiles=SceneProfileAccess(
+                    axes=("t", "nu"),
+                    plane_axes=("x", "y"),
+                    reductions=(
+                        SceneProfileReduction("integral", "flux_density", "Jy"),
+                        SceneProfileReduction("mean", "surface_brightness", "Jy/sr"),
+                    ),
+                    include_members=True,
+                    max_output_values=65536,
+                ),
             ),
         )
         descriptor.validate()
@@ -284,6 +307,77 @@ class SyntheticHybridSceneSource:
             intensity_unit="1" if request.sample_mode == "rel_uncert" else "Jy/sr",
             wcs={"frame": "synthetic"},
             provenance={"source": "synthetic-sparse-scene"},
+        )
+
+    async def render_profiles(self, request: SceneProfilesRequest) -> RenderedSceneProfiles:
+        """Reduce one bounded plane at a time without constructing a presentation cube."""
+        request.validate()
+        if request.recipe_id != self._descriptor.default_recipe_id:
+            raise KeyError(f"recipe '{request.recipe_id}' not found")
+        if request.plane_axes != ("x", "y"):
+            raise ValueError("synthetic Scene supports only x/y profiles")
+        if set(request.profile_axes) - {"t", "nu"}:
+            raise ValueError("synthetic Scene supports only time and frequency profiles")
+        if set(request.selections) != {"t", "nu"}:
+            raise ValueError("synthetic Scene profiles require exact time and frequency selections")
+        if request.spatial_reduction not in {"mean", "integral"}:
+            raise ValueError("unsupported synthetic profile reduction")
+
+        x0, x1 = request.spatial_window["x"]
+        y0, y1 = request.spatial_window["y"]
+        profiles: dict[str, RenderedSceneProfileSeries] = {}
+        coords_by_axis = {"t": self._time, "nu": self._frequency}
+        sizes = {axis: int(values.size) for axis, values in coords_by_axis.items()}
+        for axis in request.profile_axes:
+            member_values = np.empty((self._sample.size, sizes[axis]), dtype=np.float64)
+            for sample in range(self._sample.size):
+                for profile_index in range(sizes[axis]):
+                    t = profile_index if axis == "t" else request.selections["t"]
+                    nu = profile_index if axis == "nu" else request.selections["nu"]
+                    plane = self._native_plane(request, sample, t, nu)
+                    region = np.asarray(plane[x0:x1, y0:y1], dtype=np.float64)
+                    member_values[sample, profile_index] = (
+                        float(np.sum(region, dtype=np.float64) * self.pixel_area_sr)
+                        if request.spatial_reduction == "integral"
+                        else float(np.mean(region, dtype=np.float64))
+                    )
+            profiles[axis] = RenderedSceneProfileSeries(
+                axis=axis,
+                axis_unit="s" if axis == "t" else "GHz",
+                coords=coords_by_axis[axis],
+                series_mean=np.mean(member_values, axis=0, dtype=np.float64),
+                series_std=np.std(member_values, axis=0, dtype=np.float64),
+                per_sample=(
+                    member_values
+                    if request.include_members
+                    else np.empty((0, sizes[axis]), dtype=np.float64)
+                ),
+                fixed_indices={key: value for key, value in request.selections.items() if key != axis},
+            )
+        output_count = sum(
+            int(series.series_mean.size + series.series_std.size + series.per_sample.size)
+            for series in profiles.values()
+        )
+        if output_count > request.max_output_values:
+            raise ValueError("synthetic Scene profile response exceeds max_output_values")
+        reduction = next(
+            item
+            for item in self._descriptor.access.profiles.reductions  # type: ignore[union-attr]
+            if item.reduction_id == request.spatial_reduction
+        )
+        target_id = request.component_id if request.target == "component" else "combined"
+        await asyncio.sleep(0)
+        return RenderedSceneProfiles(
+            scene_id=self.scene_id,
+            recipe_id=request.recipe_id,
+            target_kind=request.target,
+            target_id=str(target_id),
+            spatial_window=dict(request.spatial_window),
+            spatial_reduction=request.spatial_reduction,
+            pixel_count=int((x1 - x0) * (y1 - y0)),
+            value_quantity=reduction.value_quantity,
+            value_unit=reduction.value_unit,
+            profiles=profiles,
         )
 
 

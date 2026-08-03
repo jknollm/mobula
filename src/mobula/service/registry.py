@@ -8,16 +8,21 @@ from pathlib import Path
 from threading import Event, RLock
 from time import perf_counter
 
+import numpy as np
+
 from mobula.data.loaders import load_by_extension, pad_dataset_to_canonical
 from mobula.data.mock_cube import MockCubeConfig, describe_mock_dataset, generate_mock_dataset
 from mobula.data.scene import (
     CubeSceneSource,
     DenseSceneSource,
     PresentationRecipe,
+    ProfileSceneSource,
     RenderTargetKind,
     RenderedSceneLayer,
+    RenderedSceneProfiles,
     RenderedSceneSlice,
     SceneDescriptor,
+    SceneProfilesRequest,
     SceneRenderRequest,
     SceneSliceRequest,
     SceneSource,
@@ -286,6 +291,143 @@ class DatasetRegistry:
         expected_units = {axis: axes[axis].unit for axis in normalized.plane_axes}
         if rendered.plane_units != expected_units:
             raise ValueError("Scene slice plane units do not match the descriptor")
+        return rendered
+
+    async def render_scene_profiles(
+        self, data_id: str, request: SceneProfilesRequest
+    ) -> RenderedSceneProfiles:
+        """Evaluate bounded Scene profiles; slice and dense fallbacks are forbidden."""
+        view = self.scene_view(data_id)
+        if view is None:
+            raise KeyError(f"virtual Scene dataset '{data_id}' not found")
+        capability = view.descriptor.access.profiles
+        if view.descriptor.access.mode != "slice" or capability is None:
+            raise TypeError("Scene view does not advertise sparse profile access")
+        with self._lock:
+            source = self._scene_sources.get(view.scene_id)
+        if source is None or not isinstance(source, ProfileSceneSource):
+            raise TypeError("profile Scene source does not implement render_profiles")
+
+        request.validate()
+        axes = {axis.axis_id: axis for axis in view.descriptor.axes}
+        recipe_axes = set(view.recipe.presentation_axes)
+        requested_axes = set(request.profile_axes)
+        if requested_axes - recipe_axes:
+            raise ValueError("Scene profile axes are not part of the presentation")
+        if requested_axes - set(capability.axes):
+            raise ValueError("Scene source does not advertise the requested profile axes")
+        if requested_axes & set(request.plane_axes):
+            raise ValueError("Scene profile axes cannot also be spatial plane axes")
+        if request.plane_axes != capability.plane_axes:
+            raise ValueError("Scene source does not advertise the requested profile plane")
+        reductions = {item.reduction_id: item for item in capability.reductions}
+        reduction = reductions.get(request.spatial_reduction)
+        if reduction is None:
+            raise ValueError(f"Scene source does not advertise reduction '{request.spatial_reduction}'")
+        if request.include_members and not capability.include_members:
+            raise ValueError("Scene source does not advertise profile member series")
+        if request.max_output_values > capability.max_output_values:
+            raise ValueError("Scene profile request exceeds the advertised output bound")
+
+        normalized_window: dict[str, tuple[int, int]] = {}
+        for axis_id in request.plane_axes:
+            lo, hi = request.spatial_window[axis_id]
+            size = axes[axis_id].size
+            if lo < 0 or hi <= lo or hi > size:
+                raise ValueError(f"Scene profile window for '{axis_id}' is out of bounds")
+            normalized_window[axis_id] = (lo, hi)
+
+        expected_selection_axes = recipe_axes - set(request.plane_axes) - {"sample"}
+        if set(request.selections) != expected_selection_axes:
+            missing = sorted(expected_selection_axes - set(request.selections))
+            extra = sorted(set(request.selections) - expected_selection_axes)
+            raise ValueError(f"Scene profile selections mismatch (missing={missing}, extra={extra})")
+        selections: dict[str, int] = {}
+        for axis_id in view.recipe.presentation_axes:
+            if axis_id not in expected_selection_axes:
+                continue
+            index = request.selections[axis_id]
+            if index < 0 or index >= axes[axis_id].size:
+                raise ValueError(
+                    f"index for Scene axis '{axis_id}' out of bounds: {index} (size={axes[axis_id].size})"
+                )
+            selections[axis_id] = index
+
+        normalized = SceneProfilesRequest(
+            recipe_id=view.recipe_id,
+            target=view.target_kind,
+            component_id=view.target_id if view.target_kind == "component" else None,
+            profile_axes=request.profile_axes,
+            selections=selections,
+            plane_axes=request.plane_axes,
+            spatial_window=normalized_window,
+            spatial_reduction=request.spatial_reduction,
+            include_members=request.include_members,
+            max_output_values=request.max_output_values,
+        )
+        normalized.validate()
+        rendered = await source.render_profiles(normalized)
+        rendered.validate()
+
+        expected_target = normalized.component_id if normalized.target == "component" else "combined"
+        if (
+            rendered.scene_id != view.scene_id
+            or rendered.recipe_id != view.recipe_id
+            or rendered.target_kind != normalized.target
+            or rendered.target_id != expected_target
+        ):
+            raise ValueError("Scene profile identity does not match its virtual dataset")
+        if rendered.spatial_window != normalized.spatial_window:
+            raise ValueError("Scene profile spatial window does not match the request")
+        if rendered.spatial_reduction != normalized.spatial_reduction:
+            raise ValueError("Scene profile reduction does not match the request")
+        expected_pixel_count = int(np.prod([hi - lo for lo, hi in normalized.spatial_window.values()]))
+        if rendered.pixel_count != expected_pixel_count:
+            raise ValueError("Scene profile pixel count does not match its spatial window")
+        if rendered.value_quantity != reduction.value_quantity or rendered.value_unit != reduction.value_unit:
+            raise ValueError("Scene profile value semantics do not match the advertised reduction")
+        if set(rendered.profiles) != set(normalized.profile_axes):
+            raise ValueError("Scene source did not return exactly the requested profile axes")
+
+        output_values = 0
+        sample_size = axes["sample"].size if "sample" in recipe_axes else None
+        for axis_id, series in rendered.profiles.items():
+            axis = axes[axis_id]
+            coords = np.asarray(series.coords)
+            if series.axis_unit != axis.unit:
+                raise ValueError(f"Scene profile unit for '{axis_id}' does not match the descriptor")
+            if coords.size != axis.size:
+                raise ValueError(f"Scene profile for '{axis_id}' does not cover its complete descriptor axis")
+            if axis.coordinates is not None:
+                expected_coords = np.asarray(axis.coordinates)
+                if expected_coords.dtype.kind in {"f", "i", "u"} and coords.dtype.kind in {"f", "i", "u"}:
+                    if not np.allclose(coords.astype(float), expected_coords.astype(float), rtol=1e-10, atol=1e-12):
+                        raise ValueError(f"Scene profile coordinates for '{axis_id}' do not match the descriptor")
+                elif coords.tolist() != expected_coords.tolist():
+                    raise ValueError(f"Scene profile coordinates for '{axis_id}' do not match the descriptor")
+            elif axis.linear_coordinates is not None:
+                linear = axis.linear_coordinates
+                expected_coords = linear.start + linear.step * np.arange(linear.count)
+                if coords.dtype.kind not in {"f", "i", "u"} or not np.allclose(
+                    coords.astype(float), expected_coords, rtol=1e-10, atol=1e-12
+                ):
+                    raise ValueError(f"Scene profile coordinates for '{axis_id}' do not match the descriptor")
+            expected_fixed = {key: value for key, value in normalized.selections.items() if key != axis_id}
+            if series.fixed_indices != expected_fixed:
+                raise ValueError(f"Scene profile fixed indices for '{axis_id}' do not match the request")
+            member_count = int(np.asarray(series.per_sample).shape[0])
+            if normalized.include_members:
+                if sample_size is not None and axis_id != "sample" and member_count != sample_size:
+                    raise ValueError(f"Scene profile members for '{axis_id}' do not match the sample axis")
+            elif member_count != 0:
+                raise ValueError("Scene source returned member profiles that were not requested")
+            output_values += int(
+                np.asarray(series.series_mean).size
+                + np.asarray(series.series_std).size
+                + np.asarray(series.per_sample).size
+            )
+        if output_values > normalized.max_output_values:
+            raise ValueError("Scene profile response exceeds the requested output bound")
         return rendered
 
     async def render_scene(self, scene_id: str, request: SceneRenderRequest) -> RenderedSceneLayer:

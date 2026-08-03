@@ -3,6 +3,7 @@ from __future__ import annotations
 import platform
 import subprocess
 import tempfile
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -431,6 +432,11 @@ def _register_core_routes(router: APIRouter, registry: DatasetRegistry) -> None:
                     "pol_labels": pol_labels,
                     "sphere": None,
                     "scene_access": scene_view.descriptor.access.mode,
+                    "scene_profiles": (
+                        asdict(scene_view.descriptor.access.profiles)
+                        if scene_view.descriptor.access.profiles is not None
+                        else None
+                    ),
                 },
                 dataset_metrics={"cache": "descriptor", "load_ms": 0.0},
             )

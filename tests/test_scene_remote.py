@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mobula.cli import _build_serve_parser, _scene_viewer_url
-from mobula.data.scene import RenderedSceneLayer, SceneRenderRequest, SceneSliceRequest
+from mobula.data.scene import RenderedSceneLayer, SceneProfilesRequest, SceneRenderRequest, SceneSliceRequest
 from mobula.data.scene_remote import (
     SCENE_LAYER_MEDIA_TYPE,
     SCENE_SOURCE_PROTOCOL_VERSION,
@@ -22,8 +22,10 @@ from mobula.data.scene_remote import (
     RemoteSceneSource,
     RemoteSceneSourceError,
     decode_scene_layer_payload,
+    decode_scene_profiles_payload,
     decode_scene_slice_payload,
     encode_scene_layer_payload,
+    encode_scene_profiles_payload,
     encode_scene_slice_payload,
 )
 from mobula.data.scene_snapshot import SnapshotSceneSource, write_scene_snapshot
@@ -93,14 +95,28 @@ def _runtime_server(
             if not self._authorized():
                 self._send(401, b"unauthorized", "text/plain")
                 return
-            if self.path not in {"/render", "/slice"}:
+            if self.path not in {"/render", "/slice", "/profiles"}:
                 self._send(404, b"not found", "text/plain")
                 return
             assert self.headers.get("X-Mobula-Scene-Protocol") == SCENE_SOURCE_PROTOCOL_VERSION
             length = int(self.headers.get("Content-Length", "0"))
             envelope = json.loads(self.rfile.read(length).decode("utf-8"))
             assert envelope["protocol_version"] == SCENE_SOURCE_PROTOCOL_VERSION
-            if self.path == "/slice":
+            if self.path == "/profiles":
+                raw_request = envelope["request"]
+                request = SceneProfilesRequest(
+                    **{
+                        **raw_request,
+                        "profile_axes": tuple(raw_request["profile_axes"]),
+                        "plane_axes": tuple(raw_request["plane_axes"]),
+                        "spatial_window": {
+                            axis: tuple(bounds) for axis, bounds in raw_request["spatial_window"].items()
+                        },
+                    }
+                )
+                rendered = asyncio.run(source.render_profiles(request))
+                self._send(200, encode_scene_profiles_payload(rendered), "application/json")
+            elif self.path == "/slice":
                 request = SceneSliceRequest(
                     **{
                         **envelope["request"],
@@ -153,6 +169,49 @@ def test_remote_scene_source_fetches_only_the_requested_2d_slice() -> None:
         assert remote_slice.values.size <= 10
         assert remote_slice.selected_indices == {"t": 3, "nu": 1}
         np.testing.assert_allclose(remote_slice.values, local_slice.values)
+
+
+def test_remote_scene_source_fetches_one_batched_bounded_profile_request() -> None:
+    with _runtime_server() as (url, local_source):
+        remote = RemoteSceneSource(url, "test-secret", expected_scene_id="remote-hybrid")
+        request = SceneProfilesRequest(
+            recipe_id="combined-emission",
+            profile_axes=("t", "nu"),
+            selections={"t": 2, "nu": 1},
+            plane_axes=("x", "y"),
+            spatial_window={"x": (1, 5), "y": (2, 6)},
+            spatial_reduction="integral",
+            include_members=True,
+            max_output_values=64,
+        )
+        remote_profiles = asyncio.run(remote.render_profiles(request))
+        local_profiles = asyncio.run(local_source.render_profiles(request))
+        assert set(remote_profiles.profiles) == {"t", "nu"}
+        assert remote_profiles.value_quantity == "flux_density"
+        assert remote_profiles.value_unit == "Jy"
+        np.testing.assert_allclose(
+            remote_profiles.profiles["t"].per_sample,
+            local_profiles.profiles["t"].per_sample,
+        )
+
+
+def test_scene_profile_decoder_rejects_non_vector_summary() -> None:
+    source = SyntheticHybridSceneSource("profile-wire-rejection")
+    rendered = asyncio.run(
+        source.render_profiles(
+            SceneProfilesRequest(
+                recipe_id="combined-emission",
+                profile_axes=("t",),
+                selections={"t": 0, "nu": 0},
+                spatial_window={"x": (0, 2), "y": (0, 2)},
+                spatial_reduction="mean",
+            )
+        )
+    )
+    envelope = json.loads(encode_scene_profiles_payload(rendered).decode("utf-8"))
+    envelope["result"]["profiles"]["t"]["series_mean"] = [[1.0, 2.0]]
+    with pytest.raises(RemoteSceneSourceError, match="one-dimensional"):
+        decode_scene_profiles_payload(json.dumps(envelope).encode("utf-8"))
 
 
 def test_scene_slice_decoder_rejects_dense_payload() -> None:
@@ -214,6 +273,21 @@ def test_remote_app_factory_registers_source_lazily() -> None:
             )
             assert sliced.status_code == 200
             assert sliced.json()["shape"] == [7, 6]
+            profiled = client.post(
+                f"/api/datasets/{data_id}/profiles-plane",
+                json={
+                    "plane_x": "x",
+                    "plane_y": "y",
+                    "u0": 0,
+                    "u1": 7,
+                    "v0": 0,
+                    "v1": 6,
+                    "t": 0,
+                    "nu": 0,
+                },
+            )
+            assert profiled.status_code == 200
+            assert profiled.json()["value_unit"] == "Jy"
 
 
 def test_layer_wire_identity_distinguishes_component_named_combined(base_dataset) -> None:
