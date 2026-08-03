@@ -20,6 +20,7 @@ export function bindCanvasInteractions(ctx) {
     isSphereMode,
     isVolumeMode,
     navIndexFromEvent,
+    planeAxisFlipState,
     planeDims,
     profileCanvasForKind,
     profileForAxis,
@@ -373,9 +374,11 @@ export function bindCanvasInteractions(ctx) {
       const rect = els.canvas.getBoundingClientRect();
       const dxCanvas = (ev.clientX - state.panDrag.startClientX) * (els.canvas.width / Math.max(1, rect.width));
       const dyCanvas = (ev.clientY - state.panDrag.startClientY) * (els.canvas.height / Math.max(1, rect.height));
+      const { flipV } = typeof planeAxisFlipState === "function" ? planeAxisFlipState() : { flipV: false };
 
       state.view.u = state.panDrag.startU - (dxCanvas / Math.max(1e-6, state.panDrag.drawW)) * state.panDrag.spanW;
-      state.view.v = state.panDrag.startV - (dyCanvas / Math.max(1e-6, state.panDrag.drawH)) * state.panDrag.spanH;
+      const verticalDataDelta = (dyCanvas / Math.max(1e-6, state.panDrag.drawH)) * state.panDrag.spanH;
+      state.view.v = state.panDrag.startV + (flipV ? verticalDataDelta : -verticalDataDelta);
       getViewRect();
       if (typeof startVisibleUpdate === "function") startVisibleUpdate("pan-drag");
       drawFrameAndOverlays();

@@ -6,6 +6,9 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
 
 ## Dataset And Tab Switching
 
+- Mobula works at the origin root and under an owning application's path prefix. Static assets, API and binary requests,
+  and Scene launch URLs stay within the path from which the viewer page was opened.
+
 - Switching the dataset in the active tab resets dataset-scoped exploration state:
   - axis indices return to `0`
   - ROI selection, zoom state, profile zoom, hover probe, playback windows, and cached frames are cleared
@@ -98,6 +101,9 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
   - render FPS controls the number of in-between blend frames
 
 ## Spatial Modes And Guardrails
+
+- In a zoomed two-dimensional view, viewport panning tracks the pointer in both screen directions even when an axis is
+  displayed flipped. Panning changes only the viewport and does not change the data-axis/WCS orientation or ROI bounds.
 
 - Volume mode is only available for non-spherical datasets with a varying hidden spatial axis.
 - Sphere mode is only available when the dataset presents a valid HEALPix layout:

@@ -1,6 +1,6 @@
 import { createGpuRenderers } from "./app_gpu.js?v=20260306a";
-import { bindCanvasInteractions } from "./app_interactions.js?v=20260306a";
-import { fetchBinaryPayload as fetchBinaryPayloadBase, fetchJson as fetchJsonBase, createRequestBuilders } from "./app_requests.js?v=20260306a";
+import { bindCanvasInteractions } from "./app_interactions.js?v=20260803a";
+import { fetchBinaryPayload as fetchBinaryPayloadBase, fetchJson as fetchJsonBase, createRequestBuilders } from "./app_requests.js?v=20260803a";
 import { resetForDatasetChange, resetForPlaneChange, resetForSceneLayerChange } from "./app_state_transitions.js?v=20260803a";
 import {
   AXIS_CONTROL_DIMS,
@@ -15109,6 +15109,7 @@ async function init() {
     isSphereMode,
     isVolumeMode,
     navIndexFromEvent,
+    planeAxisFlipState,
     planeDims,
     profileCanvasForKind,
     profileForAxis,

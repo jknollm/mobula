@@ -12,6 +12,15 @@ function extractPerfHeaders(res) {
 
 const binaryTextDecoder = new TextDecoder();
 
+function applicationBaseUrl() {
+  return new URL(".", document.baseURI);
+}
+
+export function applicationUrl(url) {
+  if (typeof url !== "string" || !url.startsWith("/") || url.startsWith("//")) return url;
+  return new URL(url.slice(1), applicationBaseUrl()).toString();
+}
+
 function decodeScalarPayload(buffer) {
   if (!(buffer instanceof ArrayBuffer) || buffer.byteLength < 4) {
     throw new Error("invalid Mobula scalar payload");
@@ -88,8 +97,9 @@ export async function fetchJson(url, options) {
   const onPerf = typeof opts.onPerf === "function" ? opts.onPerf : null;
   delete opts.onPerf;
 
+  const requestUrl = applicationUrl(url);
   const fetchStartedAt = performance.now();
-  const res = await fetch(url, opts);
+  const res = await fetch(requestUrl, opts);
   const fetchMs = performance.now() - fetchStartedAt;
   const perfHeaders = extractPerfHeaders(res);
   if (!res.ok) {
@@ -126,7 +136,7 @@ export async function fetchJson(url, options) {
         ok: false,
         parseMs,
         status: res.status,
-        url,
+        url: requestUrl,
       });
     }
     throw new Error(`${res.status}: ${detail}`);
@@ -142,7 +152,7 @@ export async function fetchJson(url, options) {
       ok: true,
       parseMs,
       status: res.status,
-      url,
+      url: requestUrl,
     });
   }
   return body;
@@ -153,8 +163,9 @@ export async function fetchBinaryPayload(url, options) {
   const onPerf = typeof opts.onPerf === "function" ? opts.onPerf : null;
   delete opts.onPerf;
 
+  const requestUrl = applicationUrl(url);
   const fetchStartedAt = performance.now();
-  const res = await fetch(url, opts);
+  const res = await fetch(requestUrl, opts);
   const fetchMs = performance.now() - fetchStartedAt;
   const perfHeaders = extractPerfHeaders(res);
   if (!res.ok) {
@@ -176,7 +187,7 @@ export async function fetchBinaryPayload(url, options) {
         ok: false,
         parseMs,
         status: res.status,
-        url,
+        url: requestUrl,
       });
     }
     throw new Error(`${res.status}: ${detail}`);
@@ -194,7 +205,7 @@ export async function fetchBinaryPayload(url, options) {
       ok: true,
       parseMs,
       status: res.status,
-      url,
+      url: requestUrl,
     });
   }
   return body;

@@ -26,6 +26,7 @@ from mobula.data.synthetic_scene import SyntheticHybridSceneSource
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
+BROWSER_TESTS = ROOT / "tests" / "browser"
 
 
 def _free_port() -> int:
@@ -73,6 +74,56 @@ def app_url() -> Iterator[str]:
             except httpx.HTTPError:
                 time.sleep(0.2)
         raise RuntimeError("timed out waiting for local mobula server")
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5.0)
+
+
+@pytest.fixture(scope="session")
+def base_path_app_url() -> Iterator[str]:
+    pytest.importorskip("playwright.sync_api")
+
+    env = os.environ.copy()
+    python_paths = [str(SRC), str(BROWSER_TESTS)]
+    if env.get("PYTHONPATH"):
+        python_paths.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(python_paths)
+    port = _free_port()
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "base_path_app:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ],
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    origin = f"http://127.0.0.1:{port}"
+    base_url = f"{origin}/mobula/opaque-job-id"
+    deadline = time.time() + 30.0
+    try:
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                raise RuntimeError(f"base-path uvicorn exited early with code {proc.returncode}")
+            try:
+                if httpx.get(f"{base_url}/api/health", timeout=1.0).status_code == 200:
+                    yield base_url
+                    return
+            except httpx.HTTPError:
+                time.sleep(0.2)
+        raise RuntimeError("timed out waiting for base-path Mobula service")
     finally:
         proc.terminate()
         try:
@@ -348,6 +399,27 @@ def test_app_loads(page: object, app_url: str) -> None:
     assert page.locator("#sliceCanvas:visible").first.is_visible()
     option_count = page.locator("#datasetSelect option").count()
     assert option_count > 1
+
+
+@pytest.mark.browser
+def test_app_loads_assets_and_binary_data_under_a_path_prefix(
+    page: object,
+    base_path_app_url: str,
+) -> None:
+    requested_urls: list[str] = []
+    failed_urls: list[str] = []
+    page.on("request", lambda request: requested_urls.append(request.url))
+    page.on("requestfailed", lambda request: failed_urls.append(request.url))
+
+    _wait_ui_ready(page, f"{base_path_app_url}/?scene_id=cube%3Amovie-2d-pol-hd")
+    _wait_for_canvas_foreground(page, "#sliceCanvas")
+
+    same_origin_urls = [url for url in requested_urls if url.startswith(base_path_app_url.split("/mobula/")[0])]
+    assert same_origin_urls
+    assert all("/mobula/opaque-job-id/" in url for url in same_origin_urls)
+    assert any("/mobula/opaque-job-id/static/app.js" in url for url in requested_urls)
+    assert any("/mobula/opaque-job-id/api/datasets/" in url and "/slice?" in url for url in requested_urls)
+    assert failed_urls == []
 
 
 @pytest.mark.browser
@@ -836,3 +908,36 @@ def test_resolve_tangent_plane_metadata_defaults_to_north_up(page: object, app_u
     page.wait_for_function(
         "() => document.querySelector('#axisSettingsBtn')?.textContent === 'Axis Settings (1)'"
     )
+
+
+@pytest.mark.browser
+def test_vertical_pan_tracks_pointer_with_north_up_axis(page: object, app_url: str) -> None:
+    def add_resolve_orientation(route: object) -> None:
+        response = route.fetch()
+        payload = response.json()
+        payload.setdefault("wcs", {})["axis_orientation"] = "resolve_tangent_plane_v1"
+        route.fulfill(response=response, json=payload)
+
+    page.route("**/api/datasets/*/meta", add_resolve_orientation)
+    _wait_ui_ready(page, app_url)
+    _choose_dataset(page, "movie-2d-pol-hd")
+
+    canvas = page.locator("#sliceCanvas:visible").first
+    box = canvas.bounding_box()
+    assert box is not None
+    center_x = box["x"] + box["width"] * 0.5
+    center_y = box["y"] + box["height"] * 0.5
+    page.mouse.move(center_x, center_y)
+    page.mouse.wheel(0, -600)
+    page.wait_for_function(
+        "() => { const v = window.__mobulaDebug.getStateSnapshot().view; return v.h > 0 && v.h < 144; }"
+    )
+    view_before = _debug_state(page)["view"]
+
+    page.mouse.move(center_x, center_y)
+    page.mouse.down()
+    page.mouse.move(center_x, center_y - box["height"] * 0.12, steps=12)
+    page.mouse.up()
+    view_after = _debug_state(page)["view"]
+
+    assert view_after["v"] < view_before["v"]

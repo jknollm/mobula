@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import quote
 
 import numpy as np
-from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 
 from mobula.data.scene import SceneRenderRequest, SceneValidationError
 from mobula.data.scene_snapshot import SnapshotSceneSource
@@ -26,6 +26,17 @@ from mobula.service.perf import timed_json_response
 from mobula.service.registry import DatasetRegistry
 
 SUPPORTED_LOCAL_DATASET_EXTS = {".h5", ".hdf5", ".fits", ".fit", ".fts", ".npz", ".zarr"}
+
+
+def _request_root_path(request: Request) -> str:
+    forwarded = str(request.headers.get("x-forwarded-prefix", "")).strip()
+    if (
+        forwarded.startswith("/")
+        and not forwarded.startswith("//")
+        and not any(char in forwarded for char in "\\\r\n?#")
+    ):
+        return forwarded.rstrip("/")
+    return str(request.scope.get("root_path", "")).rstrip("/")
 
 
 def _is_loadable_local_dataset(path: Path) -> bool:
@@ -165,17 +176,18 @@ def _register_core_routes(router: APIRouter, registry: DatasetRegistry) -> None:
         }
 
     @router.post("/scenes/register-snapshot")
-    async def register_scene_snapshot(req: RegisterSceneSnapshotRequest) -> dict[str, Any]:
+    async def register_scene_snapshot(req: RegisterSceneSnapshotRequest, request: Request) -> dict[str, Any]:
         try:
             source = SnapshotSceneSource(req.path)
             descriptor = await source.describe_scene()
             registry.add_scene_source(descriptor.scene_id, source)
         except (OSError, ValueError, KeyError) as exc:
             raise HTTPException(status_code=400, detail=f"failed to register Scene snapshot: {exc}") from exc
+        root_path = _request_root_path(request)
         return {
             "scene_id": descriptor.scene_id,
             "title": descriptor.title,
-            "launch_url": f"/?scene_id={quote(descriptor.scene_id, safe='')}",
+            "launch_url": f"{root_path}/?scene_id={quote(descriptor.scene_id, safe='')}",
         }
 
     @router.get("/scenes/{scene_id:path}")
