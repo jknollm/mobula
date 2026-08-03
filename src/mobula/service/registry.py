@@ -9,6 +9,14 @@ from time import perf_counter
 
 from mobula.data.loaders import load_by_extension, pad_dataset_to_canonical
 from mobula.data.mock_cube import MockCubeConfig, describe_mock_dataset, generate_mock_dataset
+from mobula.data.scene import (
+    CubeSceneSource,
+    RenderedSceneLayer,
+    SceneDescriptor,
+    SceneRenderRequest,
+    SceneSource,
+    cube_scene_descriptor,
+)
 from mobula.data.schema import CubeDataset
 from mobula.paths import default_seeded_manifest_path
 
@@ -66,6 +74,8 @@ class DatasetRegistry:
         self._lazy_datasets: dict[str, tuple[DatasetSummary, Callable[[], CubeDataset]]] = {}
         self._lazy_metadata: dict[str, Callable[[], dict[str, object]]] = {}
         self._pending_loads: dict[str, _PendingDatasetLoad] = {}
+        self._scene_sources: dict[str, SceneSource] = {}
+        self._scene_materializations: dict[str, tuple[SceneDescriptor, str, str]] = {}
         default_manifest = default_seeded_manifest_path()
         self._seeded_manifest_path = Path(seeded_manifest_path).expanduser().resolve() if seeded_manifest_path else default_manifest
         self._register_lazy_defaults()
@@ -75,6 +85,77 @@ class DatasetRegistry:
         dataset.validate()
         with self._lock:
             self._datasets[dataset.data_id] = dataset
+
+    def add_scene_source(self, scene_id: str, source: SceneSource) -> None:
+        """Register an asynchronous Scene source without evaluating it."""
+        if not scene_id:
+            raise ValueError("scene_id must not be empty")
+        if not isinstance(source, SceneSource):
+            raise TypeError("source does not implement the SceneSource protocol")
+        with self._lock:
+            if scene_id in self._scene_sources:
+                raise ValueError(f"scene source '{scene_id}' is already registered")
+            self._scene_sources[scene_id] = source
+
+    async def list_scenes(self) -> list[SceneDescriptor]:
+        with self._lock:
+            sources = list(self._scene_sources.items())
+        descriptors: list[SceneDescriptor] = []
+        for scene_id, source in sources:
+            descriptor = await source.describe_scene()
+            descriptor.validate()
+            if descriptor.scene_id != scene_id:
+                raise ValueError(
+                    f"scene source registered as '{scene_id}' described itself as '{descriptor.scene_id}'"
+                )
+            descriptors.append(descriptor)
+        return descriptors
+
+    async def scene_descriptor(self, scene_id: str) -> SceneDescriptor:
+        if scene_id.startswith("cube:"):
+            dataset = self.get(scene_id.removeprefix("cube:"))
+            return cube_scene_descriptor(dataset)
+        with self._lock:
+            source = self._scene_sources.get(scene_id)
+        if source is None:
+            raise KeyError(f"scene '{scene_id}' not found")
+        descriptor = await source.describe_scene()
+        descriptor.validate()
+        return descriptor
+
+    async def render_scene(self, scene_id: str, request: SceneRenderRequest) -> RenderedSceneLayer:
+        if scene_id.startswith("cube:"):
+            source: SceneSource = CubeSceneSource(self.get(scene_id.removeprefix("cube:")))
+        else:
+            with self._lock:
+                source = self._scene_sources.get(scene_id)  # type: ignore[assignment]
+            if source is None:
+                raise KeyError(f"scene '{scene_id}' not found")
+        descriptor = await source.describe_scene()
+        descriptor.validate()
+        rendered = await source.render_layer(request)
+        rendered.dataset.validate()
+        if rendered.scene_id != descriptor.scene_id:
+            raise ValueError("rendered layer scene_id does not match its source descriptor")
+        self.add(rendered.dataset)
+        with self._lock:
+            self._scene_materializations[rendered.dataset.data_id] = (
+                descriptor,
+                rendered.recipe_id,
+                rendered.target_id,
+            )
+        return rendered
+
+    def scene_context_for_dataset(self, data_id: str) -> tuple[SceneDescriptor, str, str] | None:
+        with self._lock:
+            materialized = self._scene_materializations.get(data_id)
+            dataset = self._datasets.get(data_id)
+        if materialized is not None:
+            return materialized
+        if dataset is None:
+            return None
+        descriptor = cube_scene_descriptor(dataset)
+        return descriptor, descriptor.default_recipe_id, "combined"
 
     def get(self, data_id: str) -> CubeDataset:
         dataset, _ = self.get_with_stats(data_id)

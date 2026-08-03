@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 import platform
-from pathlib import Path
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 
+from mobula.data.scene import SceneRenderRequest, SceneValidationError
+from mobula.data.scene_snapshot import SnapshotSceneSource
 from mobula.service.acceleration.capabilities import probe_compute_capabilities
-from mobula.service.api_models import LoadLocalRequest, PickLocalPathRequest
-from mobula.service.api_utils import _coords_summary, _dim_size, _safe_dataset, _safe_dataset_with_perf, _sphere_summary
+from mobula.service.api_models import (
+    LoadLocalRequest,
+    PickLocalPathRequest,
+    RegisterSceneSnapshotRequest,
+    RenderSceneRequest,
+)
+from mobula.service.api_utils import _coords_summary, _dim_size, _safe_dataset_with_perf, _sphere_summary
 from mobula.service.perf import timed_json_response
 from mobula.service.registry import DatasetRegistry
 
@@ -136,6 +144,85 @@ def _register_core_routes(router: APIRouter, registry: DatasetRegistry) -> None:
                 }
                 for s in registry.list()
             ]
+        }
+
+    @router.get("/scenes")
+    async def list_scenes() -> dict[str, Any]:
+        descriptors = await registry.list_scenes()
+        return {
+            "scenes": [
+                {
+                    "scene_id": descriptor.scene_id,
+                    "title": descriptor.title,
+                    "schema_version": descriptor.schema_version,
+                    "default_recipe_id": descriptor.default_recipe_id,
+                }
+                for descriptor in descriptors
+            ]
+        }
+
+    @router.post("/scenes/register-snapshot")
+    async def register_scene_snapshot(req: RegisterSceneSnapshotRequest) -> dict[str, Any]:
+        try:
+            source = SnapshotSceneSource(req.path)
+            descriptor = await source.describe_scene()
+            registry.add_scene_source(descriptor.scene_id, source)
+        except (OSError, ValueError, KeyError) as exc:
+            raise HTTPException(status_code=400, detail=f"failed to register Scene snapshot: {exc}") from exc
+        return {
+            "scene_id": descriptor.scene_id,
+            "title": descriptor.title,
+            "launch_url": f"/?scene_id={quote(descriptor.scene_id, safe='')}",
+        }
+
+    @router.get("/scenes/{scene_id:path}")
+    async def scene_descriptor(scene_id: str) -> dict[str, Any]:
+        try:
+            descriptor = await registry.scene_descriptor(scene_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return descriptor.to_dict()
+
+    @router.post("/scenes/{scene_id:path}/render")
+    async def render_scene(scene_id: str, req: RenderSceneRequest) -> dict[str, Any]:
+        request = SceneRenderRequest(
+            recipe_id=req.recipe_id,
+            target=req.target,
+            component_id=req.component_id,
+            exploration_indices=dict(req.exploration_indices),
+            spatial_window=dict(req.spatial_window),
+            sample_mode=req.sample_mode,
+        )
+        try:
+            rendered = await registry.render_scene(scene_id, request)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (SceneValidationError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "scene_id": rendered.scene_id,
+            "recipe_id": rendered.recipe_id,
+            "target_id": rendered.target_id,
+            "data_id": rendered.dataset.data_id,
+            "dims": list(rendered.dataset.dims),
+            "shape": list(rendered.dataset.shape),
+            "intensity_unit": rendered.dataset.intensity_unit,
+        }
+
+    @router.get("/datasets/{data_id}/scene")
+    def dataset_scene(data_id: str) -> dict[str, Any]:
+        try:
+            dataset = registry.get(data_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"dataset '{data_id}' not found") from exc
+        context = registry.scene_context_for_dataset(dataset.data_id)
+        if context is None:
+            raise HTTPException(status_code=404, detail=f"dataset '{data_id}' has no Scene context")
+        descriptor, recipe_id, target_id = context
+        return {
+            "descriptor": descriptor.to_dict(),
+            "active_recipe_id": recipe_id,
+            "active_target_id": target_id,
         }
 
     @router.get("/acceleration/capabilities")

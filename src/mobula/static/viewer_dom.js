@@ -18,6 +18,8 @@ export function lookupViewerElements(doc = document) {
     datasetTabs: byId("datasetTabs"),
 
     datasetSelect: byId("datasetSelect"),
+    sceneLayerLabel: byId("sceneLayerLabel"),
+    sceneLayerSelect: byId("sceneLayerSelect"),
     systemPickerBtn: byId("systemPickerBtn"),
     systemPickerStatus: byId("systemPickerStatus"),
     ingestDialog: byId("ingestDialog"),

@@ -147,3 +147,22 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
 - HEALPix explicit pixel-index export is supported for HDF5 saves.
 - Snapshot and movie save flows operate on the currently rendered viewer state rather than recomputing a separate interpretation.
 - Export actions should fail with explicit messages when a format or mode combination is unsupported.
+
+## Structured Scenes
+
+- A Mobula Scene is a versioned hierarchy of stable component identities. Components declare their representation kind,
+  native fields and domains, and an explicit mapping to the Scene's exploration axes.
+- The initially supported component kinds are raster fields, point sources, and component groups. Unknown future kinds
+  may remain described by a provider, but must not be silently interpreted as a supported renderer.
+- Missing axes are explicit invariants. In particular, moving through time in a combined Scene keeps a component with an
+  invariant time mapping constant instead of requiring that component to store repeated time planes.
+- Presentation recipes explicitly name their axes, participating component layers, output quantity/unit, renderers, and
+  composition rule. Mobula does not infer scientific projection or unit-conversion rules from array shapes.
+- A Scene session offers its combined presentation and renderable component layers through one `Scene Layer` control.
+  Switching layers preserves compatible analytical context, including current axis positions, ROI, zoom, and
+  normalization; only values and analyses derived from the previous layer are refreshed.
+- Scene descriptions and layer evaluation use an asynchronous source contract. Existing `CubeDataset` inputs remain
+  supported as one-component raster Scenes without changing their existing data, slice, profile, or export APIs.
+- `mobula --scene-snapshot PATH` accepts the local `mobula.scene-snapshot/v1` JSON+NPZ handoff, starts the normal local
+  service, and opens its default combined Scene. The snapshot is a launch handoff and does not imply a Zarr dependency
+  or a requirement to persist every scientific component on one common native domain.

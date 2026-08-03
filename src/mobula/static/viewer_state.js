@@ -252,6 +252,7 @@ export function normalizeVolumeRotateAxisObject(raw) {
 export function createViewerState() {
   return {
     dataId: null,
+    sceneSession: null,
     pickerStatusMessage: "",
     pickerStatusError: false,
     meta: null,

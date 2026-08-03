@@ -16,6 +16,19 @@ class PickLocalPathRequest(BaseModel):
     target: Literal["file", "folder"] = "file"
 
 
+class RenderSceneRequest(BaseModel):
+    recipe_id: str
+    target: Literal["combined", "component"] = "combined"
+    component_id: str | None = None
+    exploration_indices: dict[str, int] = Field(default_factory=dict)
+    spatial_window: dict[str, tuple[int, int]] = Field(default_factory=dict)
+    sample_mode: str = "single"
+
+
+class RegisterSceneSnapshotRequest(BaseModel):
+    path: str
+
+
 class RoiStatsRequest(BaseModel):
     x0: int = Field(ge=0)
     x1: int = Field(gt=0)

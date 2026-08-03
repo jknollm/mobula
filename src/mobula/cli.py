@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import threading
 import webbrowser
 from pathlib import Path
+from urllib.parse import quote
 
 import uvicorn
 
@@ -28,6 +30,11 @@ def _build_serve_parser() -> argparse.ArgumentParser:
         default=str(default_data_dir()),
         help="base data directory for seeded local datasets (default: ~/.mobula/data)",
     )
+    parser.add_argument(
+        "--scene-snapshot",
+        help="register a local mobula.scene-snapshot/v1 JSON manifest and open its Scene",
+    )
+    parser.add_argument("--initial-scene", help="open this already registered Scene id")
     return parser
 
 
@@ -50,8 +57,26 @@ def _run_serve(argv: list[str]) -> None:
     os.environ["MOBULA_DATA_DIR"] = str(Path(args.data_dir).expanduser().resolve())
     url_host = "127.0.0.1" if args.host in ("0.0.0.0", "::") else args.host
     url = f"http://{url_host}:{args.port}"
+    snapshot_path: Path | None = None
+    snapshot_scene_id = ""
+    if args.scene_snapshot:
+        snapshot_path = Path(args.scene_snapshot).expanduser().resolve()
+        payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        snapshot_scene_id = str(payload.get("descriptor", {}).get("scene_id", "")).strip()
+        if not snapshot_scene_id:
+            parser.error("Scene snapshot descriptor has no scene_id")
+    initial_scene_id = str(args.initial_scene or snapshot_scene_id).strip()
+    if initial_scene_id:
+        url = f"{url}/?scene_id={quote(initial_scene_id, safe='')}"
+    if snapshot_path is not None and args.reload:
+        parser.error("--reload cannot be combined with --scene-snapshot")
     threading.Timer(0.8, lambda: webbrowser.open_new_tab(url)).start()
-    uvicorn.run("mobula.main:app", host=args.host, port=args.port, reload=args.reload)
+    if snapshot_path is None:
+        uvicorn.run("mobula.main:app", host=args.host, port=args.port, reload=args.reload)
+        return
+    from mobula.main import create_app
+
+    uvicorn.run(create_app(scene_snapshot=snapshot_path), host=args.host, port=args.port, reload=False)
 
 
 def _run_install_acceleration(argv: list[str]) -> int:

@@ -117,3 +117,35 @@ export function resetForDatasetChange(state) {
     state.sampleMorph.blendCanvas = null;
   }
 }
+
+export function resetForSceneLayerChange(state) {
+  // A layer pivot keeps analytical context (indices, ROI, zoom and normalization)
+  // while invalidating values derived from the previously rendered layer.
+  state.evpaTicks = [];
+  state.evpaTicksBySample = {};
+  state.currentMonoSlice = null;
+  state.currentMonoSliceTiles = null;
+  state.currentVolume = null;
+  state.currentVolumeTiles = null;
+  state.currentMultispectralBands = null;
+  state.currentMultispectralSlice = null;
+  state.currentMultispectralTiles = null;
+  state.currentIntensityStats = null;
+  state.currentIntensityUnit = "";
+  state.frameCanvas = null;
+  state.frameTiles = null;
+  state.drawTiles = [];
+  state.hoverProbe = null;
+  state.profiles = null;
+  state.viewProfiles = null;
+  if (state.sampleMorph) {
+    state.sampleMorph.token = (state.sampleMorph.token || 0) + 1;
+    state.sampleMorph.fromSlice = null;
+    state.sampleMorph.toSlice = null;
+    state.sampleMorph.fromVolume = null;
+    state.sampleMorph.toVolume = null;
+    state.sampleMorph.fromCanvas = null;
+    state.sampleMorph.toCanvas = null;
+    state.sampleMorph.blendCanvas = null;
+  }
+}

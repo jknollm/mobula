@@ -396,3 +396,40 @@ Common `400` examples:
 - `index for dim 'nu' out of bounds: ...`
 - `plane_x and plane_y must be different`
 - `pixel_indices export requires plane_x='x'`
+
+# Structured Scene API
+
+Mobula accepts structured, asynchronous Scene providers through the Python `SceneSource` protocol:
+
+```python
+async def describe_scene() -> SceneDescriptor: ...
+async def render_layer(request: SceneRenderRequest) -> RenderedSceneLayer: ...
+```
+
+Register a provider with `DatasetRegistry.add_scene_source(scene_id, source)`. The source remains responsible for
+scientific evaluation, domain projection, unit conversion, and composition. A rendered layer uses `CubeDataset` as the
+presentation contract so all existing Mobula slice, profile, and export behavior remains available.
+
+For a process boundary, use `write_scene_snapshot(...)` or produce the equivalent two-file
+`mobula.scene-snapshot/v1` handoff:
+
+- JSON manifest: `snapshot_version`, the full `mobula.scene/v1` descriptor, a relative `values_path`, and layer records
+  keyed as `<recipe_id>:combined` or `<recipe_id>:<component_id>`.
+- NPZ values: each layer's value array and one coordinate array per presentation dimension, referenced by key from the
+  manifest. An optional mask key is supported.
+
+Launch it directly with:
+
+```text
+mobula --scene-snapshot /absolute/path/to/scene.json
+```
+
+The app factory equivalent is `create_app(scene_snapshot=path)`. A running local service can also register a snapshot
+with `POST /api/scenes/register-snapshot` and a JSON body containing `{"path": "/absolute/path/to/scene.json"}`.
+
+Scene endpoints are:
+
+- `GET /api/scenes`
+- `GET /api/scenes/{scene_id}`
+- `POST /api/scenes/{scene_id}/render`
+- `GET /api/datasets/{data_id}/scene`

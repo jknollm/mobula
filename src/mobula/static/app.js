@@ -1,7 +1,7 @@
 import { createGpuRenderers } from "./app_gpu.js?v=20260306a";
 import { bindCanvasInteractions } from "./app_interactions.js?v=20260306a";
 import { fetchBinaryPayload as fetchBinaryPayloadBase, fetchJson as fetchJsonBase, createRequestBuilders } from "./app_requests.js?v=20260306a";
-import { resetForDatasetChange, resetForPlaneChange } from "./app_state_transitions.js?v=20260306a";
+import { resetForDatasetChange, resetForPlaneChange, resetForSceneLayerChange } from "./app_state_transitions.js?v=20260803a";
 import {
   AXIS_CONTROL_DIMS,
   AXIS_DISPLAY_LABEL,
@@ -11236,9 +11236,143 @@ function activeDatasetTab() {
 }
 
 function tabLabelForState(tabSnapshot, fallbackLabel) {
+  const sceneTitle = String(tabSnapshot?.sceneSession?.descriptor?.title || "").trim();
+  if (sceneTitle) return sceneTitle;
   const dataId = String(tabSnapshot?.dataId || "").trim();
   if (!dataId) return String(fallbackLabel || "").trim() || "Untitled";
   return dataId;
+}
+
+function sceneLayerOptionValue(recipeId, targetId) {
+  return JSON.stringify({ recipeId, targetId });
+}
+
+function sceneLayerOptions(session) {
+  const descriptor = session?.descriptor;
+  if (!descriptor || String(descriptor.scene_id || "").startsWith("cube:")) return [];
+  const components = Array.isArray(descriptor.components) ? descriptor.components : [];
+  const titleById = new Map(components.map((component) => [component.component_id, component.title || component.component_id]));
+  const recipes = Array.isArray(descriptor.recipes) ? descriptor.recipes : [];
+  const options = [];
+  for (const recipe of recipes) {
+    const recipeId = String(recipe?.recipe_id || "");
+    if (!recipeId) continue;
+    const recipeTitle = String(recipe?.title || recipeId);
+    options.push({
+      value: sceneLayerOptionValue(recipeId, "combined"),
+      label: recipes.length > 1 ? `${recipeTitle} · Combined` : "Combined Scene",
+      recipeId,
+      targetId: "combined",
+    });
+    const seen = new Set();
+    for (const layer of Array.isArray(recipe.layers) ? recipe.layers : []) {
+      const componentId = String(layer?.component_id || "");
+      if (!componentId || seen.has(componentId)) continue;
+      seen.add(componentId);
+      const componentTitle = String(titleById.get(componentId) || componentId);
+      options.push({
+        value: sceneLayerOptionValue(recipeId, componentId),
+        label: recipes.length > 1 ? `${recipeTitle} · ${componentTitle}` : componentTitle,
+        recipeId,
+        targetId: componentId,
+      });
+    }
+  }
+  return options;
+}
+
+function renderSceneLayerOptions() {
+  if (!els.sceneLayerLabel || !els.sceneLayerSelect) return;
+  const options = sceneLayerOptions(state.sceneSession);
+  els.sceneLayerSelect.innerHTML = "";
+  els.sceneLayerLabel.hidden = options.length < 2;
+  if (options.length < 2) return;
+  for (const item of options) {
+    const option = document.createElement("option");
+    option.value = item.value;
+    option.textContent = item.label;
+    els.sceneLayerSelect.appendChild(option);
+  }
+  const activeRecipe = String(state.sceneSession?.active_recipe_id || "");
+  const activeTarget = String(state.sceneSession?.active_target_id || "combined");
+  const activeValue = sceneLayerOptionValue(activeRecipe, activeTarget);
+  if (options.some((item) => item.value === activeValue)) {
+    els.sceneLayerSelect.value = activeValue;
+  }
+}
+
+async function loadSceneContext(dataId) {
+  if (!dataId) {
+    state.sceneSession = null;
+    renderSceneLayerOptions();
+    return null;
+  }
+  try {
+    const context = await fetchJson(`/api/datasets/${encodeURIComponent(dataId)}/scene`);
+    state.sceneSession = context;
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    state.sceneSession = null;
+  }
+  renderSceneLayerOptions();
+  return state.sceneSession;
+}
+
+function ensureDatasetOption(summary) {
+  if (!els.datasetSelect || !summary?.data_id) return;
+  datasetSummaryById.set(summary.data_id, summary);
+  if (Array.from(els.datasetSelect.options).some((option) => option.value === summary.data_id)) return;
+  const option = document.createElement("option");
+  option.value = summary.data_id;
+  option.textContent = `${summary.data_id} (${summary.shape.join("x")})`;
+  els.datasetSelect.appendChild(option);
+}
+
+async function onSceneLayerChange() {
+  if (!state.sceneSession || !els.sceneLayerSelect?.value) return;
+  const epoch = activeEpoch() + 1;
+  bumpStateEpoch();
+  stopPlayback();
+  stopSampleMorphPlayback();
+  const previousDataId = state.dataId;
+  try {
+    const selected = JSON.parse(els.sceneLayerSelect.value);
+    const sceneId = String(state.sceneSession.descriptor?.scene_id || "");
+    if (!sceneId) return;
+    setSystemPickerStatus("Preparing Scene layer…");
+    const component = selected.targetId === "combined" ? null : selected.targetId;
+    const rendered = await fetchJson(`/api/scenes/${encodeURIComponent(sceneId)}/render`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipe_id: selected.recipeId,
+        target: component ? "component" : "combined",
+        component_id: component,
+      }),
+    });
+    assertEpoch(epoch);
+    ensureDatasetOption(rendered);
+    state.dataId = rendered.data_id;
+    els.datasetSelect.value = state.dataId;
+    resetForSceneLayerChange(state);
+    state.meta = await fetchJson(`/api/datasets/${encodeURIComponent(state.dataId)}/meta`);
+    assertEpoch(epoch);
+    await loadSceneContext(state.dataId);
+    assertEpoch(epoch);
+    state.sphereMeta = detectSphereMeta(state.meta);
+    updateControlCaps();
+    await refreshSlice();
+    if (state.selection) await refreshSelectionAnalytics();
+    else drawSelectionGraphs();
+    refreshActiveTabLabel();
+    setSystemPickerStatus("");
+  } catch (err) {
+    if (isAbortError(err)) return;
+    state.dataId = previousDataId;
+    els.datasetSelect.value = previousDataId || "";
+    renderSceneLayerOptions();
+    setSystemPickerStatus(`Scene layer failed: ${err.message}`, true);
+  }
 }
 
 function syncActiveTabSnapshot() {
@@ -11342,6 +11476,7 @@ function syncUiToState() {
   if (els.sampleMorphDeltaSelect) els.sampleMorphDeltaSelect.value = String(state.sampleMorphDeltaT);
   if (els.coordSystemSelect) els.coordSystemSelect.value = state.coordSystem;
   setSystemPickerStatus(state.pickerStatusMessage || "", Boolean(state.pickerStatusError));
+  renderSceneLayerOptions();
 }
 
 async function activateDatasetTab(tabId) {
@@ -11369,6 +11504,10 @@ async function activateDatasetTab(tabId) {
         }
         return;
       }
+    }
+
+    if (state.dataId && !state.sceneSession) {
+      await loadSceneContext(state.dataId);
     }
 
     if (state.dataId) {
@@ -11493,6 +11632,27 @@ async function refreshDatasetOptions(preferredDataId = null) {
   const nextDataId = selected && ids.has(selected) ? selected : "";
   els.datasetSelect.value = nextDataId;
   return { datasets: visibleDatasets };
+}
+
+async function prepareInitialSceneLaunch() {
+  const params = new URLSearchParams(window.location.search);
+  const sceneId = String(params.get("scene_id") || "").trim();
+  if (!sceneId) return;
+  const descriptor = await fetchJson(`/api/scenes/${encodeURIComponent(sceneId)}`);
+  const recipeId = String(params.get("recipe_id") || descriptor.default_recipe_id || "").trim();
+  const componentId = String(params.get("component_id") || "").trim();
+  const rendered = await fetchJson(`/api/scenes/${encodeURIComponent(sceneId)}/render`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      recipe_id: recipeId,
+      target: componentId ? "component" : "combined",
+      component_id: componentId || null,
+    }),
+  });
+  await refreshDatasetOptions(rendered.data_id);
+  ensureDatasetOption(rendered);
+  els.datasetSelect.value = rendered.data_id;
 }
 
 function setSystemPickerStatus(message, isError = false) {
@@ -13716,6 +13876,7 @@ async function onDatasetChange() {
     if (!selectedId) {
       state.dataId = null;
       state.meta = null;
+      state.sceneSession = null;
       resetForDatasetChange(state);
       state.axisSettings = createDefaultAxisSettings();
       state.axisPlaneSwap = createDefaultAxisPlaneSwap();
@@ -13734,6 +13895,8 @@ async function onDatasetChange() {
     }
 
     state.dataId = selectedId;
+    state.sceneSession = null;
+    renderSceneLayerOptions();
     refreshActiveTabLabel();
     setSystemPickerStatus("");
     const summary = datasetSummaryById.get(state.dataId) || null;
@@ -13774,6 +13937,8 @@ async function onDatasetChange() {
     const fullMeta = await metaPromise;
     assertEpoch(expectedEpoch);
     state.meta = fullMeta;
+    await loadSceneContext(state.dataId);
+    assertEpoch(expectedEpoch);
     state.sphereMeta = detectSphereMeta(state.meta);
     updateControlCaps();
     await slicePromise;
@@ -13793,6 +13958,7 @@ async function init() {
   }
 
   await refreshDatasetOptions();
+  await prepareInitialSceneLaunch();
   await loadAccelerationCapabilities();
   syncUiToState();
   updateModeButtonTooltips();
@@ -13811,6 +13977,11 @@ async function init() {
 
   installDatasetDropHandlers();
   els.datasetSelect.addEventListener("change", onDatasetChange);
+  if (els.sceneLayerSelect) {
+    els.sceneLayerSelect.addEventListener("change", () => {
+      void onSceneLayerChange();
+    });
+  }
   els.systemPickerBtn.addEventListener("click", () => pickPathWithSystemDialog());
   if (els.ingestCancelBtn) {
     els.ingestCancelBtn.addEventListener("click", () => {
