@@ -1901,7 +1901,6 @@ function setSphereProjection(mode) {
 
 function canUseMultiSpectral() {
   return (
-    !isSparseSceneView() &&
     axisSize("nu") >= 3 &&
     state.sampleMode !== "rel_uncert" &&
     !isDerivedPolModeActive() &&
@@ -5959,9 +5958,7 @@ function updateControlCaps() {
   state.multiSpectralNormalizeBoost = normalizeMultispectralNormalizeBoost(state.multiSpectralNormalizeBoost);
   state.multiSpectralChannelRange = normalizeMultispectralChannelRange(state.multiSpectralChannelRange);
   els.multiSpectralBtn.disabled = !msAvailable;
-  els.multiSpectralBtn.title = isSparseSceneView()
-    ? "Multi-spectral rendering needs a dedicated bounded Scene source query."
-    : "";
+  els.multiSpectralBtn.title = "";
   els.multiSpectralBtn.textContent = state.multiSpectral ? "On" : "Off";
   els.multiSpectralBtn.classList.toggle("activeAux", state.multiSpectral);
   if (els.spectralMapControls) {

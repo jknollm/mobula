@@ -476,7 +476,13 @@ def test_sparse_scene_profiles_keep_roi_and_axis_navigation_in_flow(
     assert page.locator("#timeProfileBlock:visible").count() == 1
     assert page.locator("#spectrumProfileBlock:visible").count() == 1
     assert page.locator("#spatialVolumeBtn:visible").count() == 0
+    multispectral_button = page.locator("#multiSpectralBtn:visible").first
+    assert multispectral_button.is_enabled()
+    with page.expect_response(lambda response: "/multispectral?" in response.url and response.status == 200):
+        multispectral_button.click()
+    assert multispectral_button.inner_text() == "On"
     assert any("/profiles-plane" in url for url in requested_urls)
+    assert any("/multispectral?" in url for url in requested_urls)
     assert not any("/render" in url for url in requested_urls)
 
     _drag_roi(page, (0.2, 0.2), (0.7, 0.7))

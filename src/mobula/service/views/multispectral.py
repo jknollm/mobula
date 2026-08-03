@@ -5,6 +5,7 @@ from typing import Any
 import numpy as np
 from fastapi import HTTPException
 
+from mobula.data.scene import RenderedSceneSlice
 from mobula.data.schema import CubeDataset
 from mobula.service.acceleration import (
     MultispectralComputeRequest,
@@ -285,9 +286,96 @@ def build_multispectral_response(
     }
 
 
+def build_multispectral_response_from_scene_slices(
+    data_id: str,
+    rendered_slices: list[RenderedSceneSlice],
+    *,
+    nu_coords: np.ndarray,
+    nu_unit: str,
+    sample_mode: SampleMode,
+    nu_axis_scale: str = "linear",
+    deslope: float = 0.0,
+    normalize_spectrum: bool = False,
+    normalize_spectrum_boost: float = 1.0,
+    intensity_scale: str = "linear",
+    range_min: float = 0.0,
+    range_max: float = 100.0,
+    compute_backend: str = "auto",
+) -> dict[str, Any]:
+    """Combine a bounded stack of sparse Scene planes into multispectral RGB."""
+    if len(rendered_slices) < 3:
+        raise HTTPException(status_code=400, detail="need at least 3 spectral channels for multispectral RGB")
+    if len(rendered_slices) != int(np.asarray(nu_coords).size):
+        raise HTTPException(status_code=500, detail="sparse multispectral frequency coordinates do not match slices")
+
+    reference = rendered_slices[0]
+    fixed_indices = {axis: index for axis, index in reference.selected_indices.items() if axis != "nu"}
+    for rendered in rendered_slices[1:]:
+        if rendered.plane_axes != reference.plane_axes:
+            raise HTTPException(status_code=502, detail="sparse multispectral slices use inconsistent plane axes")
+        if np.asarray(rendered.values).shape != np.asarray(reference.values).shape:
+            raise HTTPException(status_code=502, detail="sparse multispectral slices use inconsistent shapes")
+        if rendered.full_shape != reference.full_shape or rendered.sampling_step != reference.sampling_step:
+            raise HTTPException(status_code=502, detail="sparse multispectral slices use inconsistent sampling")
+        if rendered.intensity_unit != reference.intensity_unit:
+            raise HTTPException(status_code=502, detail="sparse multispectral slices use inconsistent units")
+        if {axis: index for axis, index in rendered.selected_indices.items() if axis != "nu"} != fixed_indices:
+            raise HTTPException(status_code=502, detail="sparse multispectral slices use inconsistent selections")
+
+    plane_x, plane_y = reference.plane_axes
+    bounded_stack = CubeDataset(
+        data_id=data_id,
+        dims=("nu", plane_x, plane_y),
+        coords={
+            "nu": np.asarray(nu_coords, dtype=np.float64),
+            plane_x: np.asarray(reference.plane_coords[plane_x]),
+            plane_y: np.asarray(reference.plane_coords[plane_y]),
+        },
+        values=np.stack([np.asarray(rendered.values, dtype=np.float32) for rendered in rendered_slices], axis=0),
+        units={
+            "nu": nu_unit,
+            plane_x: reference.plane_units[plane_x],
+            plane_y: reference.plane_units[plane_y],
+        },
+        intensity_unit=reference.intensity_unit,
+        wcs=dict(reference.wcs),
+        provenance={"source": "sparse-scene-multispectral-stack"},
+    )
+    bounded_stack.validate()
+    payload = build_multispectral_response(
+        bounded_stack,
+        sample=None,
+        pol=None,
+        t=None,
+        x=None,
+        y=None,
+        z=None,
+        nu0=None,
+        nu1=None,
+        max_pixels=None,
+        sample_mode=sample_mode,
+        plane_x=plane_x,
+        plane_y=plane_y,
+        nu_axis_scale=nu_axis_scale,
+        deslope=deslope,
+        normalize_spectrum=normalize_spectrum,
+        normalize_spectrum_boost=normalize_spectrum_boost,
+        intensity_scale=intensity_scale,
+        range_min=range_min,
+        range_max=range_max,
+        compute_backend=compute_backend,
+    )
+    payload["full_shape"] = [int(size) for size in reference.full_shape]
+    payload["sampling_step"] = [int(step) for step in reference.sampling_step]
+    payload["selected_indices"] = fixed_indices
+    payload["bands"]["preview_active"] = reference.sampling_step != (1, 1)
+    return payload
+
+
 __all__ = [
     "_normalize_total_flux_brightness",
     "_normalize_total_flux_brightness_xp",
     "build_multispectral_response",
+    "build_multispectral_response_from_scene_slices",
     "convert_mf_to_rgb_new",
 ]

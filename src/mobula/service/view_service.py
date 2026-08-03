@@ -10,6 +10,7 @@ from mobula.service.views.export import build_export_cutout_fits, build_export_c
 from mobula.service.views.multispectral import (
     _normalize_total_flux_brightness,
     _normalize_total_flux_brightness_xp,
+    build_multispectral_response_from_scene_slices,
 )
 from mobula.service.views.multispectral import build_multispectral_response as _build_multispectral_response
 from mobula.service.views.slice import (
@@ -80,6 +81,7 @@ __all__ = [
     "build_export_cutout_hdf5",
     "build_intensity_range_response",
     "build_multispectral_response",
+    "build_multispectral_response_from_scene_slices",
     "build_scene_slice_payload",
     "build_slice_payload",
     "build_slice_response",

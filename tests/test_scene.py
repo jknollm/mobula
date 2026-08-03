@@ -254,6 +254,31 @@ def test_sparse_scene_view_opens_without_render_and_delegates_only_a_plane() -> 
         assert relative_uncertainty.json()["intensity_unit"] == "1"
         assert "sample" not in source.slice_requests[-1].selections
 
+        multispectral_start = len(source.slice_requests)
+        multispectral = client.get(
+            f"/api/datasets/{data_id}/multispectral",
+            params={
+                "sample": 1,
+                "t": 2,
+                "sample_mode": "single",
+                "plane_x": "x",
+                "plane_y": "y",
+                "max_pixels": 12,
+            },
+        )
+        assert multispectral.status_code == 200
+        multispectral_body = multispectral.json()
+        assert multispectral_body["plane_dims"] == ["x", "y"]
+        assert multispectral_body["full_shape"] == [7, 6]
+        assert multispectral_body["shape"][0] * multispectral_body["shape"][1] <= 12
+        assert multispectral_body["sampling_step"] == [2, 2]
+        assert multispectral_body["selected_indices"] == {"sample": 1, "t": 2}
+        assert multispectral_body["bands"]["unit"] == "GHz"
+        multispectral_requests = source.slice_requests[multispectral_start:]
+        assert [request.selections["nu"] for request in multispectral_requests] == [0, 1, 2]
+        assert all(request.max_pixels == 12 for request in multispectral_requests)
+        assert source.dense_calls == 0
+
         profiled = client.post(
             f"/api/datasets/{data_id}/profiles-plane",
             json={

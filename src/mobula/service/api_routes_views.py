@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from fastapi import APIRouter, HTTPException, Query, Response
 
 from mobula.data.scene import SceneRenderRequest, SceneSliceRequest, SceneValidationError
@@ -27,11 +28,17 @@ from mobula.service.view_service import (
     build_export_cutout_hdf5,
     build_intensity_range_response,
     build_multispectral_response,
+    build_multispectral_response_from_scene_slices,
     build_scene_slice_payload,
     build_slice_payload,
     build_volume_payload,
 )
-from mobula.service.views.serialization import RgbArrayPayload, encode_rgb_payload_binary, encode_scalar_payload_binary, serialize_scalar_payload_json
+from mobula.service.views.serialization import (
+    RgbArrayPayload,
+    encode_rgb_payload_binary,
+    encode_scalar_payload_binary,
+    serialize_scalar_payload_json,
+)
 
 try:
     import imageio_ffmpeg
@@ -363,7 +370,7 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
         )
 
     @router.get("/datasets/{data_id}/multispectral")
-    def multispectral_slice(
+    async def multispectral_slice(
         data_id: str,
         sample: int | None = Query(default=None),
         pol: int | None = Query(default=None),
@@ -388,10 +395,118 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
         project_dims: str | None = Query(default=None),
         response_format: str = Query(default="json"),
     ) -> Response:
-        ds, dataset_metrics = _safe_dataset_with_perf(registry, data_id)
         mode = _parse_sample_mode(sample_mode)
         project = _parse_project_dims(project_dims)
         fmt = _parse_response_format(response_format)
+
+        scene_view = registry.scene_view(data_id)
+        if scene_view is not None and scene_view.descriptor.access.mode == "slice":
+            recipe_axes = set(scene_view.recipe.presentation_axes)
+            if "nu" not in recipe_axes:
+                raise HTTPException(status_code=400, detail="dataset has no 'nu' axis")
+            if plane_x == plane_y:
+                raise HTTPException(status_code=400, detail="plane_x and plane_y must be different")
+            if "nu" in (plane_x, plane_y):
+                raise HTTPException(status_code=400, detail="multispectral view requires plane without 'nu'")
+            if {plane_x, plane_y} - recipe_axes:
+                raise HTTPException(status_code=400, detail="multispectral plane is not part of the Scene presentation")
+            if project:
+                raise HTTPException(
+                    status_code=400,
+                    detail="sparse Scene source does not advertise bounded axis projection",
+                )
+
+            axes = {axis.axis_id: axis for axis in scene_view.descriptor.axes}
+            nu_axis = axes["nu"]
+            lo = max(0, min(0 if nu0 is None else nu0, nu_axis.size))
+            hi = max(0, min(nu_axis.size if nu1 is None else nu1, nu_axis.size))
+            if hi <= lo:
+                raise HTTPException(status_code=400, detail="invalid bounds for dim 'nu'")
+            if hi - lo < 3:
+                raise HTTPException(status_code=400, detail="need at least 3 spectral channels for multispectral RGB")
+
+            selections = {
+                axis: index
+                for axis, index in {
+                    "sample": sample,
+                    "pol": pol,
+                    "t": t,
+                    "x": x,
+                    "y": y,
+                    "z": z,
+                }.items()
+                if index is not None
+            }
+            rendered_slices = []
+            try:
+                for nu_index in range(lo, hi):
+                    rendered_slices.append(
+                        await registry.render_scene_slice(
+                            data_id,
+                            SceneSliceRequest(
+                                recipe_id=scene_view.recipe_id,
+                                target=scene_view.target_kind,
+                                component_id=(
+                                    scene_view.target_id if scene_view.target_kind == "component" else None
+                                ),
+                                plane_axes=(plane_x, plane_y),
+                                selections={**selections, "nu": nu_index},
+                                sample_mode=mode,
+                                max_pixels=max_pixels,
+                            ),
+                        )
+                    )
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except RemoteSceneSourceError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            except (SceneValidationError, TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+            def axis_coordinate(index: int) -> float:
+                if nu_axis.coordinates is not None:
+                    value = nu_axis.coordinates[index]
+                    if not isinstance(value, (int, float)):
+                        raise HTTPException(status_code=400, detail="multispectral frequency coordinates must be numeric")
+                    return float(value)
+                if nu_axis.linear_coordinates is not None:
+                    linear = nu_axis.linear_coordinates
+                    return float(linear.start + linear.step * index)
+                return float(index)
+
+            payload = build_multispectral_response_from_scene_slices(
+                data_id,
+                rendered_slices,
+                nu_coords=np.asarray([axis_coordinate(index) for index in range(lo, hi)], dtype=np.float64),
+                nu_unit=nu_axis.unit,
+                sample_mode=mode,
+                nu_axis_scale=nu_axis_scale,
+                deslope=deslope,
+                normalize_spectrum=normalize_spectrum,
+                normalize_spectrum_boost=normalize_spectrum_boost,
+                intensity_scale=intensity_scale,
+                range_min=range_min,
+                range_max=range_max,
+                compute_backend=compute_backend,
+            )
+            dataset_metrics = {"cache": "remote-spectral-slices", "load_ms": 0.0}
+            if fmt == "binary":
+                values = payload.get("values", {})
+                rgb_payload = RgbArrayPayload(
+                    metadata={key: value for key, value in payload.items() if key != "values"},
+                    red=values.get("r", ()),
+                    green=values.get("g", ()),
+                    blue=values.get("b", ()),
+                )
+                return timed_encoded_response(
+                    lambda: rgb_payload,
+                    encode_rgb_payload_binary,
+                    media_type="application/vnd.mobula.rgb-array",
+                    dataset_metrics=dataset_metrics,
+                )
+            return timed_json_response(lambda: payload, dataset_metrics=dataset_metrics)
+
+        ds, dataset_metrics = _safe_dataset_with_perf(registry, data_id)
 
         def build_multispectral_json() -> dict[str, Any]:
             return build_multispectral_response(

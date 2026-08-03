@@ -198,8 +198,11 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
 - Exact explicit or regular-linear coordinate encodings are preserved in virtual metadata. If a provider omits both,
   Mobula uses the axis index for navigation rather than inventing physical coordinates from a min/max range.
 - Sparse Scene views normalize from the returned plane. Operations which require an undeclared whole-domain query
-  (global ranges, unadvertised profiles, volume, multispectral rendering, EVPA ticks, and data cutout export) remain visibly
+  (global ranges, unadvertised profiles, volume, EVPA ticks, and data cutout export) remain visibly
   unavailable until the source advertises a bounded query for them; they never trigger hidden dense work.
+- Multi-spectral rendering is available for a sparse Scene with at least three spectral channels. Mobula requests one
+  bounded plane for each selected spectral channel at the current exploration indices and viewport resolution, then
+  combines only that temporary plane stack into RGB; it never materializes the Scene presentation cube.
 - Layer identity includes recipe id, target kind, and target id. A component named `combined` remains distinct from the
   recipe's reserved combined presentation.
 - An owning application may add `--no-browser` and open the local service itself.
