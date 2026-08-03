@@ -12,10 +12,16 @@ from mobula.data.loaders import load_by_extension, pad_dataset_to_canonical
 from mobula.data.mock_cube import MockCubeConfig, describe_mock_dataset, generate_mock_dataset
 from mobula.data.scene import (
     CubeSceneSource,
+    DenseSceneSource,
+    PresentationRecipe,
+    RenderTargetKind,
     RenderedSceneLayer,
+    RenderedSceneSlice,
     SceneDescriptor,
     SceneRenderRequest,
+    SceneSliceRequest,
     SceneSource,
+    SliceSceneSource,
     cube_scene_descriptor,
 )
 from mobula.data.schema import CubeDataset
@@ -29,6 +35,33 @@ class DatasetSummary:
     shape: tuple[int, ...]
     intensity_unit: str
     source: str
+
+
+@dataclass(frozen=True, slots=True)
+class SceneView:
+    """A stable descriptor-only view of one Scene presentation target."""
+
+    data_id: str
+    scene_id: str
+    descriptor: SceneDescriptor
+    recipe_id: str
+    target_kind: RenderTargetKind
+    target_id: str
+
+    @property
+    def recipe(self) -> PresentationRecipe:
+        return next(recipe for recipe in self.descriptor.recipes if recipe.recipe_id == self.recipe_id)
+
+    @property
+    def summary(self) -> DatasetSummary:
+        axes = {axis.axis_id: axis for axis in self.descriptor.axes}
+        return DatasetSummary(
+            data_id=self.data_id,
+            dims=self.recipe.presentation_axes,
+            shape=tuple(axes[axis].size for axis in self.recipe.presentation_axes),
+            intensity_unit=self.recipe.output_unit,
+            source=f"scene-virtual-{self.descriptor.access.mode}",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +112,8 @@ class DatasetRegistry:
         self._scene_materializations: dict[str, tuple[SceneDescriptor, str, str, str]] = {}
         self._scene_materialization_keys: dict[str, tuple[str, str, str, str, str]] = {}
         self._scene_layer_cache: dict[tuple[str, str, str, str, str], str] = {}
+        self._scene_views: dict[str, SceneView] = {}
+        self._scene_view_ids: dict[tuple[str, str, str, str], str] = {}
         default_manifest = default_seeded_manifest_path()
         self._seeded_manifest_path = (
             Path(seeded_manifest_path).expanduser().resolve() if seeded_manifest_path else default_manifest
@@ -126,6 +161,133 @@ class DatasetRegistry:
         descriptor.validate()
         return descriptor
 
+    async def open_scene_view(
+        self,
+        scene_id: str,
+        *,
+        recipe_id: str,
+        target_kind: RenderTargetKind,
+        component_id: str | None,
+    ) -> SceneView:
+        """Register a stable virtual dataset without requesting numerical values."""
+        descriptor = await self.scene_descriptor(scene_id)
+        recipes = {recipe.recipe_id: recipe for recipe in descriptor.recipes}
+        recipe = recipes.get(recipe_id)
+        if recipe is None:
+            raise KeyError(f"recipe '{recipe_id}' not found")
+        if target_kind == "combined" and component_id is None:
+            target_id = "combined"
+        elif target_kind == "component" and component_id:
+            renderable = {layer.component_id for layer in recipe.layers}
+            if component_id not in renderable:
+                raise KeyError(f"component '{component_id}' is not renderable by recipe '{recipe_id}'")
+            target_id = component_id
+        else:
+            raise ValueError("invalid Scene view target")
+        key = (scene_id, recipe_id, target_kind, target_id)
+        with self._lock:
+            existing_id = self._scene_view_ids.get(key)
+            if existing_id is not None:
+                return self._scene_views[existing_id]
+        digest = sha256("\0".join(key).encode("utf-8")).hexdigest()[:16]
+        data_id = scene_id.removeprefix("cube:") if scene_id.startswith("cube:") else f"scene-view-{digest}"
+        view = SceneView(
+            data_id=data_id,
+            scene_id=scene_id,
+            descriptor=descriptor,
+            recipe_id=recipe_id,
+            target_kind=target_kind,
+            target_id=target_id,
+        )
+        with self._lock:
+            self._scene_views[view.data_id] = view
+            self._scene_view_ids[key] = view.data_id
+        return view
+
+    def scene_view(self, data_id: str) -> SceneView | None:
+        with self._lock:
+            return self._scene_views.get(data_id)
+
+    async def render_scene_slice(self, data_id: str, request: SceneSliceRequest) -> RenderedSceneSlice:
+        """Render one sparse-required plane; dense fallback is forbidden."""
+        view = self.scene_view(data_id)
+        if view is None:
+            raise KeyError(f"virtual Scene dataset '{data_id}' not found")
+        if view.descriptor.access.mode != "slice":
+            raise TypeError("Scene view does not advertise sparse slice access")
+        with self._lock:
+            source = self._scene_sources.get(view.scene_id)
+        if source is None or not isinstance(source, SliceSceneSource):
+            raise TypeError("slice Scene source does not implement render_slice")
+
+        axes = {axis.axis_id: axis for axis in view.descriptor.axes}
+        recipe_axes = set(view.recipe.presentation_axes)
+        if set(request.plane_axes) - recipe_axes:
+            raise ValueError("Scene slice plane axes are not part of the presentation")
+        if view.descriptor.access.plane_axes and request.plane_axes != tuple(view.descriptor.access.plane_axes):
+            raise ValueError("Scene source does not advertise the requested plane axes")
+        if (
+            view.descriptor.access.sample_modes
+            and request.sample_mode not in view.descriptor.access.sample_modes
+        ):
+            raise ValueError(f"Scene source does not advertise sample mode '{request.sample_mode}'")
+        if set(request.project_dims) - recipe_axes:
+            raise ValueError("Scene slice projects an unknown presentation axis")
+        if request.project_dims:
+            raise ValueError("Scene source does not advertise bounded axis projection")
+        selections = {axis: index for axis, index in request.selections.items() if axis in recipe_axes}
+        reducing_samples = request.sample_mode in {"mean", "std", "rel_uncert"}
+        for axis_id in view.recipe.presentation_axes:
+            if axis_id in request.plane_axes or axis_id in request.project_dims:
+                selections.pop(axis_id, None)
+                continue
+            if axis_id == "sample" and reducing_samples:
+                selections.pop(axis_id, None)
+                continue
+            index = selections.get(axis_id, axes[axis_id].size // 2)
+            if index < 0 or index >= axes[axis_id].size:
+                raise ValueError(
+                    f"index for Scene axis '{axis_id}' out of bounds: {index} (size={axes[axis_id].size})"
+                )
+            selections[axis_id] = index
+        normalized = SceneSliceRequest(
+            recipe_id=view.recipe_id,
+            target=view.target_kind,
+            component_id=view.target_id if view.target_kind == "component" else None,
+            plane_axes=request.plane_axes,
+            selections=selections,
+            project_dims=request.project_dims,
+            sample_mode=request.sample_mode,
+            max_pixels=request.max_pixels,
+        )
+        normalized.validate()
+        rendered = await source.render_slice(normalized)
+        rendered.validate()
+        expected_target = normalized.component_id if normalized.target == "component" else "combined"
+        if (
+            rendered.scene_id != view.scene_id
+            or rendered.recipe_id != view.recipe_id
+            or rendered.target_kind != normalized.target
+            or rendered.target_id != expected_target
+        ):
+            raise ValueError("Scene slice identity does not match its virtual dataset")
+        if rendered.plane_axes != normalized.plane_axes:
+            raise ValueError("Scene slice plane axes do not match the request")
+        if rendered.selected_indices != normalized.selections:
+            raise ValueError("Scene slice selections do not match the fully specified request")
+        expected_full_shape = tuple(axes[axis].size for axis in normalized.plane_axes)
+        if rendered.full_shape != expected_full_shape:
+            raise ValueError("Scene slice full shape does not match the descriptor")
+        if normalized.max_pixels is not None and rendered.values.size > normalized.max_pixels:
+            raise ValueError("Scene slice exceeds the requested output pixel bound")
+        expected_intensity_unit = "1" if normalized.sample_mode == "rel_uncert" else view.recipe.output_unit
+        if rendered.intensity_unit != expected_intensity_unit:
+            raise ValueError("Scene slice intensity unit does not match the presentation recipe")
+        expected_units = {axis: axes[axis].unit for axis in normalized.plane_axes}
+        if rendered.plane_units != expected_units:
+            raise ValueError("Scene slice plane units do not match the descriptor")
+        return rendered
+
     async def render_scene(self, scene_id: str, request: SceneRenderRequest) -> RenderedSceneLayer:
         request.validate()
         target_id = request.component_id if request.target == "component" else "combined"
@@ -159,6 +321,10 @@ class DatasetRegistry:
                 raise KeyError(f"scene '{scene_id}' not found")
         descriptor = await source.describe_scene()
         descriptor.validate()
+        if descriptor.access.mode == "slice":
+            raise TypeError("sparse Scene sources cannot be materialized as dense layers")
+        if not isinstance(source, DenseSceneSource):
+            raise TypeError("Scene source does not support legacy materialized rendering")
         rendered = await source.render_layer(request)
         rendered.dataset.validate()
         if rendered.scene_id != descriptor.scene_id:
@@ -187,8 +353,11 @@ class DatasetRegistry:
 
     def scene_context_for_dataset(self, data_id: str) -> tuple[SceneDescriptor, str, str, str] | None:
         with self._lock:
+            view = self._scene_views.get(data_id)
             materialized = self._scene_materializations.get(data_id)
             dataset = self._datasets.get(data_id)
+        if view is not None:
+            return view.descriptor, view.recipe_id, view.target_kind, view.target_id
         if materialized is not None:
             return materialized
         if dataset is None:
@@ -272,7 +441,8 @@ class DatasetRegistry:
             ]
             loaded_ids = {d.data_id for d in loaded}
             lazy = [summary for data_id, (summary, _) in self._lazy_datasets.items() if data_id not in loaded_ids]
-            return loaded + lazy
+            virtual = [view.summary for view in self._scene_views.values() if view.data_id not in loaded_ids]
+            return loaded + lazy + virtual
 
     def lazy_metadata(self, data_id: str) -> dict[str, object] | None:
         with self._lock:

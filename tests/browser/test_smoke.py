@@ -223,6 +223,8 @@ def test_initial_scene_query_loads_its_default_dataset(
     app_url: str,
 ) -> None:
     data_id = "movie-2d-pol-hd"
+    requested_urls: list[str] = []
+    page.on("request", lambda request: requested_urls.append(request.url))
     page.goto(
         f"{app_url}/?scene_id=cube%3A{data_id}",
         wait_until="networkidle",
@@ -235,8 +237,11 @@ def test_initial_scene_query_loads_its_default_dataset(
         "  return !!active && selected === active;"
         "}",
     )
-    assert page.locator("#datasetSelect").first.input_value().startswith(data_id)
+    assert page.locator("#datasetSelect").first.input_value() == data_id
     _wait_for_canvas_foreground(page, "#sliceCanvas")
+    assert any(f"/api/scenes/cube%3A{data_id}/views" in url for url in requested_urls)
+    assert any(f"/api/datasets/{data_id}/slice" in url for url in requested_urls)
+    assert not any("/render" in url for url in requested_urls)
 
 
 @pytest.mark.browser

@@ -18,6 +18,12 @@ def _safe_dataset(registry: DatasetRegistry, data_id: str) -> CubeDataset:
 
 
 def _safe_dataset_with_perf(registry: DatasetRegistry, data_id: str) -> tuple[CubeDataset, dict[str, object]]:
+    scene_view = registry.scene_view(data_id)
+    if scene_view is not None and scene_view.descriptor.access.mode == "slice":
+        raise HTTPException(
+            status_code=409,
+            detail="operation requires a dense dataset and is unavailable for a sparse Scene view",
+        )
     try:
         return registry.get_with_stats(data_id)
     except KeyError as exc:

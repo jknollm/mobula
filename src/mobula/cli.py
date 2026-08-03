@@ -41,7 +41,7 @@ def _build_serve_parser() -> argparse.ArgumentParser:
         "--scene-snapshot",
         help="register a local mobula.scene-snapshot/v1 JSON manifest and open its Scene",
     )
-    parser.add_argument("--scene-source-url", help="authenticated mobula.scene-source/v1 runtime base URL")
+    parser.add_argument("--scene-source-url", help="authenticated mobula.scene-source/v2 runtime base URL")
     parser.add_argument("--scene-source-token", help="bearer token for --scene-source-url")
     parser.add_argument(
         "--scene-source-token-env",

@@ -10,6 +10,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
+from mobula.data.scene import SceneRenderRequest, SceneSliceRequest, SceneValidationError
+from mobula.data.scene_remote import RemoteSceneSourceError
 from mobula.service.api_models import (
     ExportCutoutSaveRequest,
     SaveImagesRequest,
@@ -25,6 +27,7 @@ from mobula.service.view_service import (
     build_export_cutout_hdf5,
     build_intensity_range_response,
     build_multispectral_response,
+    build_scene_slice_payload,
     build_slice_payload,
     build_volume_payload,
 )
@@ -98,7 +101,7 @@ def _encode_scalar_payload_json_bytes(payload: Any) -> bytes:
 
 def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None:
     @router.get("/datasets/{data_id}/slice")
-    def dataset_slice(
+    async def dataset_slice(
         data_id: str,
         sample: int | None = Query(default=None),
         pol: int | None = Query(default=None),
@@ -114,10 +117,93 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
         project_dims: str | None = Query(default=None),
         response_format: str = Query(default="json"),
     ) -> Response:
-        ds, dataset_metrics = _safe_dataset_with_perf(registry, data_id)
         mode = _parse_sample_mode(sample_mode)
         project = _parse_project_dims(project_dims)
         fmt = _parse_response_format(response_format)
+
+        scene_view = registry.scene_view(data_id)
+        if scene_view is not None and scene_view.descriptor.access.mode == "slice":
+            selections = {
+                axis: index
+                for axis, index in {
+                    "sample": sample,
+                    "pol": pol,
+                    "t": t,
+                    "nu": nu,
+                    "x": x,
+                    "y": y,
+                    "z": z,
+                }.items()
+                if index is not None
+            }
+            try:
+                rendered = await registry.render_scene_slice(
+                    data_id,
+                    SceneSliceRequest(
+                        recipe_id=scene_view.recipe_id,
+                        target=scene_view.target_kind,
+                        component_id=scene_view.target_id if scene_view.target_kind == "component" else None,
+                        plane_axes=(plane_x, plane_y),
+                        selections=selections,
+                        project_dims=project,
+                        sample_mode=mode,
+                        max_pixels=max_pixels,
+                    ),
+                )
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except RemoteSceneSourceError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            except (SceneValidationError, TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            payload = build_scene_slice_payload(
+                rendered,
+                scene_view.descriptor,
+                data_id=data_id,
+                sample_mode=mode,
+            )
+            if fmt == "binary":
+                return timed_encoded_response(
+                    lambda: payload,
+                    encode_scalar_payload_binary,
+                    media_type="application/vnd.mobula.scalar-array",
+                    dataset_metrics={"cache": "remote-slice", "load_ms": 0.0},
+                )
+            return timed_encoded_response(
+                lambda: payload,
+                _encode_scalar_payload_json_bytes,
+                media_type="application/json",
+                dataset_metrics={"cache": "remote-slice", "load_ms": 0.0},
+            )
+
+        if scene_view is not None:
+            # Explicit compatibility path for legacy snapshot/cube Scene sources.
+            rendered_layer = await registry.render_scene(
+                scene_view.scene_id,
+                SceneRenderRequest(
+                    recipe_id=scene_view.recipe_id,
+                    target=scene_view.target_kind,
+                    component_id=scene_view.target_id if scene_view.target_kind == "component" else None,
+                    exploration_indices={
+                        axis: index
+                        for axis, index in {
+                            "sample": sample,
+                            "pol": pol,
+                            "t": t,
+                            "nu": nu,
+                            "x": x,
+                            "y": y,
+                            "z": z,
+                        }.items()
+                        if index is not None
+                    },
+                    sample_mode=mode,
+                ),
+            )
+            ds = rendered_layer.dataset
+            dataset_metrics = {"cache": "legacy-scene-layer", "load_ms": 0.0}
+        else:
+            ds, dataset_metrics = _safe_dataset_with_perf(registry, data_id)
 
         def build_payload() -> Any:
             return build_slice_payload(

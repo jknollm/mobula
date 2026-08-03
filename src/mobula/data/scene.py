@@ -14,10 +14,52 @@ ComponentKind = Literal["raster_field", "point_sources", "component_group"]
 AxisMappingMode = Literal["invariant", "exact", "select", "interpolate", "project", "unavailable"]
 CompositionKind = Literal["additive_emission", "overlay", "replace", "mask"]
 RenderTargetKind = Literal["combined", "component"]
+SceneAccessMode = Literal["materialized", "slice"]
 
 
 class SceneValidationError(ValueError):
     """Raised when a Scene descriptor is internally inconsistent."""
+
+
+@dataclass(frozen=True, slots=True)
+class SceneAccess:
+    """Advertise how numerical Scene values may be requested.
+
+    ``slice`` is deliberately a stronger contract than a performance hint: a
+    source advertising it must return one requested two-dimensional plane and
+    Mobula must never fall back to materializing its presentation cube.
+    """
+
+    mode: SceneAccessMode = "materialized"
+    protocol_version: str | None = None
+    full_render: bool = True
+    plane_axes: tuple[str, ...] = ()
+    sample_modes: tuple[str, ...] = ()
+
+    def validate(self) -> None:
+        if self.mode not in {"materialized", "slice"}:
+            raise SceneValidationError(f"unsupported Scene access mode: {self.mode}")
+        if self.mode == "slice" and self.full_render:
+            raise SceneValidationError("slice Scene access must not advertise full rendering")
+        if self.mode == "slice" and not self.protocol_version:
+            raise SceneValidationError("slice Scene access must advertise a protocol version")
+
+
+@dataclass(frozen=True, slots=True)
+class LinearCoordinates:
+    """Exact compact encoding for a regular numerical axis."""
+
+    start: float
+    step: float
+    count: int
+
+    def validate(self, size: int) -> None:
+        if self.count != size:
+            raise SceneValidationError(
+                f"linear coordinate count {self.count} does not match axis size {size}"
+            )
+        if not np.isfinite(self.start) or not np.isfinite(self.step) or self.step == 0:
+            raise SceneValidationError("linear coordinates require a finite start and non-zero finite step")
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +68,7 @@ class SceneAxis:
     size: int
     unit: str
     coordinates: tuple[float | str, ...] | None = None
+    linear_coordinates: LinearCoordinates | None = None
     label: str | None = None
     minimum: float | None = None
     maximum: float | None = None
@@ -39,6 +82,10 @@ class SceneAxis:
             raise SceneValidationError(
                 f"scene axis '{self.axis_id}' coordinate length {len(self.coordinates)} does not match size {self.size}"
             )
+        if self.coordinates is not None and self.linear_coordinates is not None:
+            raise SceneValidationError(f"scene axis '{self.axis_id}' has two coordinate encodings")
+        if self.linear_coordinates is not None:
+            self.linear_coordinates.validate(self.size)
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +221,7 @@ class SceneDescriptor:
     recipes: tuple[PresentationRecipe, ...]
     default_recipe_id: str
     provenance: dict[str, Any] = field(default_factory=dict)
+    access: SceneAccess = field(default_factory=SceneAccess)
     schema_version: str = SCENE_SCHEMA_VERSION
 
     def validate(self) -> None:
@@ -181,6 +229,7 @@ class SceneDescriptor:
             raise SceneValidationError(f"unsupported scene schema version: {self.schema_version}")
         if not self.scene_id:
             raise SceneValidationError("scene has no scene_id")
+        self.access.validate()
 
         axis_ids = [axis.axis_id for axis in self.axes]
         if len(set(axis_ids)) != len(axis_ids):
@@ -256,13 +305,114 @@ class RenderedSceneLayer:
     dataset: CubeDataset
 
 
+@dataclass(frozen=True, slots=True)
+class SceneSliceRequest:
+    """One bounded two-dimensional presentation request.
+
+    Selections use Scene-axis ids rather than a fixed cube schema so sources
+    can preserve arbitrary heterogeneous component domains.
+    """
+
+    recipe_id: str
+    target: RenderTargetKind = "combined"
+    component_id: str | None = None
+    plane_axes: tuple[str, str] = ("x", "y")
+    selections: dict[str, int] = field(default_factory=dict)
+    project_dims: tuple[str, ...] = ()
+    sample_mode: str = "single"
+    max_pixels: int | None = None
+
+    def validate(self) -> None:
+        SceneRenderRequest(
+            recipe_id=self.recipe_id,
+            target=self.target,
+            component_id=self.component_id,
+            sample_mode=self.sample_mode,
+        ).validate()
+        if len(self.plane_axes) != 2 or self.plane_axes[0] == self.plane_axes[1]:
+            raise SceneValidationError("Scene slice requires two distinct plane axes")
+        if any(not axis for axis in self.plane_axes):
+            raise SceneValidationError("Scene slice plane axes must not be empty")
+        if set(self.plane_axes) & set(self.project_dims):
+            raise SceneValidationError("Scene slice cannot project a visible plane axis")
+        if len(set(self.project_dims)) != len(self.project_dims):
+            raise SceneValidationError("Scene slice contains duplicate projected axes")
+        if self.max_pixels is not None and self.max_pixels < 1:
+            raise SceneValidationError("Scene slice max_pixels must be positive")
+        if any(index < 0 for index in self.selections.values()):
+            raise SceneValidationError("Scene slice selections must be non-negative")
+
+
+@dataclass(slots=True)
+class RenderedSceneSlice:
+    """A source-rendered 2-D plane with enough metadata for the viewer."""
+
+    scene_id: str
+    recipe_id: str
+    target_kind: RenderTargetKind
+    target_id: str
+    plane_axes: tuple[str, str]
+    values: np.ndarray
+    plane_coords: dict[str, np.ndarray]
+    plane_units: dict[str, str]
+    full_shape: tuple[int, int]
+    sampling_step: tuple[int, int]
+    selected_indices: dict[str, int]
+    selected_coords: dict[str, float | str]
+    intensity_unit: str
+    wcs: dict[str, Any] = field(default_factory=dict)
+    provenance: dict[str, Any] = field(default_factory=dict)
+
+    def validate(self) -> None:
+        values = np.asarray(self.values)
+        if values.ndim != 2:
+            raise SceneValidationError(f"rendered Scene slice must be 2-D, got shape {values.shape}")
+        if len(self.full_shape) != 2 or len(self.sampling_step) != 2:
+            raise SceneValidationError("rendered Scene slice shape metadata must contain exactly two values")
+        if any(size < 1 for size in self.full_shape) or any(step < 1 for step in self.sampling_step):
+            raise SceneValidationError("rendered Scene slice shape and sampling step must be positive")
+        if values.shape != tuple(self.full_shape) and any(step != 1 for step in self.sampling_step):
+            expected = tuple(
+                (size + step - 1) // step for size, step in zip(self.full_shape, self.sampling_step, strict=True)
+            )
+            if values.shape != expected:
+                raise SceneValidationError(
+                    f"rendered Scene slice shape {values.shape} does not match sampled full shape {expected}"
+                )
+        elif values.shape != tuple(self.full_shape):
+            raise SceneValidationError(
+                f"rendered Scene slice shape {values.shape} does not match full shape {self.full_shape}"
+            )
+        if len(self.plane_axes) != 2 or self.plane_axes[0] == self.plane_axes[1]:
+            raise SceneValidationError("rendered Scene slice has invalid plane axes")
+        if set(self.plane_coords) != set(self.plane_axes):
+            raise SceneValidationError("rendered Scene slice coordinates do not match its plane axes")
+        if set(self.plane_units) != set(self.plane_axes):
+            raise SceneValidationError("rendered Scene slice units do not match its plane axes")
+        for axis, size in zip(self.plane_axes, values.shape, strict=True):
+            if np.asarray(self.plane_coords[axis]).size != size:
+                raise SceneValidationError(f"rendered Scene slice coordinate length for '{axis}' is invalid")
+
+
 @runtime_checkable
 class SceneSource(Protocol):
-    """Asynchronous source for a structured Scene and its presentation layers."""
+    """Asynchronous metadata source for a structured Scene."""
 
     async def describe_scene(self) -> SceneDescriptor: ...
 
+
+@runtime_checkable
+class DenseSceneSource(SceneSource, Protocol):
+    """Legacy source which exposes complete presentation layers."""
+
     async def render_layer(self, request: SceneRenderRequest) -> RenderedSceneLayer: ...
+
+
+@runtime_checkable
+class SliceSceneSource(SceneSource, Protocol):
+    """Sparse-required source which exposes bounded 2-D planes only."""
+
+    async def render_slice(self, request: SceneSliceRequest) -> RenderedSceneSlice: ...
 
 
 def _axis_from_cube(dataset: CubeDataset, dim: str) -> SceneAxis:
@@ -333,6 +483,7 @@ def cube_scene_descriptor(dataset: CubeDataset) -> SceneDescriptor:
         ),
         default_recipe_id="native",
         provenance=dict(dataset.provenance),
+        access=SceneAccess(mode="materialized"),
     )
     descriptor.validate()
     return descriptor
@@ -346,6 +497,11 @@ def scene_descriptor_from_dict(payload: dict[str, Any]) -> SceneDescriptor:
             size=item["size"],
             unit=item["unit"],
             coordinates=tuple(item["coordinates"]) if item.get("coordinates") is not None else None,
+            linear_coordinates=(
+                LinearCoordinates(**item["linear_coordinates"])
+                if item.get("linear_coordinates") is not None
+                else None
+            ),
             label=item.get("label"),
             minimum=item.get("minimum"),
             maximum=item.get("maximum"),
@@ -402,6 +558,13 @@ def scene_descriptor_from_dict(payload: dict[str, Any]) -> SceneDescriptor:
         recipes=recipes,
         default_recipe_id=payload["default_recipe_id"],
         provenance=dict(payload.get("provenance", {})),
+        access=SceneAccess(
+            mode=dict(payload.get("access", {})).get("mode", "materialized"),
+            protocol_version=dict(payload.get("access", {})).get("protocol_version"),
+            full_render=bool(dict(payload.get("access", {})).get("full_render", True)),
+            plane_axes=tuple(dict(payload.get("access", {})).get("plane_axes", ())),
+            sample_modes=tuple(dict(payload.get("access", {})).get("sample_modes", ())),
+        ),
         schema_version=payload.get("schema_version", SCENE_SCHEMA_VERSION),
     )
     descriptor.validate()

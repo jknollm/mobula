@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 import numpy as np
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from mobula.data.scene import CubeSceneSource, SceneRenderRequest, SceneValidationError, cube_scene_descriptor
+from mobula.data.scene import (
+    CubeSceneSource,
+    LinearCoordinates,
+    SceneRenderRequest,
+    SceneValidationError,
+    cube_scene_descriptor,
+    scene_descriptor_from_dict,
+)
 from mobula.data.scene_snapshot import SnapshotSceneSource, write_scene_snapshot
 from mobula.data.synthetic_scene import SyntheticHybridSceneSource
 from mobula.main import create_app
@@ -96,7 +104,9 @@ def test_scene_snapshot_round_trip(tmp_path) -> None:
         },
     )
     restored = SnapshotSceneSource(manifest)
-    assert asyncio.run(restored.describe_scene()).to_dict() == descriptor.to_dict()
+    restored_descriptor = asyncio.run(restored.describe_scene())
+    assert restored_descriptor.access.mode == "materialized"
+    assert replace(restored_descriptor, access=descriptor.access).to_dict() == descriptor.to_dict()
     rendered = asyncio.run(restored.render_layer(SceneRenderRequest(recipe_id="combined-emission")))
     np.testing.assert_allclose(rendered.dataset.values, combined.values)
 
@@ -106,7 +116,7 @@ def test_scene_snapshot_round_trip(tmp_path) -> None:
         assert scenes.json()["scenes"][0]["scene_id"] == "round-trip"
 
 
-def test_scene_api_lists_describes_and_materializes_layers() -> None:
+def test_scene_api_lists_describes_and_opens_virtual_layers() -> None:
     registry = DatasetRegistry()
     source = SyntheticHybridSceneSource("api-hybrid")
     registry.add_scene_source(source.scene_id, source)
@@ -122,7 +132,7 @@ def test_scene_api_lists_describes_and_materializes_layers() -> None:
         assert descriptor.json()["components"][2]["kind"] == "point_sources"
 
         rendered = client.post(
-            "/api/scenes/api-hybrid/render",
+            "/api/scenes/api-hybrid/views",
             json={"recipe_id": "combined-emission", "target": "component", "component_id": "background"},
         )
         assert rendered.status_code == 200
@@ -130,3 +140,104 @@ def test_scene_api_lists_describes_and_materializes_layers() -> None:
         context = client.get(f"/api/datasets/{data_id}/scene")
         assert context.status_code == 200
         assert context.json()["active_target_id"] == "background"
+
+
+def test_sparse_scene_view_opens_without_render_and_delegates_only_a_plane() -> None:
+    class SparseOnlySource:
+        def __init__(self) -> None:
+            self.delegate = SyntheticHybridSceneSource("sparse-api")
+            self.slice_requests = []
+            self.dense_calls = 0
+
+        async def describe_scene(self):
+            return await self.delegate.describe_scene()
+
+        async def render_slice(self, request):
+            self.slice_requests.append(request)
+            return await self.delegate.render_slice(request)
+
+        async def render_layer(self, request):
+            self.dense_calls += 1
+            raise AssertionError("sparse Scene must never use dense rendering")
+
+    registry = DatasetRegistry()
+    source = SparseOnlySource()
+    registry.add_scene_source("sparse-api", source)
+    app = FastAPI()
+    app.include_router(build_router(registry))
+
+    with TestClient(app) as client:
+        opened = client.post(
+            "/api/scenes/sparse-api/views",
+            json={"recipe_id": "combined-emission", "target": "combined"},
+        )
+        assert opened.status_code == 200
+        data_id = opened.json()["data_id"]
+        opened_again = client.post(
+            "/api/scenes/sparse-api/views",
+            json={"recipe_id": "combined-emission", "target": "combined"},
+        )
+        assert opened_again.json()["data_id"] == data_id
+        assert source.slice_requests == []
+        assert source.dense_calls == 0
+        with pytest.raises(KeyError):
+            registry.get(data_id)
+
+        meta = client.get(f"/api/datasets/{data_id}/meta")
+        assert meta.status_code == 200
+        assert meta.json()["scene_access"] == "slice"
+        assert meta.json()["coords"]["t"]["values"] == [0.0, 1.0, 2.0, 3.0]
+
+        sliced = client.get(
+            f"/api/datasets/{data_id}/slice",
+            params={
+                "sample": 0,
+                "t": 2,
+                "nu": 1,
+                "z": 0,
+                "sample_mode": "single",
+                "plane_x": "x",
+                "plane_y": "y",
+            },
+        )
+        assert sliced.status_code == 200
+        assert sliced.json()["shape"] == [7, 6]
+        assert len(source.slice_requests) == 1
+        request = source.slice_requests[0]
+        assert request.selections == {"sample": 0, "t": 2, "nu": 1}
+        assert request.plane_axes == ("x", "y")
+        assert source.dense_calls == 0
+
+        relative_uncertainty = client.get(
+            f"/api/datasets/{data_id}/slice",
+            params={
+                "t": 2,
+                "nu": 1,
+                "sample_mode": "rel_uncert",
+                "plane_x": "x",
+                "plane_y": "y",
+            },
+        )
+        assert relative_uncertainty.status_code == 200
+        assert relative_uncertainty.json()["intensity_unit"] == "1"
+        assert "sample" not in source.slice_requests[-1].selections
+
+        dense_range = client.get(f"/api/datasets/{data_id}/intensity-range")
+        assert dense_range.status_code == 409
+        assert "dense dataset" in dense_range.json()["detail"]
+
+
+def test_scene_descriptor_round_trips_exact_linear_coordinates() -> None:
+    descriptor = asyncio.run(SyntheticHybridSceneSource("linear-scene").describe_scene())
+    x_axis = next(axis for axis in descriptor.axes if axis.axis_id == "x")
+    linear_x = replace(
+        x_axis,
+        coordinates=None,
+        linear_coordinates=LinearCoordinates(start=-1.0, step=1.0 / 3.0, count=x_axis.size),
+    )
+    descriptor = replace(
+        descriptor,
+        axes=tuple(linear_x if axis.axis_id == "x" else axis for axis in descriptor.axes),
+    )
+    restored = scene_descriptor_from_dict(descriptor.to_dict())
+    assert restored.axes[3].linear_coordinates == linear_x.linear_coordinates

@@ -163,20 +163,29 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
 - A Scene session offers its combined presentation and renderable component layers through one `Scene Layer` control.
   Switching layers preserves compatible analytical context, including current axis positions, ROI, zoom, and
   normalization; only values and analyses derived from the previous layer are refreshed.
-- Scene descriptions and layer evaluation use an asynchronous source contract. Existing `CubeDataset` inputs remain
-  supported as one-component raster Scenes without changing their existing data, slice, profile, or export APIs.
+- Scene descriptions advertise either legacy materialized access or sparse-required slice access. Existing
+  `CubeDataset` inputs and v1 snapshots remain explicit materialized sources; a source advertising slice access is
+  never allowed to fall back to a full presentation cube.
 - `mobula --scene-snapshot PATH` accepts the local `mobula.scene-snapshot/v1` JSON+NPZ handoff, starts the normal local
   service, and opens its default combined Scene. The snapshot is a launch handoff and does not imply a Zarr dependency
   or a requirement to persist every scientific component on one common native domain.
-- `mobula --scene-source-url ... --initial-scene ...` connects to an authenticated `mobula.scene-source/v1` runtime and
-  requests the descriptor and selected presentation layers asynchronously. The bearer token is sent in an authorization
-  header, never in the URL.
+- `mobula --scene-source-url ... --initial-scene ...` connects to an authenticated `mobula.scene-source/v2` runtime.
+  The bearer token is sent in an authorization header, never in the URL. Opening a layer registers a stable virtual
+  dataset from its descriptor only; numerical values are first requested when the viewer asks for a plane.
 - Opening Mobula with an initial Scene selects its default combined layer as the active dataset and displays its first
   frame without requiring a second selection in the dataset picker.
 - Raster orientation follows explicit dataset WCS metadata. A Resolve tangent-plane layer is displayed west-right and
   north-up by default; the axis controls remain available for deliberate display flips.
-- A runtime layer is transferred directly in memory and is only requested when selected; Mobula does not require the
-  producer to write a temporary Scene snapshot.
+- A runtime request contains the visible plane, every non-visible axis selection, sample reduction, and output pixel
+  bound. Its response must contain exactly one two-dimensional plane. Mobula rejects higher-dimensional or oversized
+  responses and never registers remote Scene values as a `CubeDataset`.
+- Mean and standard-deviation Scene slices retain the presentation recipe unit. Relative-uncertainty slices are
+  dimensionless and use intensity unit `1`.
+- Exact explicit or regular-linear coordinate encodings are preserved in virtual metadata. If a provider omits both,
+  Mobula uses the axis index for navigation rather than inventing physical coordinates from a min/max range.
+- Sparse Scene views normalize from the returned plane. Operations which require an undeclared whole-domain query
+  (global ranges, profiles, volume, multispectral rendering, EVPA ticks, and data cutout export) remain visibly
+  unavailable until the source advertises a bounded query for them; they never trigger hidden dense work.
 - Layer identity includes recipe id, target kind, and target id. A component named `combined` remains distinct from the
   recipe's reserved combined presentation.
 - An owning application may add `--no-browser` and open the local service itself.

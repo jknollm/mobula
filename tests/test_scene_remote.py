@@ -6,6 +6,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 from typing import Iterator
 
 import numpy as np
@@ -13,14 +14,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mobula.cli import _build_serve_parser, _scene_viewer_url
-from mobula.data.scene import RenderedSceneLayer, SceneRenderRequest
+from mobula.data.scene import RenderedSceneLayer, SceneRenderRequest, SceneSliceRequest
 from mobula.data.scene_remote import (
     SCENE_LAYER_MEDIA_TYPE,
     SCENE_SOURCE_PROTOCOL_VERSION,
+    SCENE_SLICE_MEDIA_TYPE,
     RemoteSceneSource,
     RemoteSceneSourceError,
     decode_scene_layer_payload,
+    decode_scene_slice_payload,
     encode_scene_layer_payload,
+    encode_scene_slice_payload,
 )
 from mobula.data.scene_snapshot import SnapshotSceneSource, write_scene_snapshot
 from mobula.data.synthetic_scene import SyntheticHybridSceneSource
@@ -89,16 +93,27 @@ def _runtime_server(
             if not self._authorized():
                 self._send(401, b"unauthorized", "text/plain")
                 return
-            if self.path != "/render":
+            if self.path not in {"/render", "/slice"}:
                 self._send(404, b"not found", "text/plain")
                 return
             assert self.headers.get("X-Mobula-Scene-Protocol") == SCENE_SOURCE_PROTOCOL_VERSION
             length = int(self.headers.get("Content-Length", "0"))
             envelope = json.loads(self.rfile.read(length).decode("utf-8"))
             assert envelope["protocol_version"] == SCENE_SOURCE_PROTOCOL_VERSION
-            request = SceneRenderRequest(**envelope["request"])
-            layer = asyncio.run(source.render_layer(request))
-            self._send(200, encode_scene_layer_payload(layer), SCENE_LAYER_MEDIA_TYPE)
+            if self.path == "/slice":
+                request = SceneSliceRequest(
+                    **{
+                        **envelope["request"],
+                        "plane_axes": tuple(envelope["request"]["plane_axes"]),
+                        "project_dims": tuple(envelope["request"]["project_dims"]),
+                    }
+                )
+                rendered = asyncio.run(source.render_slice(request))
+                self._send(200, encode_scene_slice_payload(rendered), SCENE_SLICE_MEDIA_TYPE)
+            else:
+                request = SceneRenderRequest(**envelope["request"])
+                layer = asyncio.run(source.render_layer(request))
+                self._send(200, encode_scene_layer_payload(layer), SCENE_LAYER_MEDIA_TYPE)
 
         def log_message(self, format: str, *args: object) -> None:
             return
@@ -114,22 +129,51 @@ def _runtime_server(
         thread.join(timeout=5.0)
 
 
-def test_remote_scene_source_fetches_descriptor_and_layers_without_files() -> None:
-    with _runtime_server() as (url, local_source):
+def test_remote_scene_source_fetches_descriptor_without_files() -> None:
+    with _runtime_server() as (url, _):
         remote = RemoteSceneSource(url, "test-secret", expected_scene_id="remote-hybrid")
         descriptor = asyncio.run(remote.describe_scene())
         assert descriptor.scene_id == "remote-hybrid"
+        assert descriptor.access.mode == "slice"
 
-        request = SceneRenderRequest(
+
+def test_remote_scene_source_fetches_only_the_requested_2d_slice() -> None:
+    with _runtime_server() as (url, local_source):
+        remote = RemoteSceneSource(url, "test-secret", expected_scene_id="remote-hybrid")
+        request = SceneSliceRequest(
             recipe_id="combined-emission",
-            target="component",
-            component_id="background",
+            plane_axes=("x", "y"),
+            selections={"t": 3, "nu": 1},
+            sample_mode="mean",
+            max_pixels=10,
         )
-        remote_layer = asyncio.run(remote.render_layer(request))
-        local_layer = asyncio.run(local_source.render_layer(request))
-        assert remote_layer.target_kind == "component"
-        assert remote_layer.target_id == "background"
-        np.testing.assert_allclose(remote_layer.dataset.values, local_layer.dataset.values)
+        remote_slice = asyncio.run(remote.render_slice(request))
+        local_slice = asyncio.run(local_source.render_slice(request))
+        assert remote_slice.values.ndim == 2
+        assert remote_slice.values.size <= 10
+        assert remote_slice.selected_indices == {"t": 3, "nu": 1}
+        np.testing.assert_allclose(remote_slice.values, local_slice.values)
+
+
+def test_scene_slice_decoder_rejects_dense_payload() -> None:
+    source = SyntheticHybridSceneSource("dense-wire-rejection")
+    rendered = asyncio.run(
+        source.render_slice(
+            SceneSliceRequest(
+                recipe_id="combined-emission",
+                plane_axes=("x", "y"),
+                selections={"sample": 0, "t": 0, "nu": 0},
+            )
+        )
+    )
+    valid = encode_scene_slice_payload(rendered)
+    with np.load(BytesIO(valid), allow_pickle=False) as arrays:
+        copied = {key: np.asarray(arrays[key]) for key in arrays.files}
+    copied["values"] = copied["values"][None, ...]
+    buffer = BytesIO()
+    np.savez(buffer, **copied)
+    with pytest.raises(RemoteSceneSourceError, match="non-2-D"):
+        decode_scene_slice_payload(buffer.getvalue())
 
 
 def test_remote_scene_source_requires_valid_bearer_token() -> None:
@@ -158,11 +202,18 @@ def test_remote_app_factory_registers_source_lazily() -> None:
             assert listed.status_code == 200
             assert listed.json()["scenes"][0]["scene_id"] == "remote-hybrid"
             rendered = client.post(
-                "/api/scenes/remote-hybrid/render",
+                "/api/scenes/remote-hybrid/views",
                 json={"recipe_id": "combined-emission", "target": "combined"},
             )
             assert rendered.status_code == 200
             assert rendered.json()["target_kind"] == "combined"
+            data_id = rendered.json()["data_id"]
+            sliced = client.get(
+                f"/api/datasets/{data_id}/slice",
+                params={"t": 0, "nu": 0, "sample_mode": "mean", "plane_x": "x", "plane_y": "y"},
+            )
+            assert sliced.status_code == 200
+            assert sliced.json()["shape"] == [7, 6]
 
 
 def test_layer_wire_identity_distinguishes_component_named_combined(base_dataset) -> None:

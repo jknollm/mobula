@@ -11,10 +11,13 @@ from mobula.data.scene import (
     PresentationRecipe,
     RecipeLayer,
     RenderedSceneLayer,
+    RenderedSceneSlice,
+    SceneAccess,
     SceneAxis,
     SceneComponent,
     SceneDescriptor,
     SceneRenderRequest,
+    SceneSliceRequest,
 )
 from mobula.data.schema import CubeDataset
 
@@ -106,6 +109,13 @@ class SyntheticHybridSceneSource:
             recipes=(recipe,),
             default_recipe_id=recipe.recipe_id,
             provenance={"source": "synthetic", "purpose": "scene-contract"},
+            access=SceneAccess(
+                mode="slice",
+                protocol_version="mobula.scene-source/v2",
+                full_render=False,
+                plane_axes=("x", "y"),
+                sample_modes=("single", "mean", "std", "rel_uncert"),
+            ),
         )
         descriptor.validate()
         return descriptor
@@ -176,6 +186,104 @@ class SyntheticHybridSceneSource:
             target_kind=request.target,
             target_id=target_id,
             dataset=dataset,
+        )
+
+    def _native_plane(self, request: SceneSliceRequest, sample: int, t: int, nu: int) -> np.ndarray:
+        xx, yy = np.meshgrid(self._x, self._y, indexing="ij")
+        background = np.exp(-3.0 * (xx**2 + yy**2)).astype(np.float32)
+        points = np.zeros((len(self._x), len(self._y)), dtype=np.float32)
+        ix = min(t + 1, len(self._x) - 1)
+        iy = min(1 + t, len(self._y) - 1)
+        points[ix, iy] = np.float32((sample + 1) * (t + 1) * (1.0 + nu / 10.0))
+        if request.target == "combined":
+            return background + points
+        if request.component_id == "background":
+            return background
+        if request.component_id == "transient":
+            return points
+        raise KeyError(f"component '{request.component_id}' is not renderable")
+
+    async def render_slice(self, request: SceneSliceRequest) -> RenderedSceneSlice:
+        """Render directly on the requested plane without constructing a cube."""
+        request.validate()
+        if request.recipe_id != self._descriptor.default_recipe_id:
+            raise KeyError(f"recipe '{request.recipe_id}' not found")
+        if request.plane_axes != ("x", "y"):
+            raise ValueError("synthetic Scene supports only the x/y plane")
+        if any(dim not in {"sample", "t", "nu"} for dim in request.project_dims):
+            raise ValueError("synthetic Scene cannot project the requested axis")
+
+        axis_sizes = {"sample": len(self._sample), "t": len(self._time), "nu": len(self._frequency)}
+        for axis, index in request.selections.items():
+            if axis not in axis_sizes or index >= axis_sizes[axis]:
+                raise ValueError(f"invalid selection for Scene axis '{axis}'")
+
+        def indices(axis: str) -> range | tuple[int]:
+            if axis in request.project_dims:
+                return range(axis_sizes[axis])
+            return (request.selections[axis],)
+
+        sample_indices: range | tuple[int]
+        if request.sample_mode == "single":
+            sample_indices = indices("sample")
+        elif request.sample_mode in {"mean", "std", "rel_uncert"}:
+            sample_indices = range(axis_sizes["sample"])
+        else:
+            raise ValueError(f"unsupported sample mode '{request.sample_mode}'")
+
+        sample_planes: list[np.ndarray] = []
+        for sample in sample_indices:
+            projected_planes = [
+                self._native_plane(request, sample, t, nu)
+                for t in indices("t")
+                for nu in indices("nu")
+            ]
+            sample_planes.append(np.mean(projected_planes, axis=0, dtype=np.float64))
+        stack = np.asarray(sample_planes)
+        if request.sample_mode == "mean":
+            plane = np.mean(stack, axis=0, dtype=np.float64)
+        elif request.sample_mode == "std":
+            plane = np.std(stack, axis=0, dtype=np.float64)
+        elif request.sample_mode == "rel_uncert":
+            mean = np.mean(stack, axis=0, dtype=np.float64)
+            plane = np.std(stack, axis=0, dtype=np.float64) / np.maximum(np.abs(mean), 1.0e-8)
+        else:
+            plane = stack[0]
+
+        full_shape = tuple(int(value) for value in plane.shape)
+        sampling_step = (1, 1)
+        if request.max_pixels is not None and plane.size > request.max_pixels:
+            step = max(1, int(np.ceil(np.sqrt(plane.size / float(request.max_pixels)))))
+            sampling_step = (min(step, plane.shape[0]), min(step, plane.shape[1]))
+            plane = plane[:: sampling_step[0], :: sampling_step[1]]
+        selected_indices = {
+            axis: index
+            for axis, index in request.selections.items()
+            if axis not in request.project_dims and not (axis == "sample" and request.sample_mode != "single")
+        }
+        coords_by_axis = {"sample": self._sample, "t": self._time, "nu": self._frequency}
+        selected_coords = {axis: float(coords_by_axis[axis][index]) for axis, index in selected_indices.items()}
+        target_id = request.component_id if request.target == "component" else "combined"
+        await asyncio.sleep(0)
+        return RenderedSceneSlice(
+            scene_id=self.scene_id,
+            recipe_id=request.recipe_id,
+            target_kind=request.target,
+            target_id=str(target_id),
+            plane_axes=request.plane_axes,
+            values=np.asarray(plane, dtype=np.float32),
+            plane_coords={
+                "x": self._x[:: sampling_step[0]],
+                "y": self._y[:: sampling_step[1]],
+            },
+            plane_units={"x": "deg", "y": "deg"},
+            full_shape=full_shape,
+            sampling_step=sampling_step,
+            selected_indices=selected_indices,
+            selected_coords=selected_coords,
+            intensity_unit="1" if request.sample_mode == "rel_uncert" else "Jy/sr",
+            wcs={"frame": "synthetic"},
+            provenance={"source": "synthetic-sparse-scene"},
         )
 
 

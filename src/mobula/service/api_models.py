@@ -25,6 +25,12 @@ class RenderSceneRequest(BaseModel):
     sample_mode: str = "single"
 
 
+class OpenSceneViewRequest(BaseModel):
+    recipe_id: str
+    target: Literal["combined", "component"] = "combined"
+    component_id: str | None = None
+
+
 class RegisterSceneSnapshotRequest(BaseModel):
     path: str
 

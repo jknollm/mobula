@@ -6,6 +6,7 @@ import numpy as np
 from fastapi import HTTPException
 
 from mobula.data.schema import CubeDataset
+from mobula.data.scene import RenderedSceneSlice, SceneDescriptor
 from mobula.service.api_compute import _extract_2d_slice
 from mobula.service.api_models import RangeMode, SampleMode
 from mobula.service.api_utils import (
@@ -74,6 +75,41 @@ def build_slice_payload(
             "stats": summarize_array(arr),
         },
         values=arr,
+    )
+
+
+def build_scene_slice_payload(
+    rendered: RenderedSceneSlice,
+    descriptor: SceneDescriptor,
+    *,
+    data_id: str,
+    sample_mode: SampleMode,
+) -> ScalarArrayPayload:
+    """Adapt a source-rendered plane to the unchanged browser wire payload."""
+    rendered.validate()
+    axes = {axis.axis_id: axis for axis in descriptor.axes}
+    coords: dict[str, Any] = {}
+    for axis in rendered.plane_axes:
+        coords[axis] = np.asarray(rendered.plane_coords[axis]).reshape(-1).tolist()
+        coords[f"{axis}_unit"] = rendered.plane_units[axis]
+    values = np.asarray(rendered.values, dtype=np.float32)
+    return ScalarArrayPayload(
+        metadata={
+            "data_id": data_id,
+            "plane_dims": list(rendered.plane_axes),
+            "shape": [int(values.shape[0]), int(values.shape[1])],
+            "full_shape": list(rendered.full_shape),
+            "sampling_step": list(rendered.sampling_step),
+            "intensity_unit": rendered.intensity_unit,
+            "sample_mode": sample_mode,
+            "selected_indices": rendered.selected_indices,
+            "selected_coords": rendered.selected_coords,
+            "coords": coords,
+            "stats": summarize_array(values),
+            "wcs": rendered.wcs,
+            "provenance": rendered.provenance,
+        },
+        values=values,
     )
 
 

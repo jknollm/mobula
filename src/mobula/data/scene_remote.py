@@ -14,15 +14,18 @@ import numpy as np
 
 from mobula.data.scene import (
     RenderedSceneLayer,
+    RenderedSceneSlice,
     RenderTargetKind,
     SceneDescriptor,
-    SceneRenderRequest,
+    SceneSliceRequest,
+    SceneValidationError,
     scene_descriptor_from_dict,
 )
 from mobula.data.schema import CubeDataset
 
-SCENE_SOURCE_PROTOCOL_VERSION = "mobula.scene-source/v1"
+SCENE_SOURCE_PROTOCOL_VERSION = "mobula.scene-source/v2"
 SCENE_LAYER_MEDIA_TYPE = "application/x-mobula-scene-layer+npz"
+SCENE_SLICE_MEDIA_TYPE = "application/x-mobula-scene-slice+npz"
 _METADATA_KEY = "__mobula_metadata__"
 _VALUES_KEY = "values"
 _MASK_KEY = "mask"
@@ -133,6 +136,88 @@ def decode_scene_layer_payload(payload: bytes) -> RenderedSceneLayer:
     )
 
 
+def encode_scene_slice_payload(rendered: RenderedSceneSlice) -> bytes:
+    """Encode one bounded 2-D Scene response for the v2 runtime protocol."""
+    rendered.validate()
+    coordinate_keys = {axis: f"coord_{index}" for index, axis in enumerate(rendered.plane_axes)}
+    metadata = {
+        "protocol_version": SCENE_SOURCE_PROTOCOL_VERSION,
+        "scene_id": rendered.scene_id,
+        "recipe_id": rendered.recipe_id,
+        "target_kind": rendered.target_kind,
+        "target_id": rendered.target_id,
+        "slice": {
+            "plane_axes": list(rendered.plane_axes),
+            "coordinate_keys": coordinate_keys,
+            "units": rendered.plane_units,
+            "intensity_unit": rendered.intensity_unit,
+            "full_shape": list(rendered.full_shape),
+            "sampling_step": list(rendered.sampling_step),
+            "selected_indices": rendered.selected_indices,
+            "selected_coords": rendered.selected_coords,
+            "wcs": rendered.wcs,
+            "provenance": rendered.provenance,
+            "values_key": _VALUES_KEY,
+        },
+    }
+    arrays: dict[str, np.ndarray] = {
+        _METADATA_KEY: np.frombuffer(_json_bytes(metadata), dtype=np.uint8),
+        _VALUES_KEY: np.asarray(rendered.values),
+    }
+    for axis, key in coordinate_keys.items():
+        arrays[key] = np.asarray(rendered.plane_coords[axis])
+    buffer = io.BytesIO()
+    np.savez(buffer, **arrays)
+    return buffer.getvalue()
+
+
+def decode_scene_slice_payload(payload: bytes) -> RenderedSceneSlice:
+    """Decode a v2 slice while rejecting any dense or higher-dimensional payload."""
+    try:
+        with np.load(io.BytesIO(payload), allow_pickle=False) as arrays:
+            metadata = json.loads(np.asarray(arrays[_METADATA_KEY], dtype=np.uint8).tobytes().decode("utf-8"))
+            if metadata.get("protocol_version") != SCENE_SOURCE_PROTOCOL_VERSION:
+                raise RemoteSceneSourceError(f"unsupported Scene source protocol: {metadata.get('protocol_version')}")
+            slice_meta = dict(metadata["slice"])
+            plane_axes = tuple(slice_meta["plane_axes"])
+            if len(plane_axes) != 2:
+                raise RemoteSceneSourceError("Scene slice response must name exactly two plane axes")
+            coordinate_keys = dict(slice_meta["coordinate_keys"])
+            values = np.asarray(arrays[slice_meta["values_key"]])
+            if values.ndim != 2:
+                raise RemoteSceneSourceError(f"Scene source returned a non-2-D payload with shape {values.shape}")
+            plane_coords = {axis: np.asarray(arrays[coordinate_keys[axis]]) for axis in plane_axes}
+            plane_units = {str(axis): str(unit) for axis, unit in dict(slice_meta["units"]).items()}
+            target_kind = str(metadata["target_kind"])
+            if target_kind not in {"combined", "component"}:
+                raise RemoteSceneSourceError(f"invalid rendered slice target kind: {target_kind}")
+            rendered = RenderedSceneSlice(
+                scene_id=str(metadata["scene_id"]),
+                recipe_id=str(metadata["recipe_id"]),
+                target_kind=cast(RenderTargetKind, target_kind),
+                target_id=str(metadata["target_id"]),
+                plane_axes=cast(tuple[str, str], plane_axes),
+                values=values,
+                plane_coords=plane_coords,
+                plane_units=plane_units,
+                full_shape=cast(tuple[int, int], tuple(int(value) for value in slice_meta["full_shape"])),
+                sampling_step=cast(tuple[int, int], tuple(int(value) for value in slice_meta["sampling_step"])),
+                selected_indices={str(key): int(value) for key, value in dict(slice_meta["selected_indices"]).items()},
+                selected_coords=dict(slice_meta["selected_coords"]),
+                intensity_unit=str(slice_meta["intensity_unit"]),
+                wcs=dict(slice_meta.get("wcs", {})),
+                provenance=dict(slice_meta.get("provenance", {})),
+            )
+            rendered.validate()
+    except RemoteSceneSourceError:
+        raise
+    except SceneValidationError as exc:
+        raise RemoteSceneSourceError(f"invalid Scene slice payload: {exc}") from exc
+    except (BadZipFile, KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RemoteSceneSourceError(f"invalid Scene slice payload: {exc}") from exc
+    return rendered
+
+
 class RemoteSceneSource:
     """Authenticated asynchronous SceneSource backed by a local HTTP runtime."""
 
@@ -143,7 +228,7 @@ class RemoteSceneSource:
         *,
         expected_scene_id: str,
         timeout_seconds: float = 300.0,
-        max_layer_bytes: int = 2 * 1024**3,
+        max_layer_bytes: int = 256 * 1024**2,
     ) -> None:
         self.source_url = _validated_base_url(source_url)
         self._token = str(token or "").strip()
@@ -222,10 +307,18 @@ class RemoteSceneSource:
             raise RemoteSceneSourceError(
                 f"Scene source returned '{descriptor.scene_id}', expected '{self.expected_scene_id}'"
             )
+        if descriptor.access.mode != "slice":
+            raise RemoteSceneSourceError("remote Scene source must advertise sparse slice access")
+        if descriptor.access.protocol_version != SCENE_SOURCE_PROTOCOL_VERSION:
+            raise RemoteSceneSourceError(
+                f"Scene access advertises unsupported protocol: {descriptor.access.protocol_version}"
+            )
+        if descriptor.access.full_render:
+            raise RemoteSceneSourceError("remote Scene source must not advertise dense full rendering")
         self._descriptor = descriptor
         return descriptor
 
-    async def render_layer(self, request: SceneRenderRequest) -> RenderedSceneLayer:
+    async def render_slice(self, request: SceneSliceRequest) -> RenderedSceneSlice:
         request.validate()
         descriptor = await self.describe_scene()
         request_body = _json_bytes(
@@ -236,20 +329,26 @@ class RemoteSceneSource:
         )
         payload, content_type = await asyncio.to_thread(
             self._request,
-            "render",
+            "slice",
             body=request_body,
-            accept=SCENE_LAYER_MEDIA_TYPE,
+            accept=SCENE_SLICE_MEDIA_TYPE,
         )
-        if SCENE_LAYER_MEDIA_TYPE not in content_type.lower():
-            raise RemoteSceneSourceError(f"Scene layer has unsupported content type: {content_type or 'missing'}")
-        layer = decode_scene_layer_payload(payload)
-        if layer.scene_id != descriptor.scene_id:
-            raise RemoteSceneSourceError("rendered layer Scene identity does not match the descriptor")
-        if layer.recipe_id != request.recipe_id:
-            raise RemoteSceneSourceError("rendered layer recipe does not match the request")
-        if layer.target_kind != request.target:
-            raise RemoteSceneSourceError("rendered layer target kind does not match the request")
+        if SCENE_SLICE_MEDIA_TYPE not in content_type.lower():
+            raise RemoteSceneSourceError(f"Scene slice has unsupported content type: {content_type or 'missing'}")
+        rendered = decode_scene_slice_payload(payload)
         expected_target = request.component_id if request.target == "component" else "combined"
-        if layer.target_id != expected_target:
-            raise RemoteSceneSourceError("rendered layer target does not match the request")
-        return layer
+        if rendered.scene_id != descriptor.scene_id:
+            raise RemoteSceneSourceError("rendered slice Scene identity does not match the descriptor")
+        if rendered.recipe_id != request.recipe_id:
+            raise RemoteSceneSourceError("rendered slice recipe does not match the request")
+        if rendered.target_kind != request.target or rendered.target_id != expected_target:
+            raise RemoteSceneSourceError("rendered slice target does not match the request")
+        if rendered.plane_axes != request.plane_axes:
+            raise RemoteSceneSourceError("rendered slice plane axes do not match the request")
+        descriptor_axes = {axis.axis_id: axis for axis in descriptor.axes}
+        expected_units = {axis: descriptor_axes[axis].unit for axis in request.plane_axes}
+        if rendered.plane_units != expected_units:
+            raise RemoteSceneSourceError("rendered slice plane units do not match the descriptor")
+        if request.max_pixels is not None and rendered.values.size > request.max_pixels:
+            raise RemoteSceneSourceError("rendered Scene slice exceeds the requested pixel bound")
+        return rendered

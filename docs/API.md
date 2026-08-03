@@ -399,16 +399,18 @@ Common `400` examples:
 
 # Structured Scene API
 
-Mobula accepts structured, asynchronous Scene providers through the Python `SceneSource` protocol:
+Mobula accepts structured, asynchronous Scene providers through the Python `SceneSource` metadata protocol and one
+advertised numerical access mode:
 
 ```python
 async def describe_scene() -> SceneDescriptor: ...
-async def render_layer(request: SceneRenderRequest) -> RenderedSceneLayer: ...
+async def render_slice(request: SceneSliceRequest) -> RenderedSceneSlice: ...  # access.mode == "slice"
+async def render_layer(request: SceneRenderRequest) -> RenderedSceneLayer: ...  # legacy materialized access
 ```
 
 Register a provider with `DatasetRegistry.add_scene_source(scene_id, source)`. The source remains responsible for
-scientific evaluation, domain projection, unit conversion, and composition. A rendered layer uses `CubeDataset` as the
-presentation contract so all existing Mobula slice, profile, and export behavior remains available.
+scientific evaluation, domain projection, unit conversion, and composition. Slice access is a strict sparse contract:
+Mobula never falls back to `render_layer` or registers a remote Scene presentation as a `CubeDataset`.
 
 For a process boundary, use `write_scene_snapshot(...)` or produce the equivalent two-file
 `mobula.scene-snapshot/v1` handoff:
@@ -430,49 +432,60 @@ with `POST /api/scenes/register-snapshot` and a JSON body containing `{"path": "
 ## Authenticated Runtime Scene Source
 
 For producer-time reconstruction, Mobula can connect to a short-lived authenticated HTTP source instead of writing a
-snapshot. The `mobula.scene-source/v1` contract has two operations relative to the configured source URL:
+snapshot. The `mobula.scene-source/v2` contract has two operations relative to the configured source URL:
 
 - `GET /descriptor`, with `Accept: application/json`.
-- `POST /render`, with a JSON request and `Accept: application/x-mobula-scene-layer+npz`.
+- `POST /slice`, with a JSON request and `Accept: application/x-mobula-scene-slice+npz`.
 
 Both requests include:
 
 ```text
 Authorization: Bearer <session-token>
-X-Mobula-Scene-Protocol: mobula.scene-source/v1
+X-Mobula-Scene-Protocol: mobula.scene-source/v2
 ```
 
 The descriptor response is:
 
 ```json
 {
-  "protocol_version": "mobula.scene-source/v1",
-  "descriptor": {"schema_version": "mobula.scene/v1"}
-}
-```
-
-The render request is:
-
-```json
-{
-  "protocol_version": "mobula.scene-source/v1",
-  "request": {
-    "recipe_id": "combined-emission",
-    "target": "component",
-    "component_id": "background",
-    "exploration_indices": {},
-    "spatial_window": {},
-    "sample_mode": "single"
+  "protocol_version": "mobula.scene-source/v2",
+  "descriptor": {
+    "schema_version": "mobula.scene/v1",
+    "access": {
+      "mode": "slice",
+      "protocol_version": "mobula.scene-source/v2",
+      "full_render": false,
+      "plane_axes": ["x", "y"],
+      "sample_modes": ["single", "mean", "std", "rel_uncert"]
+    }
   }
 }
 ```
 
-The render response is one uncompressed NPZ envelope held in memory. Its exact archive keys are
-`__mobula_metadata__` (a uint8 UTF-8 JSON byte array), `values`, `coord_0`, `coord_1`, and so on, plus optional `mask`.
-The metadata keys are `protocol_version`, `scene_id`, `recipe_id`, `target_kind`, `target_id`, and `dataset`. The dataset
-object contains `data_id`, `dims`, `coordinate_keys`, `units`, `intensity_unit`, `wcs`, `provenance`, `uncertainty`,
-`values_key`, and `mask_key`. Target kind is independent of target id, so a component whose id is `combined` cannot
-collide with the combined presentation.
+The slice request is:
+
+```json
+{
+  "protocol_version": "mobula.scene-source/v2",
+  "request": {
+    "recipe_id": "combined-emission",
+    "target": "component",
+    "component_id": "background",
+    "selections": {"sample": 0, "pol": 0, "t": 17, "nu": 0},
+    "plane_axes": ["x", "y"],
+    "project_dims": [],
+    "sample_mode": "single",
+    "max_pixels": 1048576
+  }
+}
+```
+
+The response is one uncompressed NPZ envelope held in memory. Its archive contains `__mobula_metadata__` (a uint8
+UTF-8 JSON byte array), exactly one two-dimensional `values` array, and one sampled coordinate array per plane axis.
+The metadata keys are `protocol_version`, `scene_id`, `recipe_id`, `target_kind`, `target_id`, and `slice`. The `slice`
+object contains `plane_axes`, `coordinate_keys`, `units`, `intensity_unit`, `full_shape`, `sampling_step`,
+`selected_indices`, `selected_coords`, `wcs`, `provenance`, and `values_key`. Mobula rejects non-2-D, oversized, or
+identity-inconsistent responses. Target kind remains independent of target id.
 
 Start Mobula against the runtime with:
 
@@ -485,12 +498,18 @@ mobula \
 
 `--scene-source-token` is also available, but an environment variable avoids exposing the token in the process command
 line. The app factory accepts `scene_source_url`, `scene_source_token`, and `scene_source_id`. Mobula performs remote
-requests asynchronously, validates protocol and Scene identity, and only requests a layer when that combined/component
-presentation is selected. No Resolve import or persistent handoff file is involved.
+requests asynchronously and registers a stable virtual dataset from the descriptor when a combined/component
+presentation is selected. Numerical evaluation begins only with a viewer slice request. No Resolve import or persistent
+handoff file is involved.
 
 Scene endpoints are:
 
 - `GET /api/scenes`
 - `GET /api/scenes/{scene_id}`
-- `POST /api/scenes/{scene_id}/render`
+- `POST /api/scenes/{scene_id}/views`
 - `GET /api/datasets/{data_id}/scene`
+- `GET /api/datasets/{data_id}/meta`
+- `GET /api/datasets/{data_id}/slice`
+
+`POST /api/scenes/{scene_id}/render` remains available only for explicit legacy materialized sources. It rejects a
+source advertising sparse slice access.

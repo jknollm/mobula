@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ import numpy as np
 
 from mobula.data.scene import (
     RenderedSceneLayer,
+    SceneAccess,
     SceneDescriptor,
     SceneRenderRequest,
     scene_descriptor_from_dict,
@@ -29,7 +31,10 @@ class SnapshotSceneSource:
         payload = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         if payload.get("snapshot_version") != SCENE_SNAPSHOT_VERSION:
             raise ValueError(f"unsupported Scene snapshot version: {payload.get('snapshot_version')}")
-        self._descriptor = scene_descriptor_from_dict(payload["descriptor"])
+        descriptor = scene_descriptor_from_dict(payload["descriptor"])
+        # A v1 snapshot stores complete layer arrays and is intentionally kept
+        # on the explicit legacy materialized path.
+        self._descriptor = replace(descriptor, access=SceneAccess(mode="materialized"))
         self._layers = dict(payload.get("layers", {}))
         values_path = payload.get("values_path")
         if not isinstance(values_path, str) or not values_path:

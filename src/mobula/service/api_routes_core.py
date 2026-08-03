@@ -15,6 +15,7 @@ from mobula.data.scene_snapshot import SnapshotSceneSource
 from mobula.service.acceleration.capabilities import probe_compute_capabilities
 from mobula.service.api_models import (
     LoadLocalRequest,
+    OpenSceneViewRequest,
     PickLocalPathRequest,
     RegisterSceneSnapshotRequest,
     RenderSceneRequest,
@@ -184,6 +185,32 @@ def _register_core_routes(router: APIRouter, registry: DatasetRegistry) -> None:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return descriptor.to_dict()
 
+    @router.post("/scenes/{scene_id:path}/views")
+    async def open_scene_view(scene_id: str, req: OpenSceneViewRequest) -> dict[str, Any]:
+        try:
+            view = await registry.open_scene_view(
+                scene_id,
+                recipe_id=req.recipe_id,
+                target_kind=req.target,
+                component_id=req.component_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (SceneValidationError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        summary = view.summary
+        return {
+            "scene_id": view.scene_id,
+            "recipe_id": view.recipe_id,
+            "target_kind": view.target_kind,
+            "target_id": view.target_id,
+            "data_id": view.data_id,
+            "dims": list(summary.dims),
+            "shape": list(summary.shape),
+            "intensity_unit": summary.intensity_unit,
+            "source": summary.source,
+        }
+
     @router.post("/scenes/{scene_id:path}/render")
     async def render_scene(scene_id: str, req: RenderSceneRequest) -> dict[str, Any]:
         request = SceneRenderRequest(
@@ -198,7 +225,7 @@ def _register_core_routes(router: APIRouter, registry: DatasetRegistry) -> None:
             rendered = await registry.render_scene(scene_id, request)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except (SceneValidationError, ValueError) as exc:
+        except (SceneValidationError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {
             "scene_id": rendered.scene_id,
@@ -213,11 +240,7 @@ def _register_core_routes(router: APIRouter, registry: DatasetRegistry) -> None:
 
     @router.get("/datasets/{data_id}/scene")
     def dataset_scene(data_id: str) -> dict[str, Any]:
-        try:
-            dataset = registry.get(data_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=f"dataset '{data_id}' not found") from exc
-        context = registry.scene_context_for_dataset(dataset.data_id)
+        context = registry.scene_context_for_dataset(data_id)
         if context is None:
             raise HTTPException(status_code=404, detail=f"dataset '{data_id}' has no Scene context")
         descriptor, recipe_id, target_kind, target_id = context
@@ -347,6 +370,70 @@ def _register_core_routes(router: APIRouter, registry: DatasetRegistry) -> None:
 
     @router.get("/datasets/{data_id}/meta")
     def dataset_meta(data_id: str) -> Response:
+        scene_view = registry.scene_view(data_id)
+        if scene_view is not None:
+            axes = {axis.axis_id: axis for axis in scene_view.descriptor.axes}
+
+            def scene_axis_summary(axis_id: str) -> dict[str, Any]:
+                axis = axes[axis_id]
+                payload: dict[str, Any] = {
+                    "size": axis.size,
+                    "unit": axis.unit,
+                    "min": None,
+                    "max": None,
+                    "coordinate_encoding": "unavailable",
+                }
+                if axis.coordinates is not None:
+                    values = list(axis.coordinates)
+                    payload["values"] = values
+                    payload["coordinate_encoding"] = "explicit"
+                    if values and all(isinstance(value, (int, float)) for value in values):
+                        payload["min"] = float(min(values))
+                        payload["max"] = float(max(values))
+                    elif values:
+                        payload["labels"] = [str(value) for value in values]
+                elif axis.linear_coordinates is not None:
+                    linear = axis.linear_coordinates
+                    payload["linear"] = {
+                        "start": linear.start,
+                        "step": linear.step,
+                        "count": linear.count,
+                    }
+                    end = linear.start + linear.step * (linear.count - 1)
+                    payload["min"] = float(min(linear.start, end))
+                    payload["max"] = float(max(linear.start, end))
+                    payload["coordinate_encoding"] = "linear"
+                return payload
+
+            recipe = scene_view.recipe
+            pol_axis = axes.get("pol")
+            pol_labels = None
+            if pol_axis is not None and pol_axis.coordinates is not None:
+                if any(isinstance(value, str) for value in pol_axis.coordinates):
+                    pol_labels = [str(value) for value in pol_axis.coordinates]
+            return timed_json_response(
+                lambda: {
+                    "data_id": scene_view.data_id,
+                    "dims": list(recipe.presentation_axes),
+                    "shape": [axes[axis_id].size for axis_id in recipe.presentation_axes],
+                    "coords": {axis_id: scene_axis_summary(axis_id) for axis_id in recipe.presentation_axes},
+                    "intensity_unit": recipe.output_unit,
+                    "wcs": dict(scene_view.descriptor.provenance.get("wcs", {})),
+                    "provenance": {
+                        **scene_view.descriptor.provenance,
+                        "source": "scene-virtual",
+                        "scene_id": scene_view.scene_id,
+                        "recipe_id": scene_view.recipe_id,
+                        "target_kind": scene_view.target_kind,
+                        "target_id": scene_view.target_id,
+                    },
+                    "uncertainty": None,
+                    "pol_labels": pol_labels,
+                    "sphere": None,
+                    "scene_access": scene_view.descriptor.access.mode,
+                },
+                dataset_metrics={"cache": "descriptor", "load_ms": 0.0},
+            )
         lazy_meta = registry.lazy_metadata(data_id)
         if lazy_meta is not None:
             return timed_json_response(

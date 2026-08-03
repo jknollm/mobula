@@ -856,12 +856,24 @@ function axisHasCustomUnit(dim) {
 
 function dimCoord(dim, idx) {
   if (!state.meta || !state.meta.coords[dim]) return null;
-  const cmin = state.meta.coords[dim].min;
-  const cmax = state.meta.coords[dim].max;
+  const coordMeta = state.meta.coords[dim];
+  if (Array.isArray(coordMeta.values) && idx >= 0 && idx < coordMeta.values.length) {
+    return coordMeta.values[idx];
+  }
+  if (coordMeta.linear && Number.isFinite(coordMeta.linear.start) && Number.isFinite(coordMeta.linear.step)) {
+    return coordMeta.linear.start + idx * coordMeta.linear.step;
+  }
+  if (coordMeta.coordinate_encoding === "unavailable") return idx;
+  const cmin = coordMeta.min;
+  const cmax = coordMeta.max;
   const n = axisSize(dim);
   if (n <= 1 || cmin === null || cmax === null) return idx;
   const f = idx / (n - 1);
   return cmin + f * (cmax - cmin);
+}
+
+function isSparseSceneView() {
+  return state.meta?.scene_access === "slice" || state.sceneSession?.descriptor?.access?.mode === "slice";
 }
 
 function axisPlaneSwapState() {
@@ -1107,6 +1119,7 @@ function buildProvisionalMetaFromDatasetSummary(summary) {
       provisional_meta: true,
     },
     uncertainty: null,
+    scene_access: String(summary.source || "").includes("scene-virtual-slice") ? "slice" : null,
     pol_labels: coords.pol && Number.parseInt(coords.pol.size, 10) === 4 ? ["I", "Q", "U", "V"] : null,
     sphere: null,
   };
@@ -1203,6 +1216,7 @@ function projectedDimsForCurrentView() {
 
 function canProjectAxis(axis) {
   if (!axis || !state.meta) return false;
+  if (isSparseSceneView()) return false;
   if (axisSize(axis) <= 1) return false;
   return !centralViewAxes().has(axis);
 }
@@ -1848,6 +1862,7 @@ function isSphereMode() {
 }
 
 function canUseVolumeMode() {
+  if (isSparseSceneView()) return false;
   if (isSphereDataset()) return false;
   return axisSize(hiddenDim()) > 1;
 }
@@ -1868,6 +1883,7 @@ function setSphereProjection(mode) {
 
 function canUseMultiSpectral() {
   return (
+    !isSparseSceneView() &&
     axisSize("nu") >= 3 &&
     state.sampleMode !== "rel_uncert" &&
     !isDerivedPolModeActive() &&
@@ -2644,6 +2660,7 @@ function isValidRangeStats(stats) {
 }
 
 function availableColorRangeModes() {
+  if (isSparseSceneView()) return ["none"];
   const tVarying = axisSize("t") > 1;
   const nuVarying = axisSize("nu") > 1;
   const hiddenSpatialVarying = axisSize(hiddenDim()) > 1;
@@ -2677,6 +2694,10 @@ function updateColorRangeModeOptions() {
     }
   }
   els.colorRangeModeSelect.value = state.colorRangeMode;
+  els.colorRangeModeSelect.disabled = isSparseSceneView();
+  els.colorRangeModeSelect.title = isSparseSceneView()
+    ? "Sparse Scene views use statistics from the requested plane; no whole-domain range is computed."
+    : "";
 }
 
 function colorNormDomainForScale(stats) {
@@ -3652,16 +3673,19 @@ function exportZoomModeSupported() {
 }
 
 function canExportZoomCutout() {
-  if (!state.dataId || !exportZoomModeSupported()) return false;
+  if (!state.dataId || isSparseSceneView() || !exportZoomModeSupported()) return false;
   return hasSpatialZoom() || hasDomainZoom();
 }
 
 function updateExportButtonState() {
   const enabled = canExportZoomCutout();
   if (els.exportZoomBtn) {
-    const unsupported = Boolean(state.dataId) && !exportZoomModeSupported();
+    const unsupported = Boolean(state.dataId) && (isSparseSceneView() || !exportZoomModeSupported());
     els.exportZoomBtn.disabled = !enabled;
     els.exportZoomBtn.classList.toggle("unsupported", unsupported);
+    els.exportZoomBtn.title = isSparseSceneView()
+      ? "Data cutout export needs a dedicated bounded Scene source query."
+      : "";
   }
   if (els.saveImagesBtn) {
     els.saveImagesBtn.disabled = !state.dataId;
@@ -5578,7 +5602,7 @@ function updateSampleMorphPlaybackStatus() {
 
 function updatePolButtonState() {
   const polSize = axisSize("pol");
-  const evpaSupported = !isVolumeMode() && state.plane === "xy" && polSize >= 3;
+  const evpaSupported = !isSparseSceneView() && !isVolumeMode() && state.plane === "xy" && polSize >= 3;
   if (isDerivedPolModeActive() && !derivedPolSupported(state.derivedPolMode, polSize)) {
     state.derivedPolMode = "none";
   }
@@ -5592,6 +5616,9 @@ function updatePolButtonState() {
 
   els.evpaToggleBtn.textContent = evpaSupported ? "EVPA" : "EVPA (XY)";
   els.evpaToggleBtn.disabled = !evpaSupported;
+  els.evpaToggleBtn.title = isSparseSceneView()
+    ? "EVPA ticks need a dedicated bounded Scene source query."
+    : "";
   els.evpaToggleBtn.classList.toggle("activeAux", state.showEvpa);
   els.evpaDensitySelect.disabled = !evpaSupported;
   els.evpaDensitySelect.value = String(state.evpaStep);
@@ -5774,13 +5801,16 @@ function updateDomainVisibility() {
     tVarying || nuVarying || (!volumeMode && !sphereMode && hiddenSpatialVarying) || (sampleVarying && isSampleMorphMode())
   );
 
-  setVisible(els.timeProfileBlock, tVarying);
-  setVisible(els.spectrumProfileBlock, nuVarying);
-  setVisible(els.spatialProfileBlock, !sphereMode && hiddenSpatialVarying);
+  const profilesAvailable = !isSparseSceneView();
+  setVisible(els.timeProfileBlock, profilesAvailable && tVarying);
+  setVisible(els.spectrumProfileBlock, profilesAvailable && nuVarying);
+  setVisible(els.spatialProfileBlock, profilesAvailable && !sphereMode && hiddenSpatialVarying);
 
   if (els.metricsHint) {
     const anyProfile = tVarying || nuVarying || hiddenSpatialVarying;
-    if (sphereMode) {
+    if (isSparseSceneView()) {
+      els.metricsHint.textContent = "Scene profiles require an explicit bounded source query and are not available yet.";
+    } else if (sphereMode) {
       els.metricsHint.textContent = "Click for point or drag for area.";
     } else {
       els.metricsHint.textContent = anyProfile
@@ -5816,18 +5846,27 @@ function updateControlCaps() {
     els.timeProjectBtn.disabled = !canProjectAxis("t");
     els.timeProjectBtn.classList.toggle("activeProject", active);
     els.timeProjectBtn.textContent = "Project";
+    els.timeProjectBtn.title = isSparseSceneView()
+      ? "Axis projection is unavailable until the Scene source advertises a bounded reduction."
+      : "";
   }
   if (els.freqProjectBtn) {
     const active = isAxisProjectionActive("nu");
     els.freqProjectBtn.disabled = spectralSelectorLocked || !canProjectAxis("nu");
     els.freqProjectBtn.classList.toggle("activeProject", active);
     els.freqProjectBtn.textContent = "Project";
+    els.freqProjectBtn.title = isSparseSceneView()
+      ? "Axis projection is unavailable until the Scene source advertises a bounded reduction."
+      : "";
   }
   if (els.hiddenProjectBtn) {
     const active = isAxisProjectionActive(hDim);
     els.hiddenProjectBtn.disabled = !canProjectAxis(hDim);
     els.hiddenProjectBtn.classList.toggle("activeProject", active);
     els.hiddenProjectBtn.textContent = "Project";
+    els.hiddenProjectBtn.title = isSparseSceneView()
+      ? "Axis projection is unavailable until the Scene source advertises a bounded reduction."
+      : "";
   }
   updateDomainVisibility();
 
@@ -5899,6 +5938,9 @@ function updateControlCaps() {
   state.multiSpectralNormalizeBoost = normalizeMultispectralNormalizeBoost(state.multiSpectralNormalizeBoost);
   state.multiSpectralChannelRange = normalizeMultispectralChannelRange(state.multiSpectralChannelRange);
   els.multiSpectralBtn.disabled = !msAvailable;
+  els.multiSpectralBtn.title = isSparseSceneView()
+    ? "Multi-spectral rendering needs a dedicated bounded Scene source query."
+    : "";
   els.multiSpectralBtn.textContent = state.multiSpectral ? "On" : "Off";
   els.multiSpectralBtn.classList.toggle("activeAux", state.multiSpectral);
   if (els.spectralMapControls) {
@@ -9473,7 +9515,14 @@ function onColorNormRangeInput(bound, commit = false) {
 }
 
 async function refreshFixedColorRange() {
-  if (!state.dataId || state.colorRangeMode === "none" || state.multiSpectral || isDerivedPolModeActive() || isVolumeMode()) {
+  if (
+    !state.dataId ||
+    isSparseSceneView() ||
+    state.colorRangeMode === "none" ||
+    state.multiSpectral ||
+    isDerivedPolModeActive() ||
+    isVolumeMode()
+  ) {
     state.fixedColorRange = null;
     return;
   }
@@ -10743,7 +10792,7 @@ function limitHealpixIndexPayload(indices, maxCount = 24000) {
 }
 
 async function refreshSelectionAnalytics() {
-  if (!state.dataId || !state.selection) {
+  if (!state.dataId || !state.selection || isSparseSceneView()) {
     state.profiles = null;
     drawSelectionGraphs();
     return;
@@ -10797,7 +10846,17 @@ async function refreshSelectionAnalytics() {
 }
 
 async function refreshViewProfiles() {
-  if (!state.dataId || (!state.frameCanvas && !(state.frameTiles && state.frameTiles.length))) return;
+  if (
+    !state.dataId ||
+    isSparseSceneView() ||
+    (!state.frameCanvas && !(state.frameTiles && state.frameTiles.length))
+  ) {
+    if (isSparseSceneView()) {
+      state.viewProfiles = null;
+      drawNavigationGraphs();
+    }
+    return;
+  }
   const epoch = activeEpoch();
   const token = ++state._viewProfileToken;
   const bounds = currentViewBounds();
@@ -11345,7 +11404,7 @@ async function onSceneLayerChange() {
     if (!sceneId) return;
     setSystemPickerStatus("Preparing Scene layer…");
     const component = selected.targetKind === "component" ? selected.targetId : null;
-    const rendered = await fetchJson(`/api/scenes/${encodeURIComponent(sceneId)}/render`, {
+    const rendered = await fetchJson(`/api/scenes/${encodeURIComponent(sceneId)}/views`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -11645,7 +11704,7 @@ async function prepareInitialSceneLaunch() {
   const descriptor = await fetchJson(`/api/scenes/${encodeURIComponent(sceneId)}`);
   const recipeId = String(params.get("recipe_id") || descriptor.default_recipe_id || "").trim();
   const componentId = String(params.get("component_id") || "").trim();
-  const rendered = await fetchJson(`/api/scenes/${encodeURIComponent(sceneId)}/render`, {
+  const rendered = await fetchJson(`/api/scenes/${encodeURIComponent(sceneId)}/views`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
