@@ -218,6 +218,28 @@ def test_app_loads(page: object, app_url: str) -> None:
 
 
 @pytest.mark.browser
+def test_initial_scene_query_loads_its_default_dataset(
+    page: object,
+    app_url: str,
+) -> None:
+    data_id = "movie-2d-pol-hd"
+    page.goto(
+        f"{app_url}/?scene_id=cube%3A{data_id}",
+        wait_until="networkidle",
+    )
+    page.wait_for_selector("#datasetSelect:visible")
+    page.wait_for_function(
+        "() => {"
+        "  const selected = document.querySelector('#datasetSelect')?.value;"
+        "  const active = window.__mobulaDebug?.getStateSnapshot().dataId;"
+        "  return !!active && selected === active;"
+        "}",
+    )
+    assert page.locator("#datasetSelect").first.input_value().startswith(data_id)
+    _wait_for_canvas_foreground(page, "#sliceCanvas")
+
+
+@pytest.mark.browser
 def test_dataset_change_and_roi_updates_profiles(page: object, app_url: str) -> None:
     _wait_ui_ready(page, app_url)
     _choose_dataset(page, "movie-2d-pol-hd")

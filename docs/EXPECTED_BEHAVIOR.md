@@ -169,6 +169,8 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
 - `mobula --scene-source-url ... --initial-scene ...` connects to an authenticated `mobula.scene-source/v1` runtime and
   requests the descriptor and selected presentation layers asynchronously. The bearer token is sent in an authorization
   header, never in the URL.
+- Opening Mobula with an initial Scene selects its default combined layer as the active dataset and displays its first
+  frame without requiring a second selection in the dataset picker.
 - A runtime layer is transferred directly in memory and is only requested when selected; Mobula does not require the
   producer to write a temporary Scene snapshot.
 - Layer identity includes recipe id, target kind, and target id. A component named `combined` remains distinct from the

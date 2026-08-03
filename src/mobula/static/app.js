@@ -11655,6 +11655,7 @@ async function prepareInitialSceneLaunch() {
   });
   await refreshDatasetOptions(rendered.data_id);
   ensureDatasetOption(rendered);
+  state.dataId = rendered.data_id;
   els.datasetSelect.value = rendered.data_id;
 }
 
