@@ -1,5 +1,5 @@
 import { createGpuRenderers } from "./app_gpu.js?v=20260804b";
-import { bindCanvasInteractions } from "./app_interactions.js?v=20260803a";
+import { bindCanvasInteractions } from "./app_interactions.js?v=20260804a";
 import { fetchBinaryPayload as fetchBinaryPayloadBase, fetchJson as fetchJsonBase, createRequestBuilders } from "./app_requests.js?v=20260804d";
 import { resetForDatasetChange, resetForPlaneChange, resetForSceneLayerChange } from "./app_state_transitions.js?v=20260804b";
 import {

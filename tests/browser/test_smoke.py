@@ -991,3 +991,29 @@ def test_vertical_pan_tracks_pointer_with_north_up_axis(page: object, app_url: s
     view_after = _debug_state(page)["view"]
 
     assert view_after["v"] < view_before["v"]
+
+
+@pytest.mark.browser
+def test_click_jitter_does_not_pan_zoomed_slice(page: object, app_url: str) -> None:
+    _wait_ui_ready(page, app_url)
+    _choose_dataset(page, "movie-2d-pol-hd")
+
+    canvas = page.locator("#sliceCanvas:visible").first
+    box = canvas.bounding_box()
+    assert box is not None
+    center_x = box["x"] + box["width"] * 0.5
+    center_y = box["y"] + box["height"] * 0.5
+    page.mouse.move(center_x, center_y)
+    page.mouse.wheel(0, -600)
+    page.wait_for_function(
+        "() => { const v = window.__mobulaDebug.getStateSnapshot().view; return v.w > 0 && v.w < 256; }"
+    )
+    view_before = _debug_state(page)["view"]
+
+    page.mouse.move(center_x, center_y)
+    page.mouse.down()
+    page.mouse.move(center_x + 2, center_y + 1)
+    page.mouse.up()
+    view_after = _debug_state(page)["view"]
+
+    assert view_after == view_before

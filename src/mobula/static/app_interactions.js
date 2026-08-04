@@ -50,6 +50,7 @@ export function bindCanvasInteractions(ctx) {
   let sphereDragRaf = 0;
   let sphereDragTimer = 0;
   let sphereDragLastRenderAt = 0;
+  const PAN_DRAG_ACTIVATION_DISTANCE_CSS_PX = 4;
   const VOLUME_DRAG_MIN_RENDER_INTERVAL_MS = 72;
   const SPHERE_DRAG_MIN_RENDER_INTERVAL_MS = 28;
   const runVolumeDragRender = () => {
@@ -211,6 +212,7 @@ export function bindCanvasInteractions(ctx) {
         spanH: viewRect.srcH,
         drawW: panRect.w,
         drawH: panRect.h,
+        activated: false,
       };
     };
 
@@ -372,8 +374,17 @@ export function bindCanvasInteractions(ctx) {
 
     if (state.panDrag) {
       const rect = els.canvas.getBoundingClientRect();
-      const dxCanvas = (ev.clientX - state.panDrag.startClientX) * (els.canvas.width / Math.max(1, rect.width));
-      const dyCanvas = (ev.clientY - state.panDrag.startClientY) * (els.canvas.height / Math.max(1, rect.height));
+      const dxCss = ev.clientX - state.panDrag.startClientX;
+      const dyCss = ev.clientY - state.panDrag.startClientY;
+      if (
+        !state.panDrag.activated &&
+        Math.hypot(dxCss, dyCss) < PAN_DRAG_ACTIVATION_DISTANCE_CSS_PX
+      ) {
+        return;
+      }
+      state.panDrag.activated = true;
+      const dxCanvas = dxCss * (els.canvas.width / Math.max(1, rect.width));
+      const dyCanvas = dyCss * (els.canvas.height / Math.max(1, rect.height));
       const { flipV } = typeof planeAxisFlipState === "function" ? planeAxisFlipState() : { flipV: false };
 
       state.view.u = state.panDrag.startU - (dxCanvas / Math.max(1e-6, state.panDrag.drawW)) * state.panDrag.spanW;
@@ -469,8 +480,10 @@ export function bindCanvasInteractions(ctx) {
     }
 
     if (state.panDrag) {
+      const moved = state.panDrag.activated;
       state.panDrag = null;
-      await refreshViewProfiles();
+      if (moved) await refreshViewProfiles();
+      else updateHoverProbeFromEvent(ev);
       return;
     }
 

@@ -104,6 +104,8 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
 
 - In a zoomed two-dimensional view, viewport panning tracks the pointer in both screen directions even when an axis is
   displayed flipped. Panning changes only the viewport and does not change the data-axis/WCS orientation or ROI bounds.
+- Clicking a zoomed two-dimensional view, including normal sub-pixel or few-pixel pointer jitter during the click, does
+  not pan or recenter the viewport. Panning begins only after an intentional drag crosses the interaction threshold.
 
 - Volume mode is only available for non-spherical datasets with a varying hidden spatial axis.
 - Sphere mode is only available when the dataset presents a valid HEALPix layout:
