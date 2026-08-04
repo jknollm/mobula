@@ -57,20 +57,24 @@ function decodeRgbPayload(buffer) {
   const metadata = JSON.parse(binaryTextDecoder.decode(metadataBytes));
   const valuesLength = Number.parseInt(metadata?.values_length, 10);
   const channelCount = Number.parseInt(metadata?.values_channels, 10);
-  if (!Number.isFinite(valuesLength) || valuesLength < 0 || channelCount !== 3) {
+  if (!Number.isFinite(valuesLength) || valuesLength < 0 || ![3, 4].includes(channelCount)) {
     throw new Error("invalid Mobula RGB payload metadata");
   }
   const values = new Float32Array(buffer, valuesStart);
   if (values.length !== valuesLength * channelCount) {
     throw new Error("invalid Mobula RGB payload data length");
   }
+  const decodedValues = {
+    r: values.subarray(0, valuesLength),
+    g: values.subarray(valuesLength, valuesLength * 2),
+    b: values.subarray(valuesLength * 2, valuesLength * 3),
+  };
+  if (channelCount === 4) {
+    decodedValues.spectral_index = values.subarray(valuesLength * 3, valuesLength * 4);
+  }
   return {
     ...metadata,
-    values: {
-      r: values.subarray(0, valuesLength),
-      g: values.subarray(valuesLength, valuesLength * 2),
-      b: values.subarray(valuesLength * 2, valuesLength * 3),
-    },
+    values: decodedValues,
   };
 }
 
@@ -280,6 +284,7 @@ export function createRequestBuilders(deps) {
     const computeBackend = ["auto", "cpu", "native", "cuda", "metal"].includes(state.multiSpectralComputeBackend)
       ? state.multiSpectralComputeBackend
       : "auto";
+    const colorMode = state.multiSpectralColorMode === "spectral_index" ? "spectral_index" : "spectrum";
     const artifactMode = ["robust", "manual", "off"].includes(state.multiSpectralArtifactMode)
       ? state.multiSpectralArtifactMode
       : "robust";
@@ -311,6 +316,7 @@ export function createRequestBuilders(deps) {
       range_min: String(rangeMin),
       range_max: String(rangeMax),
       compute_backend: computeBackend,
+      spectral_color_mode: colorMode,
       artifact_mode: artifactMode,
       artifact_confidence_floor: String(confidenceFloor),
       spectral_index_min: String(alphaMin),

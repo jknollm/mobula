@@ -212,6 +212,13 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
   mode exposes the confidence floor, spectral-index interval, and desaturate-versus-hide behavior; Off preserves the
   unfiltered RGB conversion. Sparse Scenes without physical frequency coordinates retain brightness suppression but
   skip spectral-index suppression rather than inventing a physical index.
+- Multi-spectral color encoding offers both Spectrum RGB and direct Spectral Index alpha. Direct alpha coloring fits
+  `I(nu) proportional to nu**alpha` per pixel, clips the selected alpha interval to blue and red endpoint colors,
+  uses a constant-lightness palette scaled only by integrated intensity, and renders invalid fits gray unless Manual
+  Hide suppression is selected. The fitted alpha is available in the hover readout. Its alpha result is invariant to
+  the hidden Spectrum RGB deslope and mean-normalization settings. The alpha range remains directly adjustable even
+  with robust confidence suppression, and controls which only affect Spectrum RGB are hidden. If physical frequency
+  coordinates are unavailable, the viewer falls back to Spectrum RGB and disables direct alpha coloring.
 - Layer identity includes recipe id, target kind, and target id. A component named `combined` remains distinct from the
   recipe's reserved combined presentation.
 - An owning application may add `--no-browser` and open the local service itself.

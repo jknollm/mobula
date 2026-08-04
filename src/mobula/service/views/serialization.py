@@ -22,6 +22,7 @@ class RgbArrayPayload:
     red: np.ndarray
     green: np.ndarray
     blue: np.ndarray
+    spectral_index: np.ndarray | None = None
 
 
 def summarize_array(arr: np.ndarray) -> dict[str, float]:
@@ -102,12 +103,19 @@ def encode_rgb_payload_binary(payload: RgbArrayPayload) -> tuple[bytes, dict[str
     blue = np.asarray(payload.blue, dtype=np.float32)
     if red.shape != green.shape or red.shape != blue.shape:
         raise ValueError("RGB payload channels must have matching shapes")
+    spectral_index = None
+    if payload.spectral_index is not None:
+        spectral_index = np.asarray(payload.spectral_index, dtype=np.float32)
+        if spectral_index.shape != red.shape:
+            raise ValueError("spectral-index payload must match the RGB channel shape")
+    channel_count = 4 if spectral_index is not None else 3
     metadata = {
         **payload.metadata,
         "transport": "binary-rgb-v1",
         "values_dtype": "float32",
         "values_length": int(red.size),
-        "values_channels": 3,
+        "values_channels": channel_count,
+        "values_channel_names": ["r", "g", "b", "spectral_index"][:channel_count],
     }
     metadata_bytes = json.dumps(metadata, separators=(",", ":"), allow_nan=False).encode("utf-8")
     padded_len = (len(metadata_bytes) + 3) & ~3
@@ -120,6 +128,7 @@ def encode_rgb_payload_binary(payload: RgbArrayPayload) -> tuple[bytes, dict[str
         + np.ascontiguousarray(red).ravel().tobytes()
         + np.ascontiguousarray(green).ravel().tobytes()
         + np.ascontiguousarray(blue).ravel().tobytes()
+        + (b"" if spectral_index is None else np.ascontiguousarray(spectral_index).ravel().tobytes())
     )
     return body, {
         "X-Mobula-Transport": "binary-rgb-v1",

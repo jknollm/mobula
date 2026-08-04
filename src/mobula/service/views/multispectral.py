@@ -11,6 +11,7 @@ from mobula.service.acceleration import (
     MultispectralComputeRequest,
     execute_multispectral_compute,
     normalize_compute_backend_mode,
+    probe_compute_capabilities,
 )
 from mobula.service.acceleration.multispectral_common import normalize_total_flux_brightness_xp
 from mobula.service.api_models import SampleMode
@@ -29,6 +30,15 @@ from mobula.service.views.serialization import serialize_rgb_values
 _ROBUST_CONFIDENCE_FLOOR = 0.015
 _ROBUST_SPECTRAL_INDEX_RANGE = (-4.0, 4.0)
 _BRIGHTNESS_REFERENCE_QUANTILE = 0.995
+_SPECTRAL_INDEX_COLOR_STOPS = np.asarray(
+    [
+        [0.324840, 0.383664, 0.783141],
+        [0.079839, 0.490539, 0.445883],
+        [0.439739, 0.414254, 0.141791],
+        [0.778867, 0.311719, 0.158882],
+    ],
+    dtype=np.float64,
+)
 
 
 def _normalize_total_flux_brightness(
@@ -109,6 +119,42 @@ def _spectral_index_map(spectral_cube: np.ndarray, nu_coords: np.ndarray) -> tup
     return alpha, fit_valid
 
 
+def _spectral_index_rgb(
+    alpha: np.ndarray,
+    valid: np.ndarray,
+    brightness: np.ndarray,
+    *,
+    spectral_index_min: float,
+    spectral_index_max: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Map clipped spectral index to a constant-lightness palette and brightness."""
+    if spectral_index_max <= spectral_index_min:
+        raise ValueError("spectral_index_max must be larger than spectral_index_min")
+    alpha_arr = np.asarray(alpha, dtype=np.float64)
+    valid_arr = np.asarray(valid, dtype=bool)
+    brightness_arr = np.clip(np.asarray(brightness, dtype=np.float64), 0.0, 1.0)
+    if alpha_arr.shape != brightness_arr.shape or valid_arr.shape != brightness_arr.shape:
+        raise ValueError("spectral-index color inputs must have matching shapes")
+
+    position = np.clip(
+        (alpha_arr - float(spectral_index_min)) / (float(spectral_index_max) - float(spectral_index_min)),
+        0.0,
+        1.0,
+    )
+    scaled = position * (_SPECTRAL_INDEX_COLOR_STOPS.shape[0] - 1)
+    lower = np.minimum(np.floor(scaled).astype(np.int64), _SPECTRAL_INDEX_COLOR_STOPS.shape[0] - 2)
+    fraction = scaled - lower
+    base = (
+        _SPECTRAL_INDEX_COLOR_STOPS[lower] * (1.0 - fraction[:, :, np.newaxis])
+        + _SPECTRAL_INDEX_COLOR_STOPS[lower + 1] * fraction[:, :, np.newaxis]
+    )
+    palette_luma = 0.4
+    rgb = base * brightness_arr[:, :, np.newaxis]
+    rgb[~valid_arr] = palette_luma * brightness_arr[~valid_arr, np.newaxis]
+    rgb = np.clip(rgb, 0.0, 1.0)
+    return rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+
+
 def _apply_spectral_artifact_control(
     red: np.ndarray,
     green: np.ndarray,
@@ -123,6 +169,8 @@ def _apply_spectral_artifact_control(
     faint_behavior: str,
     brightness_reference: float | None = None,
     spectral_index_available: bool = True,
+    spectral_index_result: tuple[np.ndarray, np.ndarray] | None = None,
+    spectral_range_role: str = "confidence",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
     mode = str(artifact_mode or "robust").strip().lower()
     behavior = str(faint_behavior or "desaturate").strip().lower()
@@ -130,6 +178,8 @@ def _apply_spectral_artifact_control(
         raise HTTPException(status_code=400, detail="artifact_mode must be 'robust', 'manual', or 'off'")
     if behavior not in {"desaturate", "hide"}:
         raise HTTPException(status_code=400, detail="faint_behavior must be 'desaturate' or 'hide'")
+    if spectral_range_role not in {"confidence", "color"}:
+        raise HTTPException(status_code=400, detail="spectral_range_role must be 'confidence' or 'color'")
     if not np.isfinite(confidence_floor) or confidence_floor < 0.0 or confidence_floor > 1.0:
         raise HTTPException(status_code=400, detail="artifact_confidence_floor must be in [0, 1]")
     if not np.isfinite(spectral_index_min) or not np.isfinite(spectral_index_max):
@@ -147,7 +197,8 @@ def _apply_spectral_artifact_control(
     effective_behavior = behavior
     if mode == "robust":
         effective_floor = _ROBUST_CONFIDENCE_FLOOR
-        effective_min, effective_max = _ROBUST_SPECTRAL_INDEX_RANGE
+        if spectral_range_role == "confidence":
+            effective_min, effective_max = _ROBUST_SPECTRAL_INDEX_RANGE
         effective_behavior = "desaturate"
 
     diagnostics: dict[str, Any] = {
@@ -158,16 +209,23 @@ def _apply_spectral_artifact_control(
         "faint_behavior": effective_behavior,
         "artifact_affected_fraction": 0.0,
         "spectral_index_available": bool(spectral_index_available),
+        "spectral_index_range_role": spectral_range_role,
         "spectral_index_valid_fraction": 1.0 if spectral_index_available else 0.0,
         "brightness_reference_quantile": _BRIGHTNESS_REFERENCE_QUANTILE,
         "brightness_reference": float(brightness_reference) if brightness_reference is not None else None,
         "artifact_compute_backend": "numpy-cpu",
     }
+    if spectral_index_available and spectral_index_result is not None:
+        diagnostics["spectral_index_valid_fraction"] = float(np.mean(spectral_index_result[1]))
     if mode == "off":
         return red, green, blue, diagnostics
 
     if spectral_index_available:
-        alpha, alpha_valid = _spectral_index_map(spectral_cube, nu_coords)
+        alpha, alpha_valid = (
+            spectral_index_result
+            if spectral_index_result is not None
+            else _spectral_index_map(spectral_cube, nu_coords)
+        )
     else:
         alpha = np.zeros(np.asarray(spectral_cube).shape[1:], dtype=np.float64)
         alpha_valid = np.ones_like(alpha, dtype=bool)
@@ -188,11 +246,13 @@ def _apply_spectral_artifact_control(
         brightness_weight = np.ones_like(brightness_fraction)
     else:
         brightness_weight = _smoothstep(brightness_fraction, effective_floor, min(1.0, 2.0 * effective_floor))
-    if spectral_index_available:
+    if spectral_index_available and spectral_range_role == "confidence":
         alpha_softness = max(0.1, min(0.5, 0.1 * (effective_max - effective_min)))
         lower_weight = _smoothstep(alpha, effective_min - alpha_softness, effective_min)
         upper_weight = 1.0 - _smoothstep(alpha, effective_max, effective_max + alpha_softness)
         spectral_weight = lower_weight * upper_weight * alpha_valid.astype(np.float64)
+    elif spectral_index_available:
+        spectral_weight = alpha_valid.astype(np.float64)
     else:
         spectral_weight = np.ones_like(brightness_weight)
     color_confidence = brightness_weight * spectral_weight
@@ -249,6 +309,7 @@ def build_multispectral_response(
     faint_behavior: str = "desaturate",
     artifact_brightness_reference: float | None = None,
     spectral_index_available: bool = True,
+    spectral_color_mode: str = "spectrum",
     project_dims: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     if "nu" not in ds.dims:
@@ -288,6 +349,11 @@ def build_multispectral_response(
         compute_backend_mode = normalize_compute_backend_mode(compute_backend)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    color_mode = str(spectral_color_mode or "spectrum").strip().lower()
+    if color_mode not in {"spectrum", "spectral_index"}:
+        raise HTTPException(status_code=400, detail="spectral_color_mode must be 'spectrum' or 'spectral_index'")
+    if color_mode == "spectral_index" and not spectral_index_available:
+        raise HTTPException(status_code=400, detail="spectral-index coloring requires physical frequency coordinates")
 
     clip_min = float(np.clip(range_min / 100.0, 0.0, 1.0))
     clip_max = float(np.clip(range_max / 100.0, 0.0, 1.0))
@@ -301,6 +367,7 @@ def build_multispectral_response(
             "deslope_weighting",
             "chroma_preparation",
             "spectral_to_rgb_conversion",
+            "spectral_index_fit",
             "brightness_scaling",
             "artifact_suppression",
             "serialization",
@@ -358,24 +425,65 @@ def build_multispectral_response(
     preview_active = sampling_step != (1, 1)
 
     wavelength_axis_nm, axis_scale_applied = build_visible_wavelength_axis(nu_coords, axis_scale=axis_scale)
-    compute_request = MultispectralComputeRequest(
-        spectral_cube=arr,
-        wavelength_axis_nm=wavelength_axis_nm,
-        nu_coords=nu_coords,
-        intensity_mode=intensity_mode,
-        clip_min=clip_min,
-        clip_max=clip_max,
-        deslope=float(deslope),
-        normalize_spectrum=bool(normalize_spectrum),
-        normalize_boost=normalize_boost,
-    )
-    execution = execute_multispectral_compute(compute_request, requested_mode=compute_backend_mode)
-    timings.merge(execution.result.stage_timings_ms)
+    effective_deslope = 0.0 if color_mode == "spectral_index" else float(deslope)
+    effective_normalize_spectrum = False if color_mode == "spectral_index" else bool(normalize_spectrum)
+    effective_normalize_boost = 1.0 if color_mode == "spectral_index" else normalize_boost
+    spectral_index_result = None
+    spectral_range_role = "confidence"
+    if color_mode == "spectral_index":
+        with timings.stage("spectral_index_fit"):
+            spectral_index_result = _spectral_index_map(arr, nu_coords)
+        total_flux = np.sum(np.maximum(np.asarray(arr, dtype=np.float64), 0.0), axis=0)
+        source_brightness = _normalize_total_flux_brightness(
+            total_flux,
+            intensity_mode=intensity_mode,
+            clip_min=clip_min,
+            clip_max=clip_max,
+        )
+        source_red, source_green, source_blue = _spectral_index_rgb(
+            spectral_index_result[0],
+            spectral_index_result[1],
+            source_brightness,
+            spectral_index_min=spectral_index_min,
+            spectral_index_max=spectral_index_max,
+        )
+        spectral_range_role = "color"
+        compute_backend_requested = compute_backend_mode
+        compute_backend_used = "cpu"
+        compute_fallback_reason = (
+            None
+            if compute_backend_mode == "cpu"
+            else "spectral-index coloring uses the CPU spectral fit"
+        )
+        compute_capability_snapshot = probe_compute_capabilities()
+        deslope_ref = None
+    else:
+        compute_request = MultispectralComputeRequest(
+            spectral_cube=arr,
+            wavelength_axis_nm=wavelength_axis_nm,
+            nu_coords=nu_coords,
+            intensity_mode=intensity_mode,
+            clip_min=clip_min,
+            clip_max=clip_max,
+            deslope=effective_deslope,
+            normalize_spectrum=effective_normalize_spectrum,
+            normalize_boost=effective_normalize_boost,
+        )
+        execution = execute_multispectral_compute(compute_request, requested_mode=compute_backend_mode)
+        timings.merge(execution.result.stage_timings_ms)
+        source_red = execution.result.red
+        source_green = execution.result.green
+        source_blue = execution.result.blue
+        compute_backend_requested = execution.requested_mode
+        compute_backend_used = execution.backend_used
+        compute_fallback_reason = execution.fallback_reason
+        compute_capability_snapshot = execution.capability_snapshot
+        deslope_ref = execution.result.deslope_ref
     with timings.stage("artifact_suppression"):
         red, green, blue, artifact_diagnostics = _apply_spectral_artifact_control(
-            execution.result.red,
-            execution.result.green,
-            execution.result.blue,
+            source_red,
+            source_green,
+            source_blue,
             arr,
             nu_coords,
             artifact_mode=artifact_mode,
@@ -385,6 +493,8 @@ def build_multispectral_response(
             faint_behavior=faint_behavior,
             brightness_reference=artifact_brightness_reference,
             spectral_index_available=spectral_index_available,
+            spectral_index_result=spectral_index_result,
+            spectral_range_role=spectral_range_role,
         )
 
     sort_idx = np.argsort(nu_coords)
@@ -424,7 +534,13 @@ def build_multispectral_response(
     red_band, green_band, blue_band = band_chunks
 
     with timings.stage("serialization"):
-        values = serialize_rgb_values(red, green, blue)
+        values: dict[str, Any] = serialize_rgb_values(red, green, blue)
+        if spectral_index_result is not None:
+            alpha, alpha_valid = spectral_index_result
+            values["spectral_index"] = [
+                float(value) if valid else None
+                for value, valid in zip(alpha.ravel(), alpha_valid.ravel(), strict=True)
+            ]
 
     return {
         "data_id": ds.data_id,
@@ -440,21 +556,22 @@ def build_multispectral_response(
             "blue": [float(blue_band["lo"]), float(blue_band["hi"])],
             "unit": ds.units.get("nu", "Hz"),
             "axis_scale": axis_scale_applied,
-            "deslope": float(deslope),
-            "deslope_ref": execution.result.deslope_ref,
-            "normalize_spectrum": bool(normalize_spectrum),
-            "normalize_spectrum_boost": float(normalize_boost),
+            "deslope": effective_deslope,
+            "deslope_ref": deslope_ref,
+            "normalize_spectrum": effective_normalize_spectrum,
+            "normalize_spectrum_boost": float(effective_normalize_boost),
             "brightness_mode": "total_flux",
             "clip_mode": "brightness_only",
             "intensity_scale": intensity_mode,
             "range_min": float(range_min),
             "range_max": float(range_max),
-            "compute_backend_requested": execution.requested_mode,
-            "compute_backend_used": execution.backend_used,
-            "compute_backend": execution.backend_used,
-            "fallback_reason": execution.fallback_reason,
-            "capability_snapshot": execution.capability_snapshot,
+            "compute_backend_requested": compute_backend_requested,
+            "compute_backend_used": compute_backend_used,
+            "compute_backend": compute_backend_used,
+            "fallback_reason": compute_fallback_reason,
+            "capability_snapshot": compute_capability_snapshot,
             "preview_active": preview_active,
+            "spectral_color_mode": color_mode,
             **artifact_diagnostics,
             "stage_timings_ms": timings.snapshot(),
         },
@@ -484,6 +601,7 @@ def build_multispectral_response_from_scene_slices(
     faint_behavior: str = "desaturate",
     artifact_brightness_reference: float | None = None,
     spectral_index_available: bool = True,
+    spectral_color_mode: str = "spectrum",
 ) -> dict[str, Any]:
     """Combine a bounded stack of sparse Scene planes into multispectral RGB."""
     if len(rendered_slices) < 3:
@@ -554,6 +672,7 @@ def build_multispectral_response_from_scene_slices(
         faint_behavior=faint_behavior,
         artifact_brightness_reference=artifact_brightness_reference,
         spectral_index_available=spectral_index_available,
+        spectral_color_mode=spectral_color_mode,
     )
     payload["full_shape"] = [int(size) for size in reference.full_shape]
     payload["sampling_step"] = [int(step) for step in reference.sampling_step]
@@ -567,6 +686,7 @@ __all__ = [
     "_normalize_total_flux_brightness_xp",
     "_apply_spectral_artifact_control",
     "_spectral_index_map",
+    "_spectral_index_rgb",
     "build_multispectral_response",
     "build_multispectral_response_from_scene_slices",
     "convert_mf_to_rgb_new",

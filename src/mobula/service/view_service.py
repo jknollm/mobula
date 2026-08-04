@@ -52,6 +52,7 @@ def build_multispectral_response(
     faint_behavior: str = "desaturate",
     artifact_brightness_reference: float | None = None,
     spectral_index_available: bool = True,
+    spectral_color_mode: str = "spectrum",
     project_dims: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     return _build_multispectral_response(
@@ -83,6 +84,7 @@ def build_multispectral_response(
         faint_behavior=faint_behavior,
         artifact_brightness_reference=artifact_brightness_reference,
         spectral_index_available=spectral_index_available,
+        spectral_color_mode=spectral_color_mode,
         project_dims=project_dims,
     )
 

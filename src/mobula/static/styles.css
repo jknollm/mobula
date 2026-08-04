@@ -565,6 +565,10 @@ button:focus-visible {
   padding-top: 2px;
 }
 
+.spectralIndexColorScale.dualRangeBlock .dualRangeTrack::before {
+  background: linear-gradient(90deg, #5362c8 0%, #147d72 33%, #706a24 67%, #c74f29 100%);
+}
+
 .miniGroup {
   display: flex;
   gap: 6px;

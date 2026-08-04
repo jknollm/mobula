@@ -1,6 +1,6 @@
 import { createGpuRenderers } from "./app_gpu.js?v=20260306a";
 import { bindCanvasInteractions } from "./app_interactions.js?v=20260803a";
-import { fetchBinaryPayload as fetchBinaryPayloadBase, fetchJson as fetchJsonBase, createRequestBuilders } from "./app_requests.js?v=20260804b";
+import { fetchBinaryPayload as fetchBinaryPayloadBase, fetchJson as fetchJsonBase, createRequestBuilders } from "./app_requests.js?v=20260804d";
 import { resetForDatasetChange, resetForPlaneChange, resetForSceneLayerChange } from "./app_state_transitions.js?v=20260804b";
 import {
   AXIS_CONTROL_DIMS,
@@ -31,7 +31,7 @@ import {
   normalizeColorMapKey,
 } from "./viewer_constants.js?v=20260306b";
 import { normalizeComputeBackendPreference, probeRenderCapabilities } from "./viewer_acceleration.js?v=20260309a";
-import { lookupViewerElements } from "./viewer_dom.js?v=20260804a";
+import { lookupViewerElements } from "./viewer_dom.js?v=20260804b";
 import {
   VIEW_ROTATE_RATE_STEP_LEVELS,
   createAxisSettingsForMetadata,
@@ -59,7 +59,7 @@ import {
   orthonormalizeRotationMatrix,
   sphereRotationMatrixFromYawPitch,
   volumeRotationMatrixFromYawPitch,
-} from "./viewer_state.js?v=20260804b";
+} from "./viewer_state.js?v=20260804d";
 import { createPerfStore, perfEnabledFromLocation } from "./viewer_perf.js?v=20260306c";
 import { createPlaybackController } from "./viewer_playback.js?v=20260306d";
 import { createMovieRecordingController } from "./viewer_recording.js?v=20260306a";
@@ -436,6 +436,7 @@ function restoreState(snapshot) {
   merged.multiSpectralChannelRange = normalizeMultispectralChannelRange(merged.multiSpectralChannelRange);
   merged.multiSpectralNormalizeSpectrum = Boolean(merged.multiSpectralNormalizeSpectrum);
   merged.multiSpectralNormalizeBoost = normalizeMultispectralNormalizeBoost(merged.multiSpectralNormalizeBoost);
+  merged.multiSpectralColorMode = normalizeMultispectralColorMode(merged.multiSpectralColorMode);
   merged.multiSpectralArtifactMode = normalizeMultispectralArtifactMode(merged.multiSpectralArtifactMode);
   merged.multiSpectralConfidenceFloor = normalizeMultispectralConfidenceFloor(merged.multiSpectralConfidenceFloor);
   merged.multiSpectralIndexRange = normalizeMultispectralIndexRange(merged.multiSpectralIndexRange);
@@ -547,6 +548,7 @@ function debugStateSnapshot() {
     dataId: state.dataId,
     fluxScale: state.fluxScale,
     multispectralArtifact: {
+      colorMode: state.multiSpectralColorMode,
       mode: state.multiSpectralArtifactMode,
       confidenceFloor: state.multiSpectralConfidenceFloor,
       spectralIndexRange: { ...state.multiSpectralIndexRange },
@@ -763,6 +765,14 @@ function updateBackendStatusUi() {
   if (els.msArtifactStatus) {
     els.msArtifactStatus.textContent = multispectralArtifactStatusText();
   }
+  if (els.msColorModeSelect) {
+    const option = els.msColorModeSelect.querySelector('option[value="spectral_index"]');
+    if (option) {
+      const available = state.currentMultispectralBands?.spectral_index_available !== false;
+      option.disabled = !available;
+      option.textContent = available ? "Spectral Index α" : "Spectral Index α (coordinates required)";
+    }
+  }
 }
 
 function volumePayloadUrl(params) {
@@ -821,7 +831,23 @@ async function fetchMultispectralPayload(params, options = {}) {
   params.delete("artifact_brightness_reference");
   if (reference !== null) params.set("artifact_brightness_reference", String(reference));
   const url = multispectralPayloadUrl(params);
-  const request = options.playback === true ? fetchPlaybackCachedBinaryPayload(url) : fetchBinaryPayload(url);
+  const fetchPayload = (requestUrl) =>
+    options.playback === true ? fetchPlaybackCachedBinaryPayload(requestUrl) : fetchBinaryPayload(requestUrl);
+  let request = fetchPayload(url);
+  if (params.get("spectral_color_mode") === "spectral_index") {
+    request = request.catch((err) => {
+      if (!/spectral-index coloring requires physical frequency coordinates/i.test(String(err?.message || err))) {
+        throw err;
+      }
+      state.multiSpectralColorMode = "spectrum";
+      state.currentMultispectralBands = { spectral_index_available: false, spectral_color_mode: "spectrum" };
+      if (els.msColorModeSelect) els.msColorModeSelect.value = "spectrum";
+      updateBackendStatusUi();
+      const fallbackParams = new URLSearchParams(params);
+      fallbackParams.set("spectral_color_mode", "spectrum");
+      return fetchPayload(multispectralPayloadUrl(fallbackParams));
+    });
+  }
   if (!artifactActive || reference !== null) return request;
 
   const lockPromise = (async () => {
@@ -1714,14 +1740,17 @@ function syncMultispectralArtifactUi() {
   state.multiSpectralIndexRange = normalizeMultispectralIndexRange(state.multiSpectralIndexRange);
   state.multiSpectralFaintBehavior = normalizeMultispectralFaintBehavior(state.multiSpectralFaintBehavior);
   const enabled = canUseMultiSpectral() && state.multiSpectral;
+  const indexColor = state.multiSpectralColorMode === "spectral_index";
   const manual = enabled && mode === "manual";
+  const rangeEditable = enabled && (manual || indexColor);
   if (els.msArtifactModeSelect) {
     els.msArtifactModeSelect.value = mode;
     els.msArtifactModeSelect.disabled = !enabled;
   }
   if (els.msArtifactManualControls) {
-    els.msArtifactManualControls.style.display = manual ? "grid" : "none";
+    els.msArtifactManualControls.style.display = manual || indexColor ? "grid" : "none";
   }
+  if (els.msConfidenceFloorLabel) setVisible(els.msConfidenceFloorLabel, manual);
   if (els.msConfidenceFloorRange) {
     els.msConfidenceFloorRange.value = String(100 * state.multiSpectralConfidenceFloor);
     els.msConfidenceFloorRange.disabled = !manual;
@@ -1733,11 +1762,11 @@ function syncMultispectralArtifactUi() {
   const range = state.multiSpectralIndexRange;
   if (els.msSpectralIndexMinRange) {
     els.msSpectralIndexMinRange.value = String(range.min);
-    els.msSpectralIndexMinRange.disabled = !manual;
+    els.msSpectralIndexMinRange.disabled = !rangeEditable;
   }
   if (els.msSpectralIndexMaxRange) {
     els.msSpectralIndexMaxRange.value = String(range.max);
-    els.msSpectralIndexMaxRange.disabled = !manual;
+    els.msSpectralIndexMaxRange.disabled = !rangeEditable;
   }
   if (els.msSpectralIndexRangeTrack) {
     const leftPct = (100 * (range.min + MULTISPECTRAL_INDEX_LIMIT)) / (2 * MULTISPECTRAL_INDEX_LIMIT);
@@ -1756,6 +1785,13 @@ function syncMultispectralArtifactUi() {
   if (els.msFaintBehaviorSelect) {
     els.msFaintBehaviorSelect.value = state.multiSpectralFaintBehavior;
     els.msFaintBehaviorSelect.disabled = !manual;
+  }
+  if (els.msFaintBehaviorLabel) setVisible(els.msFaintBehaviorLabel, manual);
+  if (els.msSpectralIndexRangeTitle) {
+    els.msSpectralIndexRangeTitle.textContent = indexColor ? "Spectral Index Color Range" : "Spectral Index Range";
+  }
+  if (els.msSpectralIndexRangeBlock) {
+    els.msSpectralIndexRangeBlock.classList.toggle("spectralIndexColorScale", indexColor);
   }
   if (els.msArtifactStatus) els.msArtifactStatus.textContent = multispectralArtifactStatusText();
 }
@@ -2091,6 +2127,10 @@ function normalizeMultispectralArtifactMode(raw) {
   return ["robust", "manual", "off"].includes(raw) ? raw : "robust";
 }
 
+function normalizeMultispectralColorMode(raw) {
+  return raw === "spectral_index" ? "spectral_index" : "spectrum";
+}
+
 function normalizeMultispectralConfidenceFloor(raw) {
   const parsed = Number.parseFloat(raw);
   return Number.isFinite(parsed) ? clamp(parsed, 0, 1) : 0.015;
@@ -2112,7 +2152,6 @@ function normalizeMultispectralIndexRange(raw) {
 
 function multispectralArtifactStatusText() {
   const mode = normalizeMultispectralArtifactMode(state.multiSpectralArtifactMode);
-  if (mode === "off") return "Artifact suppression is off.";
   const bands = state.currentMultispectralBands || null;
   const floor = Number.isFinite(bands?.artifact_confidence_floor)
     ? bands.artifact_confidence_floor
@@ -2136,6 +2175,13 @@ function multispectralArtifactStatusText() {
   const alphaText = bands?.spectral_index_available === false
     ? "spectral-index filter unavailable"
     : `alpha ${alphaMin.toFixed(1)} to ${alphaMax.toFixed(1)}`;
+  if (state.multiSpectralColorMode === "spectral_index") {
+    const confidenceText = mode === "off"
+      ? "Confidence suppression is off."
+      : `${prefix.toLowerCase()} confidence above ${(100 * floor).toFixed(1)}%.${affected}`;
+    return `Spectral index: ${alphaMin.toFixed(1)} to ${alphaMax.toFixed(1)} maps blue to red. ${confidenceText}`;
+  }
+  if (mode === "off") return "Artifact suppression is off.";
   return `${prefix}: color above ${(100 * floor).toFixed(1)}%, ${alphaText}.${affected}`;
 }
 
@@ -3256,6 +3302,23 @@ function colorForSpectralNu(freqHz, bands, mapper = null) {
   return colorForWavelengthDelta(wavelengthFromMappedNu(freqHz, map));
 }
 
+const SPECTRAL_INDEX_COLOR_STOPS = [
+  [83, 98, 200],
+  [20, 125, 114],
+  [112, 106, 36],
+  [199, 79, 41],
+];
+
+function colorForSpectralIndexPosition(rawPosition) {
+  const position = clamp(rawPosition, 0, 1);
+  const scaled = position * (SPECTRAL_INDEX_COLOR_STOPS.length - 1);
+  const lower = Math.min(Math.floor(scaled), SPECTRAL_INDEX_COLOR_STOPS.length - 2);
+  const fraction = scaled - lower;
+  return SPECTRAL_INDEX_COLOR_STOPS[lower].map((value, channel) =>
+    Math.round(value * (1 - fraction) + SPECTRAL_INDEX_COLOR_STOPS[lower + 1][channel] * fraction)
+  );
+}
+
 const LOG_SCALE_FLOOR_RATIO = 1.0e-6;
 
 function normalizeFluxLog(v, maxPositive, minPositive = 0) {
@@ -4000,7 +4063,8 @@ function payloadValueAt(payload, ix, iy) {
     const rv = values.r[src];
     const gv = values.g[src];
     const bv = values.b[src];
-    return { kind: "rgb", r: rv, g: gv, b: bv };
+    const spectralIndex = isNumericArrayLike(values.spectral_index) ? values.spectral_index[src] : null;
+    return { kind: "rgb", r: rv, g: gv, b: bv, spectralIndex };
   }
   return { kind: "none" };
 }
@@ -4017,7 +4081,8 @@ function payloadValueAtIndex(payload, idx) {
     const rv = values.r[idx];
     const gv = values.g[idx];
     const bv = values.b[idx];
-    return { kind: "rgb", r: rv, g: gv, b: bv };
+    const spectralIndex = isNumericArrayLike(values.spectral_index) ? values.spectral_index[idx] : null;
+    return { kind: "rgb", r: rv, g: gv, b: bv, spectralIndex };
   }
   return { kind: "none" };
 }
@@ -4188,6 +4253,14 @@ function fluxReadoutLines(value) {
     return [`Flux    : ${padLeft(flux, 12)} ${unit}`.trimEnd()];
   }
   const fmt = (v) => (Number.isFinite(v) ? fmtIntensity(v) : "n/a");
+  if (state.multiSpectralColorMode === "spectral_index") {
+    return [
+      `Index α : ${padLeft(Number.isFinite(value.spectralIndex) ? fmtSignedFixed(value.spectralIndex, 3) : "n/a", 12)}`,
+      `Display R: ${padLeft(fmt(value.r), 12)}`,
+      `Display G: ${padLeft(fmt(value.g), 12)}`,
+      `Display B: ${padLeft(fmt(value.b), 12)}`,
+    ];
+  }
   return [
     `Flux R  : ${padLeft(fmt(value.r), 12)} ${unit}`.trimEnd(),
     `Flux G  : ${padLeft(fmt(value.g), 12)} ${unit}`.trimEnd(),
@@ -6153,6 +6226,7 @@ function updateControlCaps() {
   const msAvailable = canUseMultiSpectral();
   if (!msAvailable) state.multiSpectral = false;
   state.multiSpectralComputeBackend = normalizeComputeBackendPreference(state.multiSpectralComputeBackend);
+  state.multiSpectralColorMode = normalizeMultispectralColorMode(state.multiSpectralColorMode);
   if (state.multiSpectralNuAxisScale !== "log") state.multiSpectralNuAxisScale = "linear";
   if (!Number.isFinite(state.multiSpectralDeslope)) state.multiSpectralDeslope = 0;
   state.multiSpectralDeslope = clamp(state.multiSpectralDeslope, -8, 8);
@@ -6174,6 +6248,17 @@ function updateControlCaps() {
     els.computeBackendSelect.value = state.multiSpectralComputeBackend;
     els.computeBackendSelect.disabled = !msAvailable || !state.multiSpectral;
   }
+  if (els.msColorModeSelect) {
+    els.msColorModeSelect.value = state.multiSpectralColorMode;
+    els.msColorModeSelect.disabled = !msAvailable || !state.multiSpectral;
+  }
+  const spectralIndexColor = state.multiSpectralColorMode === "spectral_index";
+  if (els.computeBackendSelect) {
+    els.computeBackendSelect.disabled = !msAvailable || !state.multiSpectral || spectralIndexColor;
+  }
+  if (els.msFrequencyAxisRow) setVisible(els.msFrequencyAxisRow, !spectralIndexColor);
+  if (els.msDeslopeLabel) setVisible(els.msDeslopeLabel, !spectralIndexColor);
+  if (els.msNormalizeRow) setVisible(els.msNormalizeRow, !spectralIndexColor);
   if (els.msNuAxisLogBtn) {
     const logAxis = state.multiSpectralNuAxisScale === "log";
     els.msNuAxisLogBtn.disabled = !msAvailable || !state.multiSpectral;
@@ -6201,7 +6286,10 @@ function updateControlCaps() {
     setSliderFill(els.msNormalizeBoostRange);
   }
   if (els.msNormalizeBoostLabel) {
-    setVisible(els.msNormalizeBoostLabel, msAvailable && state.multiSpectral && state.multiSpectralNormalizeSpectrum);
+    setVisible(
+      els.msNormalizeBoostLabel,
+      msAvailable && state.multiSpectral && state.multiSpectralNormalizeSpectrum && !spectralIndexColor
+    );
   }
   if (els.msNormalizeBoostValue) {
     els.msNormalizeBoostValue.textContent = multispectralNormalizeBoostLabel();
@@ -9037,6 +9125,19 @@ function drawColorbar() {
   const unit = state.currentIntensityUnit || (state.meta ? state.meta.intensity_unit || "" : "");
   if (state.multiSpectral && state.currentMultispectralBands) {
     const bands = state.currentMultispectralBands;
+    if (bands.spectral_color_mode === "spectral_index") {
+      for (let x = 0; x < w; x += 1) {
+        const [r, g, b] = colorForSpectralIndexPosition(x / Math.max(1, w - 1));
+        ctx.fillStyle = `rgb(${r} ${g} ${b})`;
+        ctx.fillRect(x, 0, 1, h);
+      }
+      const alphaMin = Number.isFinite(bands.spectral_index_min) ? bands.spectral_index_min : -4;
+      const alphaMax = Number.isFinite(bands.spectral_index_max) ? bands.spectral_index_max : 4;
+      els.colorbarMin.textContent = `α ${alphaMin.toFixed(1)}`;
+      els.colorbarMid.textContent = "Spectral index α (brightness from total flux)";
+      els.colorbarMax.textContent = `α ${alphaMax >= 0 ? "+" : ""}${alphaMax.toFixed(1)}`;
+      return;
+    }
     const mapper = multispectralNuMapper(bands);
     const unitNu = bands.unit || dimUnit("nu") || "Hz";
     const deslopeAlpha = Number.isFinite(state.multiSpectralDeslope)
@@ -9299,6 +9400,7 @@ function sampleMorphMultispectralBands(fromSlice, toSlice, alpha) {
       : fromBands.brightness_reference,
     spectral_index_available: toBands.spectral_index_available ?? fromBands.spectral_index_available,
     artifact_compute_backend: toBands.artifact_compute_backend || fromBands.artifact_compute_backend,
+    spectral_color_mode: toBands.spectral_color_mode || fromBands.spectral_color_mode || state.multiSpectralColorMode,
     brightness_mode: toBands.brightness_mode || fromBands.brightness_mode || "total_flux",
   };
 }
@@ -14726,6 +14828,13 @@ async function init() {
     els.computeBackendSelect.addEventListener("change", async () => {
       if (!canUseMultiSpectral()) return;
       state.multiSpectralComputeBackend = normalizeComputeBackendPreference(els.computeBackendSelect.value);
+      updateControlCaps();
+      await refreshMultispectralControlsFromServer();
+    });
+  }
+  if (els.msColorModeSelect) {
+    els.msColorModeSelect.addEventListener("change", async () => {
+      state.multiSpectralColorMode = normalizeMultispectralColorMode(els.msColorModeSelect.value);
       updateControlCaps();
       await refreshMultispectralControlsFromServer();
     });

@@ -329,6 +329,7 @@ export function createViewerState() {
     fluxScale: "linear",
     multiSpectral: false,
     multiSpectralComputeBackend: "auto",
+    multiSpectralColorMode: "spectrum",
     multiSpectralNuAxisScale: "linear",
     multiSpectralDeslope: 0,
     multiSpectralNormalizeSpectrum: false,

@@ -398,6 +398,7 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
         spectral_index_max: float = Query(default=4.0, ge=-8.0, le=8.0),
         faint_behavior: str = Query(default="desaturate"),
         artifact_brightness_reference: float | None = Query(default=None, gt=0.0),
+        spectral_color_mode: str = Query(default="spectrum"),
         project_dims: str | None = Query(default=None),
         response_format: str = Query(default="json"),
     ) -> Response:
@@ -505,6 +506,7 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
                 faint_behavior=faint_behavior,
                 artifact_brightness_reference=artifact_brightness_reference,
                 spectral_index_available=spectral_index_available,
+                spectral_color_mode=spectral_color_mode,
             )
             dataset_metrics = {"cache": "remote-spectral-slices", "load_ms": 0.0}
             if fmt == "binary":
@@ -514,6 +516,7 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
                     red=values.get("r", ()),
                     green=values.get("g", ()),
                     blue=values.get("b", ()),
+                    spectral_index=values.get("spectral_index"),
                 )
                 return timed_encoded_response(
                     lambda: rgb_payload,
@@ -554,6 +557,7 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
                 spectral_index_max=spectral_index_max,
                 faint_behavior=faint_behavior,
                 artifact_brightness_reference=artifact_brightness_reference,
+                spectral_color_mode=spectral_color_mode,
                 project_dims=project,
             )
 
@@ -565,6 +569,7 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
                 red=values.get("r", ()),
                 green=values.get("g", ()),
                 blue=values.get("b", ()),
+                spectral_index=values.get("spectral_index"),
             )
 
         if fmt == "binary":

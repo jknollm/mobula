@@ -13,7 +13,7 @@
       href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Michroma&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="static/styles.css?v=20260305m" />
+    <link rel="stylesheet" href="static/styles.css?v=20260804a" />
   </head>
   <body>
     <main class="layout">
@@ -397,6 +397,13 @@
           </div>
           <div id="spectralMapControls" class="spectralMapControls">
             <label>
+              Color Encoding
+              <select id="msColorModeSelect">
+                <option value="spectrum" selected>Spectrum RGB</option>
+                <option value="spectral_index">Spectral Index α</option>
+              </select>
+            </label>
+            <label>
               Compute Backend
               <select id="computeBackendSelect">
                 <option value="auto" selected>Auto</option>
@@ -407,18 +414,18 @@
               </select>
             </label>
             <div id="computeBackendStatus" class="backendStatus" aria-live="polite"></div>
-            <div class="spectralMapAxisRow">
+            <div id="msFrequencyAxisRow" class="spectralMapAxisRow">
               <span>Frequency Axis</span>
               <button id="msNuAxisLogBtn" class="tinyBtn" type="button" aria-pressed="false">Log</button>
             </div>
-            <label class="volumeSlider" for="msDeslopeRange">
+            <label id="msDeslopeLabel" class="volumeSlider" for="msDeslopeRange">
               <div class="volumeSliderHeader">
                 <span>Spectral Index Correction</span>
                 <span id="msDeslopeValue">0.0</span>
               </div>
               <input id="msDeslopeRange" type="range" min="-4" max="4" step="0.1" value="0" />
             </label>
-            <div class="spectralMapAxisRow">
+            <div id="msNormalizeRow" class="spectralMapAxisRow">
               <span>Normalize Spectrum</span>
               <button id="msNormalizeBtn" class="tinyBtn" type="button" aria-pressed="false">Off</button>
             </div>
@@ -438,7 +445,7 @@
               </select>
             </label>
             <div id="msArtifactManualControls" class="spectralArtifactControls">
-              <label class="volumeSlider" for="msConfidenceFloorRange">
+              <label id="msConfidenceFloorLabel" class="volumeSlider" for="msConfidenceFloorRange">
                 <div class="volumeSliderHeader">
                   <span>Color Confidence Floor</span>
                   <span id="msConfidenceFloorValue">1.5%</span>
@@ -447,7 +454,7 @@
               </label>
               <div id="msSpectralIndexRangeBlock" class="dualRangeBlock">
                 <div class="dualRangeHeader">
-                  <span class="dualRangeTitle">Spectral Index Range</span>
+                  <span id="msSpectralIndexRangeTitle" class="dualRangeTitle">Spectral Index Range</span>
                 </div>
                 <div id="msSpectralIndexRangeTrack" class="dualRangeTrack">
                   <input id="msSpectralIndexMinRange" type="range" min="-8" max="8" step="0.1" value="-4" />
@@ -460,7 +467,7 @@
                   <span>+8</span>
                 </div>
               </div>
-              <label>
+              <label id="msFaintBehaviorLabel">
                 Unreliable Pixels
                 <select id="msFaintBehaviorSelect">
                   <option value="desaturate" selected>Desaturate</option>
@@ -958,6 +965,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="static/app.js?v=20260804c"></script>
+    <script type="module" src="static/app.js?v=20260804e"></script>
   </body>
 </html>

@@ -179,15 +179,19 @@ def _decode_binary_rgb_payload(body: bytes) -> dict[str, object]:
     metadata = json.loads(body[metadata_start : metadata_start + metadata_length].decode("utf-8"))
     values = np.frombuffer(body, dtype=np.float32, count=-1, offset=values_start)
     values_length = int(metadata["values_length"])
-    assert int(metadata["values_channels"]) == 3
-    assert values.size == values_length * 3
+    channel_count = int(metadata["values_channels"])
+    assert channel_count in {3, 4}
+    assert values.size == values_length * channel_count
+    decoded_values = {
+        "r": values[:values_length],
+        "g": values[values_length : values_length * 2],
+        "b": values[values_length * 2 : values_length * 3],
+    }
+    if channel_count == 4:
+        decoded_values["spectral_index"] = values[values_length * 3 : values_length * 4]
     return {
         **metadata,
-        "values": {
-            "r": values[:values_length],
-            "g": values[values_length : values_length * 2],
-            "b": values[values_length * 2 : values_length * 3],
-        },
+        "values": decoded_values,
     }
 
 
@@ -1495,6 +1499,47 @@ def test_multispectral_accepts_manual_artifact_suppression(client, base_dataset)
     assert bands["spectral_index_max"] == pytest.approx(1.5)
     assert bands["faint_behavior"] == "hide"
     assert 0.0 <= bands["artifact_affected_fraction"] <= 1.0
+
+
+def test_multispectral_accepts_direct_spectral_index_coloring(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={
+            "spectral_color_mode": "spectral_index",
+            "spectral_index_min": -2.0,
+            "spectral_index_max": 2.0,
+        },
+    )
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["bands"]["spectral_color_mode"] == "spectral_index"
+    assert body["bands"]["spectral_index_range_role"] == "color"
+    assert len(body["values"]["r"]) == body["shape"][0] * body["shape"][1]
+    assert len(body["values"]["spectral_index"]) == body["shape"][0] * body["shape"][1]
+
+    binary_res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"spectral_color_mode": "spectral_index", "response_format": "binary"},
+    )
+    assert binary_res.status_code == 200
+    binary_body = _decode_binary_rgb_payload(binary_res.content)
+    assert binary_body["values_channels"] == 4
+    np.testing.assert_allclose(
+        binary_body["values"]["spectral_index"],
+        np.asarray(body["values"]["spectral_index"], dtype=np.float32),
+        equal_nan=True,
+    )
+
+
+def test_multispectral_rejects_unknown_color_mode(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"spectral_color_mode": "rainbow_magic"},
+    )
+
+    assert res.status_code == 400
+    assert "spectral_color_mode" in res.json()["detail"]
 
 
 def test_multispectral_reuses_explicit_artifact_brightness_reference(client, base_dataset) -> None:

@@ -489,6 +489,16 @@ def test_sparse_scene_profiles_keep_roi_and_axis_navigation_in_flow(
     artifact_state = _debug_state(page)["multispectralArtifact"]
     assert artifact_state["mode"] == "manual"
     assert artifact_state["spectralIndexRange"] == {"min": -4, "max": 4}
+    with page.expect_response(lambda response: "/multispectral?" in response.url and response.status == 200):
+        page.locator("#msColorModeSelect:visible").select_option("spectral_index")
+    artifact_state = _debug_state(page)["multispectralArtifact"]
+    assert artifact_state["colorMode"] == "spectral_index"
+    assert page.locator("#msSpectralIndexRangeTitle:visible").inner_text() == "Spectral Index Color Range"
+    assert page.locator("#msDeslopeLabel:visible").count() == 0
+    assert page.locator("#msNormalizeRow:visible").count() == 0
+    assert "maps blue to red" in page.locator("#msArtifactStatus:visible").inner_text()
+    assert "Spectral index" in page.locator("#colorbarMid").inner_text()
+    assert page.locator("#colorbarMin").inner_text().startswith("α ")
     assert artifact_state["brightnessReference"] > 0
     brightness_reference = artifact_state["brightnessReference"]
     brightness_context = artifact_state["brightnessReferenceContext"]
