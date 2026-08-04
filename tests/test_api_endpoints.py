@@ -1542,6 +1542,32 @@ def test_multispectral_rejects_unknown_color_mode(client, base_dataset) -> None:
     assert "spectral_color_mode" in res.json()["detail"]
 
 
+def test_multispectral_rejects_synthetic_dense_frequency_coordinates(client_factory, base_dataset) -> None:
+    synthetic = CubeDataset(
+        data_id="synthetic-frequency-coordinates",
+        dims=base_dataset.dims,
+        coords={dim: np.asarray(values).copy() for dim, values in base_dataset.coords.items()},
+        values=np.asarray(base_dataset.values).copy(),
+        units=dict(base_dataset.units),
+        intensity_unit=base_dataset.intensity_unit,
+        wcs=dict(base_dataset.wcs),
+        provenance={"source": "ingested", "synthetic_coordinate_dims": ["nu"]},
+    )
+    synthetic.validate()
+
+    with client_factory(synthetic) as synthetic_client:
+        spectrum_res = synthetic_client.get(f"/api/datasets/{synthetic.data_id}/multispectral")
+        index_res = synthetic_client.get(
+            f"/api/datasets/{synthetic.data_id}/multispectral",
+            params={"spectral_color_mode": "spectral_index"},
+        )
+
+    assert spectrum_res.status_code == 200
+    assert spectrum_res.json()["bands"]["spectral_index_available"] is False
+    assert index_res.status_code == 400
+    assert "physical frequency coordinates" in index_res.json()["detail"]
+
+
 def test_multispectral_reuses_explicit_artifact_brightness_reference(client, base_dataset) -> None:
     res = client.get(
         f"/api/datasets/{_data_id(base_dataset)}/multispectral",

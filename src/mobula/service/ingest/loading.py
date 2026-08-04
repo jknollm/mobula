@@ -40,6 +40,9 @@ def combine_datasets(
     units[combine_axis] = "index"
 
     provenance = dict(base.provenance)
+    synthetic_coordinate_dims = set(provenance.get("synthetic_coordinate_dims", ()))
+    synthetic_coordinate_dims.add(combine_axis)
+    provenance["synthetic_coordinate_dims"] = sorted(synthetic_coordinate_dims)
     provenance["ingest"] = {
         "inspection_id": inspection_id,
         "plan_id": plan_id,
@@ -167,6 +170,7 @@ def load_hdf5_dataset_stack(
         "stacked_member_paths": member_paths,
         "stacked_kind": stack_kind,
         "key_stack_axis": str(mapping.key_stack_axis or ""),
+        "synthetic_coordinate_dims": sorted(dims),
     }
     values, coords, provenance = _normalize_stokes_iqu_to_iquv(values, dims, coords, provenance)
 

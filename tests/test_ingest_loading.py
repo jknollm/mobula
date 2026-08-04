@@ -174,6 +174,7 @@ def test_combine_datasets_concatenates_singleton_axis_and_records_ingest_provena
     assert combined.data_id == "combined"
     assert combined.shape == (2, 1, 1, 1, 2, 3, 1)
     assert combined.units["sample"] == "index"
+    assert "sample" in combined.provenance["synthetic_coordinate_dims"]
     assert combined.provenance["ingest"] == {
         "inspection_id": "insp-1",
         "plan_id": "plan-1",

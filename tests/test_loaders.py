@@ -27,6 +27,7 @@ def test_load_hdf5_reads_dims_units_and_coords(tmp_path: Path) -> None:
     assert out.shape == (2, 3, 4)
     assert out.units["x"] == "arcsec"
     assert out.intensity_unit == "Jy/beam"
+    assert out.provenance["synthetic_coordinate_dims"] == ["sample", "x"]
     np.testing.assert_allclose(out.coords["t"], np.array([0.0, 5.0, 10.0], dtype=np.float64))
 
 
@@ -241,6 +242,7 @@ def test_load_npz_prefers_display_cube_and_applies_frequency_coords(tmp_path: Pa
     assert out.shape == (1, 1, 4, 6, 8)
     np.testing.assert_allclose(out.coords["nu"], np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float64))
     assert out.units["nu"] == "Hz"
+    assert "nu" not in out.provenance["synthetic_coordinate_dims"]
 
 
 @pytest.mark.parametrize(

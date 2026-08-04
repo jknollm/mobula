@@ -41,6 +41,15 @@ _SPECTRAL_INDEX_COLOR_STOPS = np.asarray(
 )
 
 
+def physical_frequency_coordinates_available(ds: CubeDataset) -> bool:
+    """Return whether ``nu`` coordinates represent a physical frequency axis."""
+    synthetic_dims = set(ds.provenance.get("synthetic_coordinate_dims", ()))
+    if "nu" not in ds.dims or "nu" in synthetic_dims:
+        return False
+    nu = np.asarray(ds.coords.get("nu", ()), dtype=np.float64).reshape(-1)
+    return bool(nu.size >= 3 and np.all(np.isfinite(nu)) and np.all(nu > 0.0) and np.unique(nu).size >= 3)
+
+
 def _normalize_total_flux_brightness(
     total_flux: np.ndarray,
     *,
@@ -687,6 +696,7 @@ __all__ = [
     "_apply_spectral_artifact_control",
     "_spectral_index_map",
     "_spectral_index_rgb",
+    "physical_frequency_coordinates_available",
     "build_multispectral_response",
     "build_multispectral_response_from_scene_slices",
     "convert_mf_to_rgb_new",

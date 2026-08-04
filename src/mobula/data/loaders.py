@@ -365,7 +365,14 @@ def _default_npz_array_key(npz: Any) -> str:
     return str(candidates[0]["path"])
 
 
-def _apply_npz_coords(npz: Any, dims: tuple[str, ...], shape: tuple[int, ...], coords: dict[str, np.ndarray], units: dict[str, str]) -> None:
+def _apply_npz_coords(
+    npz: Any,
+    dims: tuple[str, ...],
+    shape: tuple[int, ...],
+    coords: dict[str, np.ndarray],
+    units: dict[str, str],
+) -> set[str]:
+    explicit_dims: set[str] = set()
     for axis, dim in enumerate(dims):
         for key in _NPZ_COORD_KEYS.get(dim, ()):
             if key not in npz:
@@ -378,7 +385,9 @@ def _apply_npz_coords(npz: Any, dims: tuple[str, ...], shape: tuple[int, ...], c
                 units[dim] = "Hz"
             elif dim == "t":
                 units[dim] = "s"
+            explicit_dims.add(dim)
             break
+    return explicit_dims
 
 
 def pad_dataset_to_canonical(dataset: CubeDataset) -> tuple[CubeDataset, tuple[str, ...]]:
@@ -454,11 +463,13 @@ def load_hdf5(
         values, dims = reorder_to_canonical(values, dims)
         coords = _default_coords_from_shape(dims, values.shape)
         units = _default_units(dims)
+        synthetic_coordinate_dims = set(dims)
 
         for dim in dims:
             coord_ds_name = f"coords/{dim}"
             if coord_ds_name in f:
                 coords[dim] = np.asarray(f[coord_ds_name], dtype=np.float64).reshape(-1)
+                synthetic_coordinate_dims.discard(dim)
 
             unit_key = f"unit_{dim}"
             if unit_key in ds.attrs:
@@ -471,7 +482,12 @@ def load_hdf5(
         if isinstance(intensity_unit, bytes):
             intensity_unit = intensity_unit.decode("utf-8")
 
-    provenance = {"source": "hdf5", "path": str(path), "dataset_path": dataset_path}
+    provenance = {
+        "source": "hdf5",
+        "path": str(path),
+        "dataset_path": dataset_path,
+        "synthetic_coordinate_dims": sorted(synthetic_coordinate_dims),
+    }
     values, coords, provenance = _normalize_stokes_iqu_to_iquv(values, dims, coords, provenance)
 
     dataset = CubeDataset(
@@ -527,6 +543,7 @@ def load_fits(
         values, dims = reorder_to_canonical(values, dims)
         coords = _default_coords_from_shape(dims, values.shape)
         units = _default_units(dims)
+        synthetic_coordinate_dims = set(dims)
         axis_types = {dim: _axis_type_for_dim(dim) for dim in dims}
         fits_axes: dict[str, dict[str, Any]] = {}
 
@@ -551,6 +568,7 @@ def load_fits(
                 n = values.shape[dims.index(dim)]
                 pix = np.arange(1, n + 1, dtype=np.float64)
                 coords[dim] = (crval + (pix - crpix) * cdelt).astype(np.float64)
+                synthetic_coordinate_dims.discard(dim)
 
         bunit = header.get("BUNIT", "arb")
         frame = header.get("RADESYS", header.get("WCSNAME", "unknown"))
@@ -570,7 +588,12 @@ def load_fits(
                 if fv is not None:
                     fits_matrix[key] = fv
 
-    provenance = {"source": "fits", "path": str(path), "hdu_index": hdu_index}
+    provenance = {
+        "source": "fits",
+        "path": str(path),
+        "hdu_index": hdu_index,
+        "synthetic_coordinate_dims": sorted(synthetic_coordinate_dims),
+    }
     values, coords, provenance = _normalize_stokes_iqu_to_iquv(values, dims, coords, provenance)
 
     dataset = CubeDataset(
@@ -620,17 +643,20 @@ def load_zarr(
 
     coords = _default_coords_from_shape(dims, values.shape)
     units = _default_units(dims)
+    synthetic_coordinate_dims = set(dims)
     if "coords" in root:
         cg = root["coords"]
         for dim in dims:
             if dim in cg:
                 coords[dim] = np.asarray(cg[dim], dtype=np.float64).reshape(-1)
+                synthetic_coordinate_dims.discard(dim)
     for dim in dims:
         # xarray-style zarr stores coordinate variables at root with _ARRAY_DIMENSIONS.
         if dim in root:
             coord_arr = root[dim]
             if getattr(coord_arr, "ndim", 0) == 1:
                 coords[dim] = np.asarray(coord_arr, dtype=np.float64).reshape(-1)
+                synthetic_coordinate_dims.discard(dim)
             coord_units = root[dim].attrs.get("units")
             if coord_units is not None:
                 units[dim] = _as_text(coord_units)
@@ -648,7 +674,12 @@ def load_zarr(
     if frame is None:
         frame = root.attrs.get("frame", "unknown")
 
-    provenance = {"source": "zarr", "path": str(path), "data_key": data_key}
+    provenance = {
+        "source": "zarr",
+        "path": str(path),
+        "data_key": data_key,
+        "synthetic_coordinate_dims": sorted(synthetic_coordinate_dims),
+    }
     values, coords, provenance = _normalize_stokes_iqu_to_iquv(values, dims, coords, provenance)
 
     dataset = CubeDataset(
@@ -693,9 +724,20 @@ def load_npz(
         values, dims = reorder_to_canonical(values, dims)
         coords = _default_coords_from_shape(dims, values.shape)
         units = _default_units(dims)
-        _apply_npz_coords(npz, dims, tuple(int(x) for x in values.shape), coords, units)
+        explicit_coordinate_dims = _apply_npz_coords(
+            npz,
+            dims,
+            tuple(int(x) for x in values.shape),
+            coords,
+            units,
+        )
 
-    provenance = {"source": "npz", "path": str(path), "array_key": selected_key}
+    provenance = {
+        "source": "npz",
+        "path": str(path),
+        "array_key": selected_key,
+        "synthetic_coordinate_dims": sorted(set(dims) - explicit_coordinate_dims),
+    }
     values, coords, provenance = _normalize_stokes_iqu_to_iquv(values, dims, coords, provenance)
 
     dataset = CubeDataset(

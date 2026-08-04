@@ -33,6 +33,7 @@ from mobula.service.view_service import (
     build_slice_payload,
     build_volume_payload,
 )
+from mobula.service.views.multispectral import physical_frequency_coordinates_available
 from mobula.service.views.serialization import (
     RgbArrayPayload,
     encode_rgb_payload_binary,
@@ -557,6 +558,7 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
                 spectral_index_max=spectral_index_max,
                 faint_behavior=faint_behavior,
                 artifact_brightness_reference=artifact_brightness_reference,
+                spectral_index_available=physical_frequency_coordinates_available(ds),
                 spectral_color_mode=spectral_color_mode,
                 project_dims=project,
             )
