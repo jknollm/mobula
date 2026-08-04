@@ -499,6 +499,13 @@ def test_sparse_scene_profiles_keep_roi_and_axis_navigation_in_flow(
     assert "maps blue to red" in page.locator("#msArtifactStatus:visible").inner_text()
     assert "Spectral index" in page.locator("#colorbarMid").inner_text()
     assert page.locator("#colorbarMin").inner_text().startswith("α ")
+    with page.expect_response(
+        lambda response: "/multispectral?" in response.url
+        and "intensity_scale=log" in response.url
+        and response.status == 200
+    ):
+        page.locator("#fluxScaleLogBtn:visible").click()
+    assert _debug_state(page)["fluxScale"] == "log"
     assert artifact_state["brightnessReference"] > 0
     brightness_reference = artifact_state["brightnessReference"]
     brightness_context = artifact_state["brightnessReferenceContext"]

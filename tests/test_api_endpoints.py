@@ -1387,6 +1387,8 @@ def test_multispectral_success(client, base_dataset) -> None:
     assert body["bands"]["deslope"] == pytest.approx(0.0)
     assert body["bands"]["normalize_spectrum"] is False
     assert body["bands"]["brightness_mode"] == "total_flux"
+    assert body["bands"]["brightness_luma_scale"] == pytest.approx(1.0)
+    assert body["bands"]["brightness_scale_quantile"] == pytest.approx(0.995)
 
 
 def test_multispectral_binary_response_matches_json_payload(client, base_dataset) -> None:
@@ -1515,6 +1517,7 @@ def test_multispectral_accepts_direct_spectral_index_coloring(client, base_datas
     body = res.json()
     assert body["bands"]["spectral_color_mode"] == "spectral_index"
     assert body["bands"]["spectral_index_range_role"] == "color"
+    assert body["bands"]["brightness_luma_scale"] == pytest.approx(0.4)
     assert len(body["values"]["r"]) == body["shape"][0] * body["shape"][1]
     assert len(body["values"]["spectral_index"]) == body["shape"][0] * body["shape"][1]
 

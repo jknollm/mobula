@@ -4,6 +4,29 @@ from typing import Any
 
 import numpy as np
 
+BRIGHTNESS_SCALE_QUANTILE = 0.995
+_MIN_ROBUST_REFERENCE_VALUES = 16
+
+
+def robust_positive_reference_xp(
+    values: Any,
+    *,
+    xp: Any,
+    quantile: float = BRIGHTNESS_SCALE_QUANTILE,
+) -> float:
+    """Return a high positive quantile without letting isolated peaks set display scale."""
+    arr = xp.asarray(values, dtype=xp.float64)
+    positive = xp.isfinite(arr) & (arr > 0.0)
+    count = int(xp.sum(positive).item())
+    if count < 1:
+        return 0.0
+    selected = arr[positive]
+    if count >= _MIN_ROBUST_REFERENCE_VALUES:
+        reference = float(xp.quantile(selected, quantile).item())
+    else:
+        reference = float(xp.max(selected).item())
+    return reference if np.isfinite(reference) and reference > 0.0 else 0.0
+
 
 def normalize_total_flux_brightness_xp(
     total_flux: Any,
@@ -19,14 +42,14 @@ def normalize_total_flux_brightness_xp(
     if not bool(xp.any(finite)):
         return xp.zeros_like(arr, dtype=xp.float64)
 
-    maxval = float(xp.max(arr[finite]).item())
-    if not np.isfinite(maxval) or maxval <= 0:
+    reference = robust_positive_reference_xp(arr, xp=xp)
+    if reference <= 0.0:
         return xp.zeros_like(arr, dtype=xp.float64)
 
-    hi = maxval * clip_max
+    hi = reference * clip_max
     if intensity_mode == "log":
         if clip_min > 0.0:
-            lo = maxval * clip_min
+            lo = reference * clip_min
         else:
             lo = hi / max(dynamic_range, 1.0 + 1e-12)
         lo = max(lo, np.finfo(np.float64).tiny)
@@ -34,7 +57,7 @@ def normalize_total_flux_brightness_xp(
         clipped = xp.clip(arr, lo, hi)
         return xp.log(clipped / lo) / xp.log(hi / lo)
 
-    lo = max(maxval * clip_min, 0.0)
+    lo = max(reference * clip_min, 0.0)
     hi = max(hi, lo + 1.0e-12)
     norm = xp.clip((arr - lo) / (hi - lo), 0.0, 1.0)
     if intensity_mode == "sqrt":

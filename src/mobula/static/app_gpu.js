@@ -1158,6 +1158,7 @@ class GpuRgbRenderer {
       uniform int u_base_flux_scale;
       uniform int u_target_flux_scale;
       uniform float u_chroma_boost;
+      uniform float u_brightness_luma_scale;
 
       const float DYNAMIC_RANGE = 2500.0;
 
@@ -1199,8 +1200,9 @@ class GpuRgbRenderer {
           texture(u_green, uv).r,
           texture(u_blue, uv).r
         );
-        float rawFraction = rawFractionFromDisplay(rgbLuma(max(sourceV, vec3(0.0))), u_base_flux_scale, u_base_range);
-        float targetBrightness = displayFromRawFraction(rawFraction, u_target_flux_scale, u_target_range);
+        float sourceBrightness = rgbLuma(max(sourceV, vec3(0.0))) / max(u_brightness_luma_scale, 1.0e-6);
+        float rawFraction = rawFractionFromDisplay(sourceBrightness, u_base_flux_scale, u_base_range);
+        float targetBrightness = u_brightness_luma_scale * displayFromRawFraction(rawFraction, u_target_flux_scale, u_target_range);
         vec3 sampleV = max(sourceV * u_gain, vec3(0.0));
         if (abs(u_chroma_boost - 1.0) > 1.0e-6) {
           float gray = (sampleV.r + sampleV.g + sampleV.b) / 3.0;
@@ -1230,6 +1232,7 @@ class GpuRgbRenderer {
       baseFluxScale: gl.getUniformLocation(this.program, "u_base_flux_scale"),
       targetFluxScale: gl.getUniformLocation(this.program, "u_target_flux_scale"),
       chromaBoost: gl.getUniformLocation(this.program, "u_chroma_boost"),
+      brightnessLumaScale: gl.getUniformLocation(this.program, "u_brightness_luma_scale"),
     };
 
     this.valueTextureCache = new WeakMap();
@@ -1267,6 +1270,9 @@ class GpuRgbRenderer {
     const gainG = Number.isFinite(preview?.gains?.[1]) ? preview.gains[1] : 1;
     const gainB = Number.isFinite(preview?.gains?.[2]) ? preview.gains[2] : 1;
     const chromaBoost = Number.isFinite(preview?.chromaBoost) ? preview.chromaBoost : 1;
+    const brightnessLumaScale = Number.isFinite(preview?.brightnessLumaScale)
+      ? Math.max(1.0e-6, Math.min(1, preview.brightnessLumaScale))
+      : 1;
     const baseFluxScale = preview?.baseFluxScale === "log" ? 1 : preview?.baseFluxScale === "sqrt" ? 2 : 0;
     const targetFluxScale = preview?.targetFluxScale === "log" ? 1 : preview?.targetFluxScale === "sqrt" ? 2 : 0;
     const baseRange = preview?.baseRange || { min: 0, max: 1 };
@@ -1303,6 +1309,7 @@ class GpuRgbRenderer {
     gl.uniform1i(this.uniforms.baseFluxScale, baseFluxScale);
     gl.uniform1i(this.uniforms.targetFluxScale, targetFluxScale);
     gl.uniform1f(this.uniforms.chromaBoost, chromaBoost);
+    gl.uniform1f(this.uniforms.brightnessLumaScale, brightnessLumaScale);
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 

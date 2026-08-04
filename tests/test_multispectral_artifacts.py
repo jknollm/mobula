@@ -5,6 +5,7 @@ import pytest
 from fastapi import HTTPException
 
 from mobula.data.schema import CubeDataset
+from mobula.service.acceleration.multispectral_common import normalize_total_flux_brightness_xp
 from mobula.service.views.multispectral import (
     _apply_spectral_artifact_control,
     _spectral_index_map,
@@ -73,6 +74,32 @@ def test_spectral_index_rgb_marks_invalid_fit_as_gray() -> None:
     )
 
     np.testing.assert_allclose([red[0, 0], green[0, 0], blue[0, 0]], 0.16)
+
+
+def test_log_brightness_uses_robust_reference_instead_of_isolated_peak() -> None:
+    field = np.linspace(1.0, 100.0, 10_000, dtype=np.float64).reshape(100, 100)
+    with_peak = field.copy()
+    with_peak[-1, -1] = 1.0e12
+
+    baseline = normalize_total_flux_brightness_xp(
+        field,
+        intensity_mode="log",
+        clip_min=0.0,
+        clip_max=1.0,
+        xp=np,
+    )
+    peaked = normalize_total_flux_brightness_xp(
+        with_peak,
+        intensity_mode="log",
+        clip_min=0.0,
+        clip_max=1.0,
+        xp=np,
+    )
+
+    np.testing.assert_allclose(peaked[:-1], baseline[:-1], atol=2.0e-4)
+    np.testing.assert_allclose(peaked[-1, :-1], baseline[-1, :-1], atol=2.0e-4)
+    assert np.count_nonzero(peaked > 0.1) > 9_000
+    assert peaked[-1, -1] == pytest.approx(1.0)
 
 
 def test_direct_spectral_index_coloring_depends_only_on_alpha_and_total_flux() -> None:

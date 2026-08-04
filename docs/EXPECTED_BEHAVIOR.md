@@ -219,6 +219,9 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
   the hidden Spectrum RGB deslope and mean-normalization settings. The alpha range remains directly adjustable even
   with robust confidence suppression, and controls which only affect Spectrum RGB are hidden. If physical frequency
   coordinates are unavailable, the viewer falls back to Spectrum RGB and disables direct alpha coloring.
+- Multi-spectral brightness uses the 99.5th percentile of positive pixels as its default display reference. Isolated
+  bright sources clip at the top of the display range instead of forcing diffuse morphology below the log floor;
+  the brightness-range controls refine that robust reference explicitly.
 - Layer identity includes recipe id, target kind, and target id. A component named `combined` remains distinct from the
   recipe's reserved combined presentation.
 - An owning application may add `--no-browser` and open the local service itself.

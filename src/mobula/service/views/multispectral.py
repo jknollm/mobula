@@ -13,7 +13,10 @@ from mobula.service.acceleration import (
     normalize_compute_backend_mode,
     probe_compute_capabilities,
 )
-from mobula.service.acceleration.multispectral_common import normalize_total_flux_brightness_xp
+from mobula.service.acceleration.multispectral_common import (
+    BRIGHTNESS_SCALE_QUANTILE,
+    normalize_total_flux_brightness_xp,
+)
 from mobula.service.api_models import SampleMode
 from mobula.service.api_utils import (
     _apply_sample_mode_reduction,
@@ -29,7 +32,7 @@ from mobula.service.views.serialization import serialize_rgb_values
 
 _ROBUST_CONFIDENCE_FLOOR = 0.015
 _ROBUST_SPECTRAL_INDEX_RANGE = (-4.0, 4.0)
-_BRIGHTNESS_REFERENCE_QUANTILE = 0.995
+_BRIGHTNESS_REFERENCE_QUANTILE = BRIGHTNESS_SCALE_QUANTILE
 _SPECTRAL_INDEX_COLOR_STOPS = np.asarray(
     [
         [0.324840, 0.383664, 0.783141],
@@ -570,6 +573,8 @@ def build_multispectral_response(
             "normalize_spectrum": effective_normalize_spectrum,
             "normalize_spectrum_boost": float(effective_normalize_boost),
             "brightness_mode": "total_flux",
+            "brightness_luma_scale": 0.4 if color_mode == "spectral_index" else 1.0,
+            "brightness_scale_quantile": BRIGHTNESS_SCALE_QUANTILE,
             "clip_mode": "brightness_only",
             "intensity_scale": intensity_mode,
             "range_min": float(range_min),

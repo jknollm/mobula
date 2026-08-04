@@ -11,6 +11,7 @@ from mobula.service.acceleration.compute_base import (
     MultispectralComputeRequest,
     MultispectralComputeResult,
 )
+from mobula.service.acceleration.multispectral_common import BRIGHTNESS_SCALE_QUANTILE
 from mobula.service.perf import StageTimings
 from mobula.service.spectral_rgb import _MATRIX_SRGB_D65, _integration_weights, _xyz_from_wavelengths
 
@@ -39,14 +40,19 @@ def _normalize_total_flux_brightness_torch(
     dynamic_range: float = 2.5e3,
 ) -> Any:
     finite = torch.isfinite(total_flux)
-    maxval = torch.where(finite, total_flux, torch.zeros_like(total_flux)).amax()
-    if not bool((maxval > 0.0).item()):
+    positive = total_flux[finite & (total_flux > 0.0)]
+    if int(positive.numel()) < 1:
         return torch.zeros_like(total_flux, dtype=torch.float32)
+    reference = (
+        torch.quantile(positive, BRIGHTNESS_SCALE_QUANTILE)
+        if int(positive.numel()) >= 16
+        else positive.amax()
+    )
 
-    hi = maxval * float(clip_max)
+    hi = reference * float(clip_max)
     if intensity_mode == "log":
         if clip_min > 0.0:
-            lo = maxval * clip_min
+            lo = reference * clip_min
         else:
             lo = hi / max(dynamic_range, 1.0 + 1.0e-12)
         lo = torch.clamp(lo, min=np.finfo(np.float32).tiny)
@@ -54,7 +60,7 @@ def _normalize_total_flux_brightness_torch(
         clipped = torch.clamp(total_flux, min=lo, max=hi)
         return torch.log(clipped / lo) / torch.log(hi / lo)
 
-    lo = torch.clamp(maxval * float(clip_min), min=0.0)
+    lo = torch.clamp(reference * float(clip_min), min=0.0)
     hi = torch.maximum(hi, lo + 1.0e-12)
     norm = torch.clamp((total_flux - lo) / (hi - lo), min=0.0, max=1.0)
     if intensity_mode == "sqrt":

@@ -1,4 +1,4 @@
-import { createGpuRenderers } from "./app_gpu.js?v=20260306a";
+import { createGpuRenderers } from "./app_gpu.js?v=20260804b";
 import { bindCanvasInteractions } from "./app_interactions.js?v=20260803a";
 import { fetchBinaryPayload as fetchBinaryPayloadBase, fetchJson as fetchJsonBase, createRequestBuilders } from "./app_requests.js?v=20260804d";
 import { resetForDatasetChange, resetForPlaneChange, resetForSceneLayerChange } from "./app_state_transitions.js?v=20260804b";
@@ -2365,6 +2365,9 @@ function buildMultispectralLocalPreview(payload) {
     targetFluxScale: multispectralFluxScaleMode(state.fluxScale),
     baseRange: multispectralRangeWindowFromPercent(bands.range_min, bands.range_max),
     targetRange,
+    brightnessLumaScale: Number.isFinite(bands.brightness_luma_scale)
+      ? clamp(bands.brightness_luma_scale, 1.0e-6, 1.0)
+      : 1,
   };
 }
 
@@ -8531,6 +8534,9 @@ function createRgbRasterCanvas(width, height, redVals, greenVals, blueVals, prev
   const gainG = Number.isFinite(preview?.gains?.[1]) ? preview.gains[1] : 1;
   const gainB = Number.isFinite(preview?.gains?.[2]) ? preview.gains[2] : 1;
   const chromaBoost = Number.isFinite(preview?.chromaBoost) ? preview.chromaBoost : 1;
+  const brightnessLumaScale = Number.isFinite(preview?.brightnessLumaScale)
+    ? clamp(preview.brightnessLumaScale, 1.0e-6, 1.0)
+    : 1;
   const applyChromaBoost = Math.abs(chromaBoost - 1) > 1.0e-6;
   const luma = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
@@ -8540,7 +8546,8 @@ function createRgbRasterCanvas(width, height, redVals, greenVals, blueVals, prev
       const sourceR = Math.max(0, Number.isFinite(redVals[src]) ? redVals[src] : 0);
       const sourceG = Math.max(0, Number.isFinite(greenVals[src]) ? greenVals[src] : 0);
       const sourceB = Math.max(0, Number.isFinite(blueVals[src]) ? blueVals[src] : 0);
-      const targetBrightness = multispectralPreviewBrightness(luma(sourceR, sourceG, sourceB), preview);
+      const sourceBrightness = luma(sourceR, sourceG, sourceB) / brightnessLumaScale;
+      const targetBrightness = brightnessLumaScale * multispectralPreviewBrightness(sourceBrightness, preview);
       let r = sourceR * gainR;
       let g = sourceG * gainG;
       let b = sourceB * gainB;
