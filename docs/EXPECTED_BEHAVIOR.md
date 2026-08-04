@@ -203,6 +203,14 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
 - Multi-spectral rendering is available for a sparse Scene with at least three spectral channels. Mobula requests one
   bounded plane for each selected spectral channel at the current exploration indices and viewport resolution, then
   combines only that temporary plane stack into RGB; it never materializes the Scene presentation cube.
+- Multi-spectral artifact suppression defaults to a stable robust preset: pixels below 1.5% of a robust
+  high-percentile reference brightness (so isolated point sources cannot set the entire field's threshold)
+  or outside spectral index -4 to +4 lose chroma through a soft transition while retaining luminance. The reference
+  is established by the first multi-spectral frame and reused while navigating or playing the current dataset,
+  layer, plane, and spectral window, so a variable source cannot make suppression breathe between frames. Manual
+  mode exposes the confidence floor, spectral-index interval, and desaturate-versus-hide behavior; Off preserves the
+  unfiltered RGB conversion. Sparse Scenes without physical frequency coordinates retain brightness suppression but
+  skip spectral-index suppression rather than inventing a physical index.
 - Layer identity includes recipe id, target kind, and target id. A component named `combined` remains distinct from the
   recipe's reserved combined presentation.
 - An owning application may add `--no-browser` and open the local service itself.

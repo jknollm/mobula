@@ -481,6 +481,16 @@ def test_sparse_scene_profiles_keep_roi_and_axis_navigation_in_flow(
     with page.expect_response(lambda response: "/multispectral?" in response.url and response.status == 200):
         multispectral_button.click()
     assert multispectral_button.inner_text() == "On"
+    assert page.locator("#msArtifactModeSelect:visible").input_value() == "robust"
+    assert "Robust preset" in page.locator("#msArtifactStatus:visible").inner_text()
+    with page.expect_response(lambda response: "/multispectral?" in response.url and response.status == 200):
+        page.locator("#msArtifactModeSelect:visible").select_option("manual")
+    assert page.locator("#msArtifactManualControls:visible").count() == 1
+    artifact_state = _debug_state(page)["multispectralArtifact"]
+    assert artifact_state["mode"] == "manual"
+    assert artifact_state["spectralIndexRange"] == {"min": -4, "max": 4}
+    assert artifact_state["brightnessReference"] > 0
+    brightness_reference = artifact_state["brightnessReference"]
     assert any("/profiles-plane" in url for url in requested_urls)
     assert any("/multispectral?" in url for url in requested_urls)
     assert not any("/render" in url for url in requested_urls)
@@ -500,6 +510,9 @@ def test_sparse_scene_profiles_keep_roi_and_axis_navigation_in_flow(
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().values.t > 0")
     page.locator("#timePlayBtn:visible").first.click()
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().playback.active === false")
+    assert _debug_state(page)["multispectralArtifact"]["brightnessReference"] == pytest.approx(
+        brightness_reference
+    )
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().profilesActive")
     assert _debug_state(page)["selection"] == selection_before
 

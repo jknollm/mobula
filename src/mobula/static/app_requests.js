@@ -280,6 +280,19 @@ export function createRequestBuilders(deps) {
     const computeBackend = ["auto", "cpu", "native", "cuda", "metal"].includes(state.multiSpectralComputeBackend)
       ? state.multiSpectralComputeBackend
       : "auto";
+    const artifactMode = ["robust", "manual", "off"].includes(state.multiSpectralArtifactMode)
+      ? state.multiSpectralArtifactMode
+      : "robust";
+    const confidenceFloor = Number.isFinite(state.multiSpectralConfidenceFloor)
+      ? Math.max(0, Math.min(1, state.multiSpectralConfidenceFloor))
+      : 0.015;
+    const alphaMin = Number.isFinite(state.multiSpectralIndexRange?.min)
+      ? Math.max(-8, Math.min(8, state.multiSpectralIndexRange.min))
+      : -4;
+    const alphaMax = Number.isFinite(state.multiSpectralIndexRange?.max)
+      ? Math.max(-8, Math.min(8, state.multiSpectralIndexRange.max))
+      : 4;
+    const faintBehavior = state.multiSpectralFaintBehavior === "hide" ? "hide" : "desaturate";
     const params = new URLSearchParams({
       sample: String(sampleOverride !== undefined ? sampleOverride : state.values.sample),
       pol: String(state.values.pol),
@@ -298,7 +311,15 @@ export function createRequestBuilders(deps) {
       range_min: String(rangeMin),
       range_max: String(rangeMax),
       compute_backend: computeBackend,
+      artifact_mode: artifactMode,
+      artifact_confidence_floor: String(confidenceFloor),
+      spectral_index_min: String(alphaMin),
+      spectral_index_max: String(alphaMax),
+      faint_behavior: faintBehavior,
     });
+    if (Number.isFinite(state.multiSpectralBrightnessReference) && state.multiSpectralBrightnessReference > 0) {
+      params.set("artifact_brightness_reference", String(state.multiSpectralBrightnessReference));
+    }
     if (state.axisWindow.nu) {
       params.set("nu0", String(state.axisWindow.nu.start));
       params.set("nu1", String(state.axisWindow.nu.end + 1));

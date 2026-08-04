@@ -333,6 +333,12 @@ export function createViewerState() {
     multiSpectralDeslope: 0,
     multiSpectralNormalizeSpectrum: false,
     multiSpectralNormalizeBoost: 1.0,
+    multiSpectralArtifactMode: "robust",
+    multiSpectralConfidenceFloor: 0.015,
+    multiSpectralIndexRange: { min: -4, max: 4 },
+    multiSpectralFaintBehavior: "desaturate",
+    multiSpectralBrightnessReference: null,
+    multiSpectralBrightnessReferenceContext: null,
     multiSpectralChannelRange: { min: 0, max: 100 },
     accelerationCaps: {
       compute: null,

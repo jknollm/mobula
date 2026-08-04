@@ -1,4 +1,6 @@
 export function resetForPlaneChange(state) {
+  state.multiSpectralBrightnessReference = null;
+  state.multiSpectralBrightnessReferenceContext = null;
   state.selection = null;
   state.selectionDrag = null;
   state.zoomDrag = null;
@@ -36,6 +38,8 @@ export function resetForPlaneChange(state) {
 }
 
 export function resetForDatasetChange(state) {
+  state.multiSpectralBrightnessReference = null;
+  state.multiSpectralBrightnessReferenceContext = null;
   state.values = { sample: 0, pol: 0, t: 0, nu: 0, x: 0, y: 0, z: 0 };
   state.axisProjection = { t: false, nu: false, x: false, y: false, z: false };
   state.sampleSingleView = "mosaic";
@@ -121,6 +125,8 @@ export function resetForDatasetChange(state) {
 export function resetForSceneLayerChange(state) {
   // A layer pivot keeps analytical context (indices, ROI, zoom and normalization)
   // while invalidating values derived from the previously rendered layer.
+  state.multiSpectralBrightnessReference = null;
+  state.multiSpectralBrightnessReferenceContext = null;
   state.evpaTicks = [];
   state.evpaTicksBySample = {};
   state.currentMonoSlice = null;

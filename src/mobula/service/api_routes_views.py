@@ -392,6 +392,12 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
         range_min: float = Query(default=0.0, ge=0.0, le=100.0),
         range_max: float = Query(default=100.0, ge=0.0, le=100.0),
         compute_backend: str = Query(default="auto"),
+        artifact_mode: str = Query(default="robust"),
+        artifact_confidence_floor: float = Query(default=0.015, ge=0.0, le=1.0),
+        spectral_index_min: float = Query(default=-4.0, ge=-8.0, le=8.0),
+        spectral_index_max: float = Query(default=4.0, ge=-8.0, le=8.0),
+        faint_behavior: str = Query(default="desaturate"),
+        artifact_brightness_reference: float | None = Query(default=None, gt=0.0),
         project_dims: str | None = Query(default=None),
         response_format: str = Query(default="json"),
     ) -> Response:
@@ -472,7 +478,11 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
                 if nu_axis.linear_coordinates is not None:
                     linear = nu_axis.linear_coordinates
                     return float(linear.start + linear.step * index)
-                return float(index)
+                return float(index + 1)
+
+            spectral_index_available = (
+                nu_axis.coordinates is not None or nu_axis.linear_coordinates is not None
+            )
 
             payload = build_multispectral_response_from_scene_slices(
                 data_id,
@@ -488,6 +498,13 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
                 range_min=range_min,
                 range_max=range_max,
                 compute_backend=compute_backend,
+                artifact_mode=artifact_mode,
+                artifact_confidence_floor=artifact_confidence_floor,
+                spectral_index_min=spectral_index_min,
+                spectral_index_max=spectral_index_max,
+                faint_behavior=faint_behavior,
+                artifact_brightness_reference=artifact_brightness_reference,
+                spectral_index_available=spectral_index_available,
             )
             dataset_metrics = {"cache": "remote-spectral-slices", "load_ms": 0.0}
             if fmt == "binary":
@@ -531,6 +548,12 @@ def _register_slice_routes(router: APIRouter, registry: DatasetRegistry) -> None
                 range_min=range_min,
                 range_max=range_max,
                 compute_backend=compute_backend,
+                artifact_mode=artifact_mode,
+                artifact_confidence_floor=artifact_confidence_floor,
+                spectral_index_min=spectral_index_min,
+                spectral_index_max=spectral_index_max,
+                faint_behavior=faint_behavior,
+                artifact_brightness_reference=artifact_brightness_reference,
                 project_dims=project,
             )
 

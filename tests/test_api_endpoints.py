@@ -1476,6 +1476,48 @@ def test_multispectral_accepts_intensity_scale_and_range_window(client, base_dat
     assert body["bands"]["range_max"] == pytest.approx(90.0)
 
 
+def test_multispectral_accepts_manual_artifact_suppression(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={
+            "artifact_mode": "manual",
+            "artifact_confidence_floor": 0.05,
+            "spectral_index_min": -2.5,
+            "spectral_index_max": 1.5,
+            "faint_behavior": "hide",
+        },
+    )
+    assert res.status_code == 200
+    bands = res.json()["bands"]
+    assert bands["artifact_mode"] == "manual"
+    assert bands["artifact_confidence_floor"] == pytest.approx(0.05)
+    assert bands["spectral_index_min"] == pytest.approx(-2.5)
+    assert bands["spectral_index_max"] == pytest.approx(1.5)
+    assert bands["faint_behavior"] == "hide"
+    assert 0.0 <= bands["artifact_affected_fraction"] <= 1.0
+
+
+def test_multispectral_reuses_explicit_artifact_brightness_reference(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"artifact_brightness_reference": 12.5},
+    )
+
+    assert res.status_code == 200
+    bands = res.json()["bands"]
+    assert bands["brightness_reference"] == pytest.approx(12.5)
+    assert bands["artifact_compute_backend"] == "numpy-cpu"
+
+
+def test_multispectral_rejects_reversed_spectral_index_range(client, base_dataset) -> None:
+    res = client.get(
+        f"/api/datasets/{_data_id(base_dataset)}/multispectral",
+        params={"artifact_mode": "manual", "spectral_index_min": 2.0, "spectral_index_max": -2.0},
+    )
+    assert res.status_code == 400
+    assert "spectral_index_max" in res.json()["detail"]
+
+
 def test_multispectral_accepts_compute_backend_cpu(client, base_dataset) -> None:
     res = client.get(
         f"/api/datasets/{_data_id(base_dataset)}/multispectral",

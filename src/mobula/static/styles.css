@@ -558,6 +558,13 @@ button:focus-visible {
   font-size: 0.82rem;
 }
 
+.spectralArtifactControls {
+  display: none;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding-top: 2px;
+}
+
 .miniGroup {
   display: flex;
   gap: 6px;

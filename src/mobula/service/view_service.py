@@ -45,6 +45,13 @@ def build_multispectral_response(
     range_min: float = 0.0,
     range_max: float = 100.0,
     compute_backend: str = "auto",
+    artifact_mode: str = "robust",
+    artifact_confidence_floor: float = 0.015,
+    spectral_index_min: float = -4.0,
+    spectral_index_max: float = 4.0,
+    faint_behavior: str = "desaturate",
+    artifact_brightness_reference: float | None = None,
+    spectral_index_available: bool = True,
     project_dims: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     return _build_multispectral_response(
@@ -69,6 +76,13 @@ def build_multispectral_response(
         range_min=range_min,
         range_max=range_max,
         compute_backend=compute_backend,
+        artifact_mode=artifact_mode,
+        artifact_confidence_floor=artifact_confidence_floor,
+        spectral_index_min=spectral_index_min,
+        spectral_index_max=spectral_index_max,
+        faint_behavior=faint_behavior,
+        artifact_brightness_reference=artifact_brightness_reference,
+        spectral_index_available=spectral_index_available,
         project_dims=project_dims,
     )
 
