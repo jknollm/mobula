@@ -554,6 +554,7 @@ function debugStateSnapshot() {
       brightnessReference: Number.isFinite(state.multiSpectralBrightnessReference)
         ? state.multiSpectralBrightnessReference
         : null,
+      brightnessReferenceContext: state.multiSpectralBrightnessReferenceContext,
       affectedFraction: Number.isFinite(msBands?.artifact_affected_fraction)
         ? msBands.artifact_affected_fraction
         : null,
@@ -782,7 +783,20 @@ let multispectralReferenceRequest = null;
 function multispectralReferenceContext() {
   const nuWindow = state.axisWindow?.nu;
   const windowKey = nuWindow ? `${nuWindow.start}:${nuWindow.end}` : "full";
-  return `${state.dataId || ""}|${state.plane || ""}|${windowKey}`;
+  const projectedDims = Object.entries(state.axisProjection || {})
+    .filter(([, active]) => Boolean(active))
+    .map(([dim]) => dim)
+    .sort()
+    .join(",");
+  return [
+    state.dataId || "",
+    state.plane || "",
+    windowKey,
+    state.sampleMode || "single",
+    Number.isFinite(state.values?.pol) ? state.values.pol : 0,
+    state.derivedPolMode || "none",
+    projectedDims,
+  ].join("|");
 }
 
 function activeMultispectralBrightnessReference() {

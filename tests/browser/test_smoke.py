@@ -491,6 +491,19 @@ def test_sparse_scene_profiles_keep_roi_and_axis_navigation_in_flow(
     assert artifact_state["spectralIndexRange"] == {"min": -4, "max": 4}
     assert artifact_state["brightnessReference"] > 0
     brightness_reference = artifact_state["brightnessReference"]
+    brightness_context = artifact_state["brightnessReferenceContext"]
+    with page.expect_response(lambda response: "/multispectral?" in response.url and response.status == 200):
+        page.locator("#sampleModeStdBtn:visible").click()
+    page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().sampleMode === 'std'")
+    std_artifact_state = _debug_state(page)["multispectralArtifact"]
+    assert std_artifact_state["brightnessReference"] > 0
+    assert std_artifact_state["brightnessReferenceContext"] != brightness_context
+    with page.expect_response(lambda response: "/multispectral?" in response.url and response.status == 200):
+        page.locator("#sampleModeMeanBtn:visible").click()
+    page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().sampleMode === 'mean'")
+    artifact_state = _debug_state(page)["multispectralArtifact"]
+    brightness_reference = artifact_state["brightnessReference"]
+    brightness_context = artifact_state["brightnessReferenceContext"]
     assert any("/profiles-plane" in url for url in requested_urls)
     assert any("/multispectral?" in url for url in requested_urls)
     assert not any("/render" in url for url in requested_urls)
@@ -513,6 +526,7 @@ def test_sparse_scene_profiles_keep_roi_and_axis_navigation_in_flow(
     assert _debug_state(page)["multispectralArtifact"]["brightnessReference"] == pytest.approx(
         brightness_reference
     )
+    assert _debug_state(page)["multispectralArtifact"]["brightnessReferenceContext"] == brightness_context
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().profilesActive")
     assert _debug_state(page)["selection"] == selection_before
 

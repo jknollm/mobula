@@ -207,7 +207,8 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
   high-percentile reference brightness (so isolated point sources cannot set the entire field's threshold)
   or outside spectral index -4 to +4 lose chroma through a soft transition while retaining luminance. The reference
   is established by the first multi-spectral frame and reused while navigating or playing the current dataset,
-  layer, plane, and spectral window, so a variable source cannot make suppression breathe between frames. Manual
+  layer, plane, spectral window, polarization, sample reduction, and projection context, so a variable source cannot
+  make suppression breathe between frames without leaking a scale across scientifically different quantities. Manual
   mode exposes the confidence floor, spectral-index interval, and desaturate-versus-hide behavior; Off preserves the
   unfiltered RGB conversion. Sparse Scenes without physical frequency coordinates retain brightness suppression but
   skip spectral-index suppression rather than inventing a physical index.
