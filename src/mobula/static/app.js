@@ -19,19 +19,21 @@ import {
   INGEST_UI_DIMS,
   PLANE_KEYS,
   PLANE_OPTIONS,
-  PROFILE_THEME,
   RENDER_AXIS_HIDDEN,
   RENDER_AXIS_ROTATE,
   RECORD_STOP_TIMEOUT_MS,
+  SCIENTIFIC_COLOR_REGISTRY,
   SUPPORTED_DROP_UPLOAD_EXTS,
   VIEW_SOURCE_RECT_MAX_MULTIPLIER,
   VOLUME_ZOOM_MAX,
   VOLUME_ZOOM_MIN,
   WHEEL_ZOOM_STEP_FACTOR,
+  colorMapRecord,
   normalizeColorMapKey,
-} from "./viewer_constants.js?v=20260306b";
+  recommendedColorMapForQuantity,
+} from "./viewer_constants.js?v=20260807a";
 import { normalizeComputeBackendPreference, probeRenderCapabilities } from "./viewer_acceleration.js?v=20260309a";
-import { lookupViewerElements } from "./viewer_dom.js?v=20260804b";
+import { lookupViewerElements } from "./viewer_dom.js?v=20260806b";
 import {
   VIEW_ROTATE_RATE_STEP_LEVELS,
   createAxisSettingsForMetadata,
@@ -217,7 +219,7 @@ function resetVolumeOrientation() {
 const state = createViewerState();
 state.accelerationCaps.render = probeRenderCapabilities();
 
-const PROFILE_MARGIN = { l: 102, r: 18, t: 16, b: 62 };
+const PROFILE_MARGIN = { l: 72, r: 14, t: 12, b: 48 };
 const NAV_MARGIN = { l: 40, r: 8, t: 6, b: 8 };
 const COLOR_RANGE_MODE_LABEL = {
   none: "dynamic",
@@ -429,6 +431,12 @@ function restoreState(snapshot) {
   merged.renderScale.temporal = normalizeDomainScaleFactor(merged.renderScale.temporal);
   merged.renderScale.spectral = normalizeDomainScaleFactor(merged.renderScale.spectral);
   merged.colorMap = normalizeColorMapKey(merged.colorMap);
+  if (!merged.colorMapsByQuantity || typeof merged.colorMapsByQuantity !== "object") {
+    merged.colorMapsByQuantity = {};
+  }
+  if (!merged.colorMapOverridesByQuantity || typeof merged.colorMapOverridesByQuantity !== "object") {
+    merged.colorMapOverridesByQuantity = {};
+  }
   merged.axisSettings = normalizeAxisSettingsState(merged.axisSettings);
   merged.axisPlaneSwap = normalizeAxisPlaneSwapState(merged.axisPlaneSwap);
   merged.sphereHorizontalFlip = merged.sphereHorizontalFlip !== false;
@@ -545,6 +553,7 @@ function debugStateSnapshot() {
       nu: state.axisWindow?.nu ? { ...state.axisWindow.nu } : null,
     },
     colorMap: state.colorMap,
+    colorRangeMode: state.colorRangeMode,
     dataId: state.dataId,
     fluxScale: state.fluxScale,
     multispectralArtifact: {
@@ -592,6 +601,7 @@ function debugStateSnapshot() {
     profilesActive: Boolean(state.profiles),
     sampleMode: state.sampleMode,
     sampleSingleView: state.sampleSingleView,
+    viewerBusy: Boolean(state.viewerBusy),
     selection: state.selection
       ? {
           tile: state.selection.tile ?? null,
@@ -630,6 +640,59 @@ function debugStateSnapshot() {
 if (typeof window !== "undefined") {
   window.__mobulaDebug = {
     getStateSnapshot: debugStateSnapshot,
+    getScientificColorRegistry: () => ({
+      version: SCIENTIFIC_COLOR_REGISTRY.version,
+      sourceHashes: { ...SCIENTIFIC_COLOR_REGISTRY.sourceHashes },
+      invalid: { ...SCIENTIFIC_COLOR_REGISTRY.invalid },
+      maps: Object.fromEntries(
+        Object.entries(SCIENTIFIC_COLOR_REGISTRY.maps).map(([key, value]) => [
+          key,
+          {
+            ...value,
+            invalid: { ...value.invalid },
+            lutLength: value.lut.length,
+            lutFirst: Array.from(value.lut.slice(0, 3)),
+            lutLast: Array.from(value.lut.slice(-3)),
+            lut: undefined,
+          },
+        ])
+      ),
+    }),
+    renderInvalidScalarFixture: (backend = "cpu") => {
+      const fixture = { shape: [3, 2], values: [0, 0.25, Number.NaN, 0.75, Number.NaN, 1], stats: { min: 0, max: 1 } };
+      const canvas = backend === "gpu" ? new GpuSliceRenderer().render(fixture) : createSingleCanvasCpu(fixture);
+      if (!canvas) return null;
+      const image = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+      return {
+        backend,
+        width: canvas.width,
+        height: canvas.height,
+        pixels: Array.from({ length: canvas.width * canvas.height }, (_, index) =>
+          Array.from(image.data.slice(index * 4, index * 4 + 4))
+        ),
+      };
+    },
+    captureTransparentViewerSnapshot: () => {
+      const canvas = buildViewerSnapshotCanvas({
+        includeColorbar: false,
+        includeSampleLabels: true,
+        transparentBackground: true,
+      });
+      const image = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+      let minAlpha = 255;
+      let maxAlpha = 0;
+      for (let offset = 3; offset < image.data.length; offset += 4) {
+        minAlpha = Math.min(minAlpha, image.data[offset]);
+        maxAlpha = Math.max(maxAlpha, image.data[offset]);
+      }
+      return {
+        width: canvas.width,
+        height: canvas.height,
+        cornerAlpha: image.data[3],
+        minAlpha,
+        maxAlpha,
+      };
+    },
   };
 }
 
@@ -2864,31 +2927,35 @@ function buildAxisXMapper(coords) {
   };
 }
 
-function sampleColorRamp(stops, t) {
-  if (t <= 0) return [stops[0][1], stops[0][2], stops[0][3]];
-  if (t >= 1) {
-    const end = stops[stops.length - 1];
-    return [end[1], end[2], end[3]];
-  }
-  for (let i = 0; i < stops.length - 1; i += 1) {
-    const [p0, r0, g0, b0] = stops[i];
-    const [p1, r1, g1, b1] = stops[i + 1];
-    if (t >= p0 && t <= p1) {
-      const w = (t - p0) / Math.max(1e-6, p1 - p0);
-      return [
-        Math.round(r0 + (r1 - r0) * w),
-        Math.round(g0 + (g1 - g0) * w),
-        Math.round(b0 + (b1 - b0) * w),
-      ];
-    }
-  }
-  return [255, 255, 255];
+function sampleColorRamp(lut, t) {
+  const entries = lut.length / 3;
+  const scaled = clamp(t, 0, 1) * (entries - 1);
+  const lower = Math.min(entries - 2, Math.floor(scaled));
+  const fraction = scaled - lower;
+  const offset0 = lower * 3;
+  const offset1 = offset0 + 3;
+  return [0, 1, 2].map((channel) =>
+    Math.round(lut[offset0 + channel] * (1 - fraction) + lut[offset1 + channel] * fraction)
+  );
 }
 
 function colorForNorm(norm) {
+  if (!Number.isFinite(norm)) return null;
   const t = clamp(norm, 0, 1);
   const ramp = COLOR_RAMPS[state.colorMap] || COLOR_RAMPS.viridis;
   return sampleColorRamp(ramp, t);
+}
+
+function activeColorMapKind() {
+  return colorMapRecord(state.colorMap).kind;
+}
+
+function activeColorMapIsDiverging() {
+  return activeColorMapKind() === "diverging";
+}
+
+function activeColorMapIsCyclic() {
+  return activeColorMapKind() === "cyclic";
 }
 
 function isFiniteNumber(v) {
@@ -2909,13 +2976,13 @@ function finiteMinMax(values) {
 }
 
 function normalizeForColormap(v, mm) {
-  if (!isFiniteNumber(v)) return 0;
-  if (state.colorMap === "circular" && isDerivedPolModeActive() && state.derivedPolMode === "bfield") {
+  if (!isFiniteNumber(v)) return null;
+  if (activeColorMapIsCyclic() && isDerivedPolModeActive() && state.derivedPolMode === "bfield") {
     let a = v % 180;
     if (a < 0) a += 180;
     return a / 180;
   }
-  if (state.colorMap === "diverging" && mm.min < 0 && mm.max > 0) {
+  if (activeColorMapIsDiverging() && mm.min < 0 && mm.max > 0) {
     const maxAbs = Math.max(Math.abs(mm.min), Math.abs(mm.max));
     if (maxAbs > 0) return (v + maxAbs) / (2 * maxAbs);
   }
@@ -3040,10 +3107,42 @@ function rememberCurrentQuantityColorNormWindow() {
   saveColorNormWindowForQuantity(intensityQuantityKey());
 }
 
+function resolvedInterfaceTheme() {
+  return document.documentElement.dataset.resolveTheme === "dark" ? "dark" : "bright";
+}
+
+function syncRecommendedColorMapForTheme() {
+  const quantityKey = intensityQuantityKey();
+  if (state.colorMapOverridesByQuantity?.[quantityKey]) return false;
+  const recommended = recommendedColorMapForQuantity(quantityKey, resolvedInterfaceTheme());
+  if (!recommended) return false;
+  if (normalizeColorMapKey(recommended) === state.colorMap) {
+    if (els.colorMapSelect) els.colorMapSelect.value = state.colorMap;
+    return false;
+  }
+  state.colorMap = normalizeColorMapKey(recommended);
+  if (!state.colorMapsByQuantity || typeof state.colorMapsByQuantity !== "object") state.colorMapsByQuantity = {};
+  state.colorMapsByQuantity[quantityKey] = state.colorMap;
+  if (els.colorMapSelect) els.colorMapSelect.value = state.colorMap;
+  return true;
+}
+
 function applyIntensityQuantityTransition(previousKey, nextKey) {
   if (!previousKey || !nextKey || previousKey === nextKey) return false;
   saveColorNormWindowForQuantity(previousKey);
   restoreColorNormWindowForQuantity(nextKey);
+  if (!state.colorMapsByQuantity || typeof state.colorMapsByQuantity !== "object") state.colorMapsByQuantity = {};
+  state.colorMapsByQuantity[previousKey] = normalizeColorMapKey(state.colorMap);
+  const recommended = recommendedColorMapForQuantity(
+    nextKey,
+    resolvedInterfaceTheme()
+  );
+  const nextMap = state.colorMapsByQuantity[nextKey] || recommended;
+  if (nextMap) {
+    state.colorMap = normalizeColorMapKey(nextMap);
+    state.colorMapsByQuantity[nextKey] = state.colorMap;
+    if (els.colorMapSelect) els.colorMapSelect.value = state.colorMap;
+  }
   updateColorNormalizationControls();
   return true;
 }
@@ -3325,7 +3424,7 @@ function colorForSpectralIndexPosition(rawPosition) {
 const LOG_SCALE_FLOOR_RATIO = 1.0e-6;
 
 function normalizeFluxLog(v, maxPositive, minPositive = 0) {
-  if (!isFiniteNumber(v)) return 0;
+  if (!isFiniteNumber(v)) return null;
   const lo = Math.max(0, minPositive);
   if (v < 0 && lo <= 0) return 0;
   const hi = Math.max(lo, maxPositive);
@@ -3341,11 +3440,11 @@ function normalizeFluxLog(v, maxPositive, minPositive = 0) {
 }
 
 function normalizeFluxSqrt(v, mm) {
-  if (!isFiniteNumber(v)) return 0;
-  if (state.colorMap === "circular" && isDerivedPolModeActive() && state.derivedPolMode === "bfield") {
+  if (!isFiniteNumber(v)) return null;
+  if (activeColorMapIsCyclic() && isDerivedPolModeActive() && state.derivedPolMode === "bfield") {
     return normalizeForColormap(v, mm);
   }
-  if (state.colorMap === "diverging" && mm.min < 0 && mm.max > 0) {
+  if (activeColorMapIsDiverging() && mm.min < 0 && mm.max > 0) {
     const maxAbs = Math.max(Math.abs(mm.min), Math.abs(mm.max));
     if (!(maxAbs > 0)) return 0.5;
     const maxAbsSqrt = Math.sqrt(maxAbs);
@@ -4901,9 +5000,10 @@ function setRenderOverlayDrawOverride(overrideOptions) {
 }
 
 function drawSnapshotCardBackground(ctx, width, height) {
-  ctx.fillStyle = "#0b1119";
+  const palette = profileInterfacePalette();
+  ctx.fillStyle = palette.field;
   ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = "rgba(143, 176, 211, 0.38)";
+  ctx.strokeStyle = palette.line;
   ctx.lineWidth = 1;
   ctx.strokeRect(0.5, 0.5, width - 1, height - 1);
 }
@@ -4925,9 +5025,9 @@ function buildViewerSnapshotCanvas(options = null) {
 
     const pad = transparentBackground ? 0 : 20;
     const titleH = transparentBackground ? 0 : 26;
-    const blockGap = transparentBackground ? 0 : 12;
+    const blockGap = 3;
     const colorbarH = colorbar
-      ? clamp(Math.round((colorbar.height / Math.max(1, colorbar.width)) * mainW), 18, 40)
+      ? clamp(Math.round((colorbar.height / Math.max(1, colorbar.width)) * mainW), 10, 18)
       : 0;
     const outW = mainW + pad * 2;
     const outH = pad * 2 + titleH + mainH + (colorbar ? blockGap + colorbarH : 0);
@@ -4940,8 +5040,8 @@ function buildViewerSnapshotCanvas(options = null) {
 
     if (!transparentBackground) {
       drawSnapshotCardBackground(ctx, outW, outH);
-      ctx.fillStyle = "#e8f2ff";
-      ctx.font = "600 16px 'Source Sans 3', sans-serif";
+      ctx.fillStyle = profileInterfacePalette().ink;
+      ctx.font = "600 16px 'Atkinson Hyperlegible Next', sans-serif";
       ctx.fillText("Viewer", pad, pad + 17);
     }
 
@@ -4955,8 +5055,11 @@ function buildViewerSnapshotCanvas(options = null) {
     }
     return out;
   };
-  if (includeSampleLabels || !isSamplesMode()) return capture();
-  return withRenderOverlayOverride({ includeSampleLabels: false }, capture);
+  const override = {};
+  if (!includeSampleLabels && isSamplesMode()) override.includeSampleLabels = false;
+  if (transparentBackground) override.transparentField = true;
+  if (!Object.keys(override).length) return capture();
+  return withRenderOverlayOverride(override, capture);
 }
 
 function collectInspectSnapshotCharts() {
@@ -5005,8 +5108,8 @@ function buildGraphSnapshotCanvas(entry) {
 
   if (!transparentBackground) {
     drawSnapshotCardBackground(ctx, outW, outH);
-    ctx.fillStyle = "#e8f2ff";
-    ctx.font = "600 16px 'Source Sans 3', sans-serif";
+    ctx.fillStyle = profileInterfacePalette().ink;
+    ctx.font = "600 16px 'Atkinson Hyperlegible Next', sans-serif";
     ctx.fillText(entry.title || "Profile Graph", pad, pad + 17);
   }
   ctx.drawImage(source, pad, pad + titleH, targetW, targetH);
@@ -5983,6 +6086,7 @@ function updateDomainVisibility() {
     setVisible(els.temporalControlGroup, false);
     setVisible(els.spectralControlGroup, false);
     setVisible(els.polarizationControlGroup, false);
+    setVisible(els.uncertaintyControlGroup, false);
     setVisible(els.sampleModeBlock, false);
     setVisible(els.playbackTimingControls, false);
     setVisible(els.spatialViewRow, false);
@@ -6090,6 +6194,7 @@ function updateDomainVisibility() {
   setVisible(els.sphereControls, sphereMode);
   setVisible(els.viewRotateControls, volumeMode || sphereMode);
   setVisible(els.polarizationControlGroup, polVarying);
+  setVisible(els.uncertaintyControlGroup, sampleVarying);
   setVisible(els.sampleModeBlock, sampleVarying);
   setVisible(
     els.playbackTimingControls,
@@ -6334,6 +6439,7 @@ function updateControlCaps() {
   updateSpatialProfileTitle(state.profiles ? state.profiles.spatial_profile : null);
   updateHoverReadout();
   updateBackendStatusUi();
+  syncDomainNavigationAvailability();
 }
 
 function setFluxScale(mode) {
@@ -6593,14 +6699,12 @@ function drawSelectionOverlay(viewRect, drawRect) {
   const s = canvasPixelRatio(els.canvas);
 
   const ctx = els.canvas.getContext("2d");
+  const palette = profileInterfacePalette();
   for (const tileRect of tileRects) {
     ctx.save();
     ctx.beginPath();
     ctx.rect(tileRect.x, tileRect.y, tileRect.w, tileRect.h);
     ctx.clip();
-    ctx.strokeStyle = "#49b8ff";
-    ctx.lineWidth = 2 * s;
-    ctx.setLineDash([8 * s, 4 * s]);
 
     const p0 = dataToScreen(b.u0, b.v0, viewRect, tileRect);
     const p1 = dataToScreen(b.u1, b.v1, viewRect, tileRect);
@@ -6608,14 +6712,36 @@ function drawSelectionOverlay(viewRect, drawRect) {
     const y = Math.min(p0.y, p1.y);
     const w = Math.abs(p1.x - p0.x);
     const h = Math.abs(p1.y - p0.y);
+    const pointSelection =
+      state.selection.u0 === state.selection.u1 &&
+      state.selection.v0 === state.selection.v1;
+    const pointX = 0.5 * (p0.x + p1.x);
+    const pointY = 0.5 * (p0.y + p1.y);
 
-    if (w <= 2 * s && h <= 2 * s) {
-      ctx.beginPath();
-      ctx.arc(x, y, 4 * s, 0, 2 * Math.PI);
-      ctx.stroke();
-    } else {
-      ctx.strokeRect(x, y, Math.max(1, w), Math.max(1, h));
-    }
+    const strokeSelection = () => {
+      if (pointSelection) {
+        const radius = 9 * s;
+        const arm = 21 * s;
+        ctx.beginPath();
+        ctx.arc(pointX, pointY, radius, 0, 2 * Math.PI);
+        ctx.moveTo(pointX - arm, pointY);
+        ctx.lineTo(pointX - radius - 3 * s, pointY);
+        ctx.moveTo(pointX + radius + 3 * s, pointY);
+        ctx.lineTo(pointX + arm, pointY);
+        ctx.moveTo(pointX, pointY - arm);
+        ctx.lineTo(pointX, pointY - radius - 3 * s);
+        ctx.moveTo(pointX, pointY + radius + 3 * s);
+        ctx.lineTo(pointX, pointY + arm);
+        ctx.stroke();
+      } else {
+        ctx.strokeRect(x, y, Math.max(1, w), Math.max(1, h));
+      }
+    };
+    ctx.setLineDash(pointSelection ? [] : [8 * s, 4 * s]);
+    ctx.strokeStyle = palette.focus;
+    ctx.lineWidth = 2 * s;
+    ctx.lineCap = "square";
+    strokeSelection();
     ctx.restore();
   }
 }
@@ -6632,17 +6758,20 @@ function drawZoomDragOverlay(viewRect, drawRect) {
   const p1 = dataToScreen(state.zoomDrag.lastU, state.zoomDrag.lastV, viewRect, tileRect);
 
   const ctx = els.canvas.getContext("2d");
+  const palette = profileInterfacePalette();
   ctx.save();
-  ctx.fillStyle = PROFILE_THEME.dragFill;
-  ctx.strokeStyle = PROFILE_THEME.dragStroke;
-  ctx.lineWidth = 2 * s;
-  ctx.setLineDash([6 * s, 4 * s]);
+  ctx.fillStyle = palette.focus;
+  ctx.globalAlpha = 0.11;
   ctx.fillRect(
     Math.min(p0.x, p1.x),
     Math.min(p0.y, p1.y),
     Math.max(1, Math.abs(p1.x - p0.x)),
     Math.max(1, Math.abs(p1.y - p0.y))
   );
+  ctx.globalAlpha = 0.92;
+  ctx.strokeStyle = palette.focus;
+  ctx.lineWidth = 2 * s;
+  ctx.setLineDash([6 * s, 4 * s]);
   ctx.strokeRect(
     Math.min(p0.x, p1.x),
     Math.min(p0.y, p1.y),
@@ -6679,17 +6808,29 @@ function drawOrientationAndScale(viewRect, drawRect, options = null) {
   const s = canvasPixelRatio(els.canvas);
   ctx.save();
   const canvasW = els.canvas.width;
-  const canvasH = els.canvas.height;
-  const baseX = canvasW - 56 * s;
-  const baseY = 58 * s;
+  const rightGutter = Math.max(0, canvasW - (drawRect.x + drawRect.w));
+  const compassInGutter = rightGutter >= 64 * s;
+  const baseX = compassInGutter
+    ? drawRect.x + drawRect.w + rightGutter * 0.72
+    : Math.min(canvasW - 22 * s, drawRect.x + drawRect.w - 20 * s);
+  const baseY = Math.max(46 * s, drawRect.y + 46 * s);
   const arrow = 26 * s;
+  const palette = profileInterfacePalette();
+  const annotationColor = palette.ink;
 
-  ctx.strokeStyle = "rgba(237, 242, 247, 0.9)";
-  ctx.fillStyle = "rgba(237, 242, 247, 0.9)";
+  ctx.strokeStyle = annotationColor;
+  ctx.fillStyle = annotationColor;
   ctx.lineWidth = 1.5 * s;
-  ctx.font = `${Math.round(11 * s)}px sans-serif`;
+  ctx.font = `${Math.round(11 * s)}px 'Atkinson Hyperlegible Next', sans-serif`;
 
   if (includeSkyDirections) {
+    if (!compassInGutter) {
+      ctx.save();
+      ctx.globalAlpha = 0.86;
+      ctx.fillStyle = palette.face;
+      ctx.fillRect(baseX - arrow - 18 * s, baseY - arrow - 14 * s, arrow + 32 * s, arrow + 30 * s);
+      ctx.restore();
+    }
     if (state.plane === "xy") {
       ctx.beginPath();
       ctx.moveTo(baseX, baseY);
@@ -6726,14 +6867,20 @@ function drawOrientationAndScale(viewRect, drawRect, options = null) {
     const c1 = axisValueCoord(dim, dimCoord(dim, viewRect.srcX + viewRect.srcW - 1));
     if (c0 !== null && c1 !== null && Number.isFinite(c0) && Number.isFinite(c1)) {
       const span = Math.abs(c1 - c0);
-      const target = span * 0.22;
+      const targetPixelWidth = clamp(drawRect.w * 0.18, 54 * s, 120 * s);
+      const target = span * (targetPixelWidth / Math.max(1, drawRect.w));
       const length = niceScaleValue(target);
       if (length && span > 0) {
-        const px = (length / span) * canvasW * 0.55;
-        if (px >= 20 * s && px <= canvasW * 0.6) {
-          const sx = 30 * s;
-          const sy = canvasH - 26 * s;
-          ctx.strokeStyle = "rgba(237, 242, 247, 0.95)";
+        const px = (length / span) * drawRect.w;
+        if (px >= 20 * s && px <= drawRect.w * 0.6) {
+          const sx = drawRect.x + 16 * s;
+          const sy = drawRect.y + drawRect.h - 18 * s;
+          ctx.save();
+          ctx.globalAlpha = 0.86;
+          ctx.fillStyle = palette.face;
+          ctx.fillRect(sx - 7 * s, sy - 26 * s, px + 14 * s, 35 * s);
+          ctx.restore();
+          ctx.strokeStyle = annotationColor;
           ctx.lineWidth = 2 * s;
           ctx.beginPath();
           ctx.moveTo(sx, sy);
@@ -6746,7 +6893,10 @@ function drawOrientationAndScale(viewRect, drawRect, options = null) {
           ctx.moveTo(sx + px, sy - 4 * s);
           ctx.lineTo(sx + px, sy + 4 * s);
           ctx.stroke();
-          ctx.fillStyle = "rgba(237, 242, 247, 0.95)";
+          ctx.fillStyle = annotationColor;
+          ctx.shadowColor = palette.field;
+          ctx.shadowBlur = 2 * s;
+          ctx.font = `${Math.round(9 * s)}px 'Martian Mono', monospace`;
           ctx.fillText(fmtScale(dim, length, unit), sx, sy - 7 * s);
         }
       }
@@ -6756,19 +6906,65 @@ function drawOrientationAndScale(viewRect, drawRect, options = null) {
   ctx.restore();
 }
 
+function drawViewerStatus(ctx, scale) {
+  const palette = profileInterfacePalette();
+  if (!state.viewerBusy) {
+    if (state.dataId) return;
+    const label = "NO DATASET SELECTED";
+    const instruction = "Choose a dataset from the application bar.";
+    const centerX = els.canvas.width / 2;
+    const centerY = els.canvas.height / 2;
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = palette.focus;
+    ctx.font = `${Math.round(9 * scale)}px 'Martian Mono', monospace`;
+    ctx.fillText(label, centerX, centerY - 10 * scale);
+    ctx.fillStyle = palette.secondary;
+    ctx.font = `${Math.round(12 * scale)}px 'Atkinson Hyperlegible Next', sans-serif`;
+    ctx.fillText(instruction, centerX, centerY + 14 * scale);
+    ctx.restore();
+    return;
+  }
+  const label = "LOADING FIELD";
+  ctx.save();
+  ctx.font = `${Math.round(9 * scale)}px 'Martian Mono', monospace`;
+  const width = ctx.measureText(label).width + 24 * scale;
+  const height = 28 * scale;
+  const x = (els.canvas.width - width) / 2;
+  const y = (els.canvas.height - height) / 2;
+  ctx.fillStyle = palette.raised;
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = palette.lineStrong;
+  ctx.lineWidth = Math.max(1, 0.5 * scale);
+  ctx.strokeRect(x, y, width, height);
+  ctx.fillStyle = palette.focus;
+  ctx.fillRect(x, y, 2 * scale, height);
+  ctx.fillStyle = palette.secondary;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, x + width / 2, y + height / 2);
+  ctx.restore();
+}
+
 function drawFrameAndOverlays() {
   const renderStartedAt = performance.now();
   syncCanvasToDisplaySize(els.canvas);
   const ctx = els.canvas.getContext("2d");
   const s = canvasPixelRatio(els.canvas);
+  const palette = profileInterfacePalette();
   ctx.clearRect(0, 0, els.canvas.width, els.canvas.height);
-  ctx.fillStyle = "#070a11";
-  ctx.fillRect(0, 0, els.canvas.width, els.canvas.height);
+  if (!renderOverlayDrawOverride?.transparentField) {
+    ctx.fillStyle = palette.field;
+    ctx.fillRect(0, 0, els.canvas.width, els.canvas.height);
+  }
   const hasFrame = Boolean(state.frameCanvas || (state.frameTiles && state.frameTiles.length));
+  if (els.colorbarPanel) els.colorbarPanel.style.visibility = hasFrame ? "visible" : "hidden";
   try {
     if (!hasFrame) {
       state.drawTiles = [];
       state.drawRect = null;
+      drawViewerStatus(ctx, s);
       return;
     }
     const baseViewRect = getViewRect();
@@ -6797,8 +6993,8 @@ function drawFrameAndOverlays() {
         if (isSamplesMode() && includeSampleLabels && Number.isInteger(state.sampleGridIndices[i])) {
           const label = `S${state.sampleGridIndices[i]}`;
           ctx.save();
-          ctx.font = `${Math.round(11 * s)}px sans-serif`;
-          ctx.fillStyle = "#d9e6f5";
+          ctx.font = `${Math.round(10 * s)}px 'Martian Mono', monospace`;
+          ctx.fillStyle = resolveInterfaceColor("--r-observed-mark", palette.ink);
           ctx.textBaseline = "top";
           const lx = (tileRect.cellX ?? tileRect.x) + 8 * s;
           const ly = (tileRect.cellY ?? tileRect.y) + 7 * s;
@@ -6822,6 +7018,7 @@ function drawFrameAndOverlays() {
     drawEvpaOverlay(viewRect, drawRect);
     drawSelectionOverlay(viewRect, drawRect);
     drawZoomDragOverlay(viewRect, drawRect);
+    drawViewerStatus(ctx, s);
   } finally {
     recordViewerRender(renderStartedAt, hasFrame ? "viewer-frame" : "viewer-empty");
   }
@@ -7337,17 +7534,14 @@ function sphereBuildRayMappedColorBuffers(npix, colorForPixel, dataNside, mapNsi
   const dataR = new Uint8Array(npix);
   const dataG = new Uint8Array(npix);
   const dataB = new Uint8Array(npix);
-  const fallback = colorForNorm(0);
+  const dataValid = new Uint8Array(npix);
   for (let ipix = 0; ipix < npix; ipix += 1) {
     const rgb = colorForPixel(ipix);
     if (rgb) {
       dataR[ipix] = rgb[0];
       dataG[ipix] = rgb[1];
       dataB[ipix] = rgb[2];
-    } else {
-      dataR[ipix] = fallback[0];
-      dataG[ipix] = fallback[1];
-      dataB[ipix] = fallback[2];
+      dataValid[ipix] = 1;
     }
   }
 
@@ -7357,6 +7551,7 @@ function sphereBuildRayMappedColorBuffers(npix, colorForPixel, dataNside, mapNsi
       colorR: dataR,
       colorG: dataG,
       colorB: dataB,
+      colorValid: dataValid,
       mapToData: null,
       interpolated: false,
     };
@@ -7368,6 +7563,7 @@ function sphereBuildRayMappedColorBuffers(npix, colorForPixel, dataNside, mapNsi
       colorR: dataR,
       colorG: dataG,
       colorB: dataB,
+      colorValid: dataValid,
       mapToData: null,
       interpolated: false,
     };
@@ -7376,6 +7572,7 @@ function sphereBuildRayMappedColorBuffers(npix, colorForPixel, dataNside, mapNsi
   const mapR = new Uint8Array(mapNpix);
   const mapG = new Uint8Array(mapNpix);
   const mapB = new Uint8Array(mapNpix);
+  const mapValid = new Uint8Array(mapNpix);
   const mapToData = kernel.centers;
   const sampleIdx = kernel.samples;
   const sampleWeight = [2.2, 1, 1, 1, 1];
@@ -7388,7 +7585,7 @@ function sphereBuildRayMappedColorBuffers(npix, colorForPixel, dataNside, mapNsi
     let wsum = 0;
     for (let si = 0; si < 5; si += 1) {
       const idx = sampleIdx[base + si];
-      if (idx < 0 || idx >= npix) continue;
+      if (idx < 0 || idx >= npix || !dataValid[idx]) continue;
       const w = sampleWeight[si];
       wr += dataR[idx] * w;
       wg += dataG[idx] * w;
@@ -7396,20 +7593,19 @@ function sphereBuildRayMappedColorBuffers(npix, colorForPixel, dataNside, mapNsi
       wsum += w;
     }
     if (!(wsum > 0)) {
-      mapR[mapRing] = 255;
-      mapG[mapRing] = 255;
-      mapB[mapRing] = 255;
       continue;
     }
     mapR[mapRing] = clamp(Math.round(wr / wsum), 0, 255);
     mapG[mapRing] = clamp(Math.round(wg / wsum), 0, 255);
     mapB[mapRing] = clamp(Math.round(wb / wsum), 0, 255);
+    mapValid[mapRing] = 1;
   }
 
   return {
     colorR: mapR,
     colorG: mapG,
     colorB: mapB,
+    colorValid: mapValid,
     mapToData,
     interpolated: true,
   };
@@ -7438,6 +7634,7 @@ function renderSphereRayMapped(img, indexMap, width, height, projection, npix, c
   const colorR = colorBuffers.colorR;
   const colorG = colorBuffers.colorG;
   const colorB = colorBuffers.colorB;
+  const colorValid = colorBuffers.colorValid;
   const mapToData = colorBuffers.mapToData;
   const interpolated = colorBuffers.interpolated === true;
 
@@ -7479,6 +7676,7 @@ function renderSphereRayMapped(img, indexMap, width, height, projection, npix, c
 
     if (!Number.isFinite(colorIdx) || colorIdx < 0 || colorIdx >= colorR.length) continue;
     if (!Number.isFinite(dataIdx) || dataIdx < 0 || dataIdx >= npix) continue;
+    if (!colorValid[colorIdx]) continue;
 
     const didx = pixels[k];
     const di = didx * 4;
@@ -8458,19 +8656,20 @@ function createSingleCanvasCpu(slice, rangeOverride = null) {
     for (let y = 0; y < height; y += 1) {
       const src = x * height + y;
       const v = values[src];
-      let rgb;
+      let norm;
       if (state.fluxScale === "log") {
-        const norm = normalizeFluxLog(v, maxPositive, minPositive);
-        rgb = norm === null ? [255, 255, 255] : colorForNorm(norm);
+        norm = normalizeFluxLog(v, maxPositive, minPositive);
       } else if (state.fluxScale === "sqrt") {
-        const norm = normalizeFluxSqrt(v, mm);
-        rgb = norm === null ? [255, 255, 255] : colorForNorm(norm);
+        norm = normalizeFluxSqrt(v, mm);
       } else {
-        const norm = normalizeForColormap(v, mm);
-        rgb = norm === null ? [255, 255, 255] : colorForNorm(norm);
+        norm = normalizeForColormap(v, mm);
       }
-      const [r, g, b] = rgb;
       const dst = (y * width + x) * 4;
+      if (norm === null) {
+        img.data[dst + 3] = 0;
+        continue;
+      }
+      const [r, g, b] = colorForNorm(norm);
       img.data[dst + 0] = r;
       img.data[dst + 1] = g;
       img.data[dst + 2] = b;
@@ -8701,6 +8900,8 @@ const { GpuSliceRenderer, GpuRgbRenderer, GpuVolumeRenderer, GpuSphereRenderer, 
   resolveColorNormStats,
   volumeQualityConfig,
   clamp,
+  activeColorMapIsCyclic,
+  activeColorMapIsDiverging,
   isDerivedPolModeActive,
   volumeRenderModeInt,
   volumeTfModeInt,
@@ -8939,9 +9140,9 @@ function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null, o
         const [r, g, b] = colorForNorm(norm);
 
         let density;
-        if (state.colorMap === "diverging" && mm.min < 0 && mm.max > 0) {
+        if (activeColorMapIsDiverging() && mm.min < 0 && mm.max > 0) {
           density = Math.abs(norm * 2 - 1);
-        } else if (state.colorMap === "circular" && isDerivedPolModeActive() && state.derivedPolMode === "bfield") {
+        } else if (activeColorMapIsCyclic() && isDerivedPolModeActive() && state.derivedPolMode === "bfield") {
           density = 0.58;
         } else {
           density = norm;
@@ -8964,7 +9165,7 @@ function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null, o
       data[di + 0] = Math.round(clamp(rAcc, 0, 1) * 255);
       data[di + 1] = Math.round(clamp(gAcc, 0, 1) * 255);
       data[di + 2] = Math.round(clamp(bAcc, 0, 1) * 255);
-      data[di + 3] = 255;
+      data[di + 3] = Math.round(clamp(aAcc, 0, 1) * 255);
     }
     off.getContext("2d").putImageData(img, 0, 0);
     return off;
@@ -9025,9 +9226,9 @@ function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null, o
         const [r, g, b] = colorForNorm(norm);
 
         let density;
-        if (state.colorMap === "diverging" && mm.min < 0 && mm.max > 0) {
+        if (activeColorMapIsDiverging() && mm.min < 0 && mm.max > 0) {
           density = Math.abs(norm * 2 - 1);
-        } else if (state.colorMap === "circular" && isDerivedPolModeActive() && state.derivedPolMode === "bfield") {
+        } else if (activeColorMapIsCyclic() && isDerivedPolModeActive() && state.derivedPolMode === "bfield") {
           density = 0.58;
         } else {
           density = norm;
@@ -9039,6 +9240,7 @@ function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null, o
             rAcc = r / 255;
             gAcc = g / 255;
             bAcc = b / 255;
+            aAcc = 1;
           }
           continue;
         }
@@ -9048,6 +9250,7 @@ function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null, o
             rAcc = r / 255;
             gAcc = g / 255;
             bAcc = b / 255;
+            aAcc = 1;
           }
           continue;
         }
@@ -9095,13 +9298,14 @@ function createVolumeCanvasCpu(volume, resolution = 240, rangeOverride = null, o
         rAcc = ar / 255;
         gAcc = ag / 255;
         bAcc = ab / 255;
+        aAcc = 1;
       }
 
       const di = (py * width + px) * 4;
       img.data[di + 0] = Math.round(clamp(rAcc, 0, 1) * 255);
       img.data[di + 1] = Math.round(clamp(gAcc, 0, 1) * 255);
       img.data[di + 2] = Math.round(clamp(bAcc, 0, 1) * 255);
-      img.data[di + 3] = 255;
+      img.data[di + 3] = Math.round(clamp(aAcc, 0, 1) * 255);
     }
   }
 
@@ -10415,9 +10619,15 @@ async function refreshSlice(options = {}) {
   });
   const epoch = activeEpoch();
   const ensureActive = () => assertEpoch(epoch);
+  const playbackMode = options.playback === true;
+  const busyToken = playbackMode ? null : {};
+  if (busyToken) {
+    state.viewerBusy = true;
+    state.viewerBusyToken = busyToken;
+    drawFrameAndOverlays();
+  }
   try {
   state.hoverProbe = null;
-  const playbackMode = options.playback === true;
   const deferFixedColorRange = options.deferFixedColorRange === true && !playbackMode;
   const playbackLodMaxPixels = playbackMode && !isSphereMode() ? playbackMaxPixelsForFrame() : null;
   const lodMaxPixels = !isSphereMode() ? spatialLodMaxPixels(playbackLodMaxPixels) : null;
@@ -10626,6 +10836,12 @@ async function refreshSlice(options = {}) {
   updateHoverReadout();
   } catch (err) {
     if (!isAbortError(err)) throw err;
+  } finally {
+    if (busyToken && state.viewerBusyToken === busyToken) {
+      state.viewerBusy = false;
+      state.viewerBusyToken = null;
+      drawFrameAndOverlays();
+    }
   }
 }
 
@@ -10693,18 +10909,43 @@ function clampIndexToWindow(axis, idx) {
   return clamp(clamped, start, end);
 }
 
+function resolveInterfaceColor(token, fallback) {
+  const value = window.getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+  return value || fallback;
+}
+
+function profileInterfacePalette() {
+  const contextAlpha = Number.parseFloat(resolveInterfaceColor("--r-graph-context-alpha", "0.3"));
+  return {
+    field: resolveInterfaceColor("--r-field", "#0b1118"),
+    face: resolveInterfaceColor("--r-face", "#111a24"),
+    raised: resolveInterfaceColor("--r-raised", "#172330"),
+    line: resolveInterfaceColor("--r-line", "#334155"),
+    lineStrong: resolveInterfaceColor("--r-line-strong", "#526375"),
+    ink: resolveInterfaceColor("--r-ink", "#e8f2ff"),
+    secondary: resolveInterfaceColor("--r-text-secondary", "#b8c9de"),
+    tertiary: resolveInterfaceColor("--r-text-tertiary", "#8ea1b5"),
+    focus: resolveInterfaceColor("--r-focus", "#51d2d0"),
+    graph1: resolveInterfaceColor("--r-graph-1", "#65b2dc"),
+    graph2: resolveInterfaceColor("--r-graph-2", "#4ccdbe"),
+    graph5: resolveInterfaceColor("--r-graph-5", "#bf92e2"),
+    graphContextAlpha: Number.isFinite(contextAlpha) ? contextAlpha : 0.3,
+  };
+}
+
 function drawNavigator(canvasEl, profile, indicatorIdx, axis) {
   const ctx = canvasEl.getContext("2d");
+  const palette = profileInterfacePalette();
   const s = canvasPixelRatio(canvasEl);
   const w = canvasEl.width;
   const h = canvasEl.height;
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = "#0b1118";
+  ctx.fillStyle = palette.field;
   ctx.fillRect(0, 0, w, h);
 
   if (!profile || !profile.series_mean || profile.series_mean.length < 2) {
-    ctx.fillStyle = "#98a8ba";
-    ctx.font = `${Math.round(11 * s)}px sans-serif`;
+    ctx.fillStyle = palette.tertiary;
+    ctx.font = `${Math.round(11 * s)}px 'Atkinson Hyperlegible Next', sans-serif`;
     ctx.fillText("No data", 8 * s, 16 * s);
     return;
   }
@@ -10744,7 +10985,7 @@ function drawNavigator(canvasEl, profile, indicatorIdx, axis) {
   const xOf = (i) => margin.l + xmap.toNorm(i) * pxW;
   const yOf = (v) => margin.t + (1 - (v - yMin) / ySpan) * pxH;
 
-  ctx.strokeStyle = "#334155";
+  ctx.strokeStyle = palette.line;
   ctx.lineWidth = 1 * s;
   ctx.beginPath();
   ctx.moveTo(margin.l, margin.t);
@@ -10752,7 +10993,7 @@ function drawNavigator(canvasEl, profile, indicatorIdx, axis) {
   ctx.lineTo(margin.l + pxW, margin.t + pxH);
   ctx.stroke();
 
-  ctx.strokeStyle = "#cfd7e3";
+  ctx.strokeStyle = palette.focus;
   ctx.lineWidth = 1.6 * s;
   ctx.beginPath();
   for (let i = 0; i < n; i += 1) {
@@ -10767,7 +11008,7 @@ function drawNavigator(canvasEl, profile, indicatorIdx, axis) {
     if (indicatorIdx >= startIdx && indicatorIdx <= endIdx) {
       const i = mappedIndicatorIndex(indicatorIdx - startIdx, resampled.sourceLength, n);
       const x = xOf(i);
-      ctx.strokeStyle = "#ffffff";
+      ctx.strokeStyle = palette.ink;
       ctx.lineWidth = 1 * s;
       ctx.beginPath();
       ctx.moveTo(x, margin.t);
@@ -10776,8 +11017,8 @@ function drawNavigator(canvasEl, profile, indicatorIdx, axis) {
     }
   }
 
-  ctx.fillStyle = "#8ea1b5";
-  ctx.font = `${Math.round(10 * s)}px sans-serif`;
+  ctx.fillStyle = palette.tertiary;
+  ctx.font = `${Math.round(10 * s)}px 'Martian Mono', monospace`;
   ctx.fillText(fmtIntensity(fluxFromPlotValue(yMax)), 2 * s, margin.t + 9 * s);
   ctx.fillText(fmtIntensity(fluxFromPlotValue(yMin)), 2 * s, margin.t + pxH);
 }
@@ -10800,12 +11041,15 @@ function drawNavigatorZoomDrag(canvasEl, profile, axis, drag) {
   const x1 = margin.l + xmap.toNorm(local1) * pxW;
 
   const ctx = canvasEl.getContext("2d");
+  const palette = profileInterfacePalette();
   ctx.save();
-  ctx.fillStyle = PROFILE_THEME.dragFill;
-  ctx.strokeStyle = PROFILE_THEME.dragStroke;
+  ctx.fillStyle = palette.focus;
+  ctx.globalAlpha = 0.11;
+  ctx.fillRect(Math.min(x0, x1), margin.t, Math.max(1, Math.abs(x1 - x0)), pxH);
+  ctx.globalAlpha = 0.92;
+  ctx.strokeStyle = palette.focus;
   ctx.lineWidth = 1.1 * s;
   ctx.setLineDash([4 * s, 3 * s]);
-  ctx.fillRect(Math.min(x0, x1), margin.t, Math.max(1, Math.abs(x1 - x0)), pxH);
   ctx.strokeRect(Math.min(x0, x1), margin.t, Math.max(1, Math.abs(x1 - x0)), pxH);
   ctx.restore();
 }
@@ -10873,28 +11117,32 @@ function drawProfileZoomDragOverlay() {
   const h = canvas.height - margin.t - margin.b;
 
   const ctx = canvas.getContext("2d");
+  const palette = profileInterfacePalette();
   ctx.save();
-  ctx.fillStyle = PROFILE_THEME.dragFill;
-  ctx.strokeStyle = PROFILE_THEME.dragStroke;
+  ctx.fillStyle = palette.focus;
+  ctx.globalAlpha = 0.11;
+  ctx.fillRect(left, margin.t, w, h);
+  ctx.globalAlpha = 0.92;
+  ctx.strokeStyle = palette.focus;
   ctx.lineWidth = 1.4 * s;
   ctx.setLineDash([4 * s, 3 * s]);
-  ctx.fillRect(left, margin.t, w, h);
   ctx.strokeRect(left, margin.t, w, h);
   ctx.restore();
 }
 
 function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
   const ctx = canvasEl.getContext("2d");
+  const palette = profileInterfacePalette();
   const scale = canvasPixelRatio(canvasEl);
   const w = canvasEl.width;
   const h = canvasEl.height;
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = "#0d1119";
+  ctx.fillStyle = palette.field;
   ctx.fillRect(0, 0, w, h);
 
   if (!profile || !profile.coords || profile.coords.length < 2) {
-    ctx.fillStyle = "#9fb0c3";
-    ctx.font = `${Math.round(13 * scale)}px Manrope, sans-serif`;
+    ctx.fillStyle = palette.tertiary;
+    ctx.font = `${Math.round(13 * scale)}px 'Atkinson Hyperlegible Next', sans-serif`;
     ctx.fillText("No selected area", 10 * scale, 20 * scale);
     return;
   }
@@ -10945,14 +11193,15 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
   const xOf = (i) => margin.l + xmap.toNorm(i) * pxW;
   const yOf = (v) => margin.t + (1 - (v - yMin) / ySpan) * pxH;
 
-  ctx.strokeStyle = "#2a3648";
+  ctx.strokeStyle = palette.line;
   ctx.lineWidth = 1 * scale;
   ctx.strokeRect(margin.l, margin.t, pxW, pxH);
 
   const xTickCount = Math.min(5, Math.max(3, Math.floor(pxW / (120 * scale)) + 1), n);
   const yTickCount = 5;
 
-  ctx.strokeStyle = "rgba(130, 148, 170, 0.25)";
+  ctx.strokeStyle = palette.line;
+  ctx.globalAlpha = 0.72;
   ctx.lineWidth = 1 * scale;
   ctx.setLineDash([3 * scale, 3 * scale]);
   for (let ti = 0; ti < yTickCount; ti += 1) {
@@ -10972,9 +11221,11 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
     ctx.stroke();
   }
   ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
 
   for (const sampleSeries of perSampleY) {
-    ctx.strokeStyle = "rgba(110, 170, 220, 0.24)";
+    ctx.strokeStyle = lineColor;
+    ctx.globalAlpha = palette.graphContextAlpha;
     ctx.lineWidth = 1.1 * scale;
     ctx.beginPath();
     for (let i = 0; i < sampleSeries.length; i += 1) {
@@ -10985,9 +11236,11 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
     }
     ctx.stroke();
   }
+  ctx.globalAlpha = 1;
 
   if (stdSeries.length === meanSeries.length && meanSeries.length > 1) {
-    ctx.fillStyle = "rgba(99, 177, 231, 0.19)";
+    ctx.fillStyle = lineColor;
+    ctx.globalAlpha = Math.max(0.12, palette.graphContextAlpha * 0.55);
     ctx.beginPath();
     for (let i = 0; i < meanY.length; i += 1) {
       const x = xOf(i);
@@ -11002,6 +11255,7 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
     }
     ctx.closePath();
     ctx.fill();
+    ctx.globalAlpha = 1;
   }
 
   ctx.strokeStyle = lineColor;
@@ -11019,7 +11273,7 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
     if (indicatorIdx >= startIdx && indicatorIdx <= endIdx) {
       const i = mappedIndicatorIndex(indicatorIdx - startIdx, sourceLength, n);
       const x = xOf(i);
-      ctx.strokeStyle = PROFILE_THEME.indicator;
+      ctx.strokeStyle = palette.ink;
       ctx.lineWidth = 1.5 * scale;
       ctx.beginPath();
       ctx.moveTo(x, margin.t);
@@ -11028,8 +11282,8 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
     }
   }
 
-  ctx.fillStyle = "#b8c9de";
-  ctx.font = `${Math.round(11 * scale)}px Manrope, sans-serif`;
+  ctx.fillStyle = palette.secondary;
+  ctx.font = `${Math.round(11 * scale)}px 'Martian Mono', monospace`;
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
   for (let ti = 0; ti < yTickCount; ti += 1) {
@@ -11051,8 +11305,8 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
     ctx.fillText(label, clampedX, h - 33 * scale);
   }
 
-  ctx.fillStyle = "#d3e2f4";
-  ctx.font = `${Math.round(13 * scale)}px Manrope, sans-serif`;
+  ctx.fillStyle = palette.ink;
+  ctx.font = `${Math.round(13 * scale)}px 'Atkinson Hyperlegible Next', sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   const axisLabel = axisDisplayLabel(axisName);
@@ -11062,7 +11316,7 @@ function drawSelectionProfile(canvasEl, profile, lineColor, indicatorIdx) {
   ctx.fillText(xLabel, margin.l + pxW / 2, h - 15 * scale);
 
   ctx.save();
-  ctx.translate(34 * scale, margin.t + pxH / 2);
+  ctx.translate(15 * scale, margin.t + pxH / 2);
   ctx.rotate(-Math.PI / 2);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -11113,9 +11367,10 @@ function drawSelectionGraphs() {
   syncCanvasToDisplaySize(els.spectrumProfileCanvas);
   syncCanvasToDisplaySize(els.spatialProfileCanvas);
 
-  drawSelectionProfile(els.timeProfileCanvas, tProfile, PROFILE_THEME.time, state.values.t);
-  drawSelectionProfile(els.spectrumProfileCanvas, fProfile, PROFILE_THEME.spectral, state.values.nu);
-  drawSelectionProfile(els.spatialProfileCanvas, hProfile, PROFILE_THEME.spatial, state.values[hiddenAxis]);
+  const palette = profileInterfacePalette();
+  drawSelectionProfile(els.timeProfileCanvas, tProfile, palette.graph1, state.values.t);
+  drawSelectionProfile(els.spectrumProfileCanvas, fProfile, palette.graph5, state.values.nu);
+  drawSelectionProfile(els.spatialProfileCanvas, hProfile, palette.graph2, state.values[hiddenAxis]);
 
   drawProfileZoomDragOverlay();
   updateSpatialProfileTitle(hProfile);
@@ -14336,6 +14591,7 @@ async function onDatasetChange() {
     const metaPromise = fetchJson(`/api/datasets/${state.dataId}/meta`);
     resetForDatasetChange(state);
     state.meta = provisionalMeta;
+    syncRecommendedColorMapForTheme();
     state.axisSettings = createDefaultAxisSettings();
     state.axisPlaneSwap = createDefaultAxisPlaneSwap();
     state.colorNormValueWindow = { min: null, max: null };
@@ -14372,9 +14628,11 @@ async function onDatasetChange() {
     state.axisSettings = createAxisSettingsForMetadata(fullMeta);
     await loadSceneContext(state.dataId);
     assertEpoch(expectedEpoch);
+    const recommendationChanged = syncRecommendedColorMapForTheme();
     state.sphereMeta = detectSphereMeta(state.meta);
     updateControlCaps();
     await slicePromise;
+    if (recommendationChanged) await refreshSlice();
     drawFrameAndOverlays();
     refreshActiveTabLabel();
   } catch (err) {
@@ -14382,7 +14640,72 @@ async function onDatasetChange() {
   }
 }
 
+const DOMAIN_NAV_TARGETS = Object.freeze({
+  spatial: "spatialControlGroup",
+  temporal: "temporalControlGroup",
+  spectral: "spectralControlGroup",
+  polarization: "polarizationControlGroup",
+  uncertainty: "uncertaintyControlGroup",
+});
+
+function domainNavigationTarget(domain) {
+  const targetId = DOMAIN_NAV_TARGETS[domain];
+  return targetId ? document.getElementById(targetId) : null;
+}
+
+function syncDomainNavigationAvailability() {
+  const controls = document.querySelector(".controls");
+  const domainIndex = document.querySelector(".domainIndex");
+  let activeButton = null;
+  let firstAvailableButton = null;
+  for (const button of document.querySelectorAll(".domainNavBtn[data-domain]")) {
+    const target = domainNavigationTarget(button.dataset.domain);
+    const available = Boolean(target && target.style.display !== "none" && !target.hidden);
+    button.hidden = !available;
+    button.disabled = !available;
+    button.setAttribute("aria-disabled", available ? "false" : "true");
+    button.removeAttribute("title");
+    if (available && !firstAvailableButton) firstAvailableButton = button;
+    if (button.dataset.domain === controls?.dataset.activeDomain) activeButton = button;
+  }
+  if (activeButton?.disabled && firstAvailableButton) {
+    controls.dataset.activeDomain = firstAvailableButton.dataset.domain;
+    activeButton = firstAvailableButton;
+  }
+  for (const button of document.querySelectorAll(".domainNavBtn[data-domain]")) {
+    const active = button === activeButton;
+    button.classList.toggle("isActive", active);
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  }
+  if (domainIndex) domainIndex.hidden = !firstAvailableButton;
+}
+
+function installDomainNavigation() {
+  const buttons = Array.from(document.querySelectorAll(".domainNavBtn[data-domain]"));
+  const controls = document.querySelector(".controls");
+  if (controls) controls.dataset.activeDomain = "spatial";
+  for (const button of buttons) {
+    button.addEventListener("click", () => {
+      if (button.disabled) return;
+      const target = domainNavigationTarget(button.dataset.domain);
+      if (!target) return;
+      if (controls) controls.dataset.activeDomain = button.dataset.domain;
+      for (const candidate of buttons) {
+        const active = candidate === button;
+        candidate.classList.toggle("isActive", active);
+        if (active) candidate.setAttribute("aria-current", "page");
+        else candidate.removeAttribute("aria-current");
+      }
+      if (controls) controls.scrollTo({ top: 0, behavior: "smooth" });
+      window.setTimeout(() => target.focus({ preventScroll: true }), 120);
+    });
+  }
+  syncDomainNavigationAvailability();
+}
+
 async function init() {
+  installDomainNavigation();
   if (!datasetTabs.length) {
     const firstTab = createDatasetTab("Tab 1");
     firstTab.snapshot = snapshotState();
@@ -14400,7 +14723,7 @@ async function init() {
   els.canvas.width = 640;
   els.canvas.height = 640;
   els.colorbarCanvas.width = 640;
-  els.colorbarCanvas.height = 26;
+  els.colorbarCanvas.height = 10;
   initPanelResize();
 
   if (state.sliceRender.backend !== "cpu") {
@@ -14615,6 +14938,13 @@ async function init() {
 
   els.colorMapSelect.addEventListener("change", async () => {
     state.colorMap = normalizeColorMapKey(els.colorMapSelect.value);
+    const quantityKey = intensityQuantityKey();
+    if (!state.colorMapsByQuantity || typeof state.colorMapsByQuantity !== "object") state.colorMapsByQuantity = {};
+    if (!state.colorMapOverridesByQuantity || typeof state.colorMapOverridesByQuantity !== "object") {
+      state.colorMapOverridesByQuantity = {};
+    }
+    state.colorMapsByQuantity[quantityKey] = state.colorMap;
+    state.colorMapOverridesByQuantity[quantityKey] = true;
     await refreshSlice();
     if (state.selection) await refreshSelectionAnalytics();
   });
@@ -15530,6 +15860,15 @@ async function init() {
     drawColorbar();
     updateExportButtonState();
     updateHoverReadout();
+  });
+
+  window.addEventListener("mobula:themechange", async () => {
+    if (syncRecommendedColorMapForTheme() && state.dataId) {
+      await refreshSlice();
+    }
+    drawFrameAndOverlays();
+    drawNavigationGraphs();
+    drawSelectionGraphs();
   });
 
   updateRenderSettingsFields();

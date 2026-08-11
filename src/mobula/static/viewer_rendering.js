@@ -72,7 +72,7 @@ export function createOfflineRenderController(deps) {
     const sourceW = Math.max(1, source.width);
     const sourceH = Math.max(1, source.height);
     const colorbarH = colorbar ? Math.max(1, colorbar.height) : 0;
-    const gap = colorbar ? 8 : 0;
+    const gap = colorbar ? 3 : 0;
     const rawOutW = sourceW;
     const rawOutH = sourceH + (colorbar ? colorbarH + gap : 0);
     const dims = resolveRenderFrameDimensions(rawOutW, rawOutH, resolution);

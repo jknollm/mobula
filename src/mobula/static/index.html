@@ -3,23 +3,55 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
     <base href="./" />
-    <title>mobula</title>
+    <title>Mobula</title>
     <link rel="shortcut icon" href="favicon.ico?v=20260307b" />
     <link rel="icon" type="image/png" href="static/assets/mobula_logo.png?v=20260307a" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Michroma&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="static/styles.css?v=20260804a" />
+    <script src="static/theme.js?v=20260806c"></script>
+    <link rel="stylesheet" href="static/resolve_tokens.css?v=20260807b" />
+    <link rel="stylesheet" href="static/styles.css?v=20260807b" />
   </head>
   <body>
     <main class="layout">
-      <header class="panel brandPanel">
-        <div class="brandLockup">
-          <img class="brandBanner" src="static/assets/mobula_banner_white.svg" alt="MOBULA - Navigating Domains" />
+      <header class="panel appBar">
+        <div class="appIdentity" aria-label="Resolve Mobula">
+          <span class="resolveMark" aria-hidden="true">R</span>
+          <span class="productIdentity">
+            <strong>Mobula</strong>
+            <small>domain exploration</small>
+          </span>
+        </div>
+        <div class="globalScopeControls" aria-label="Dataset scope">
+          <label class="appScope">
+            <span>Dataset</span>
+            <select id="datasetSelect"></select>
+          </label>
+          <label id="sceneLayerLabel" class="appScope" hidden>
+            <span>Scene layer</span>
+            <select id="sceneLayerSelect"></select>
+          </label>
+        </div>
+        <div class="appActions">
+          <span class="connectionState"><i aria-hidden="true"></i>Local</span>
+          <div id="sampleModeBlock" class="sampleModeBlock appSampleMode" aria-label="Sample quantity">
+            <span class="sampleModeTitle">Quantity</span>
+            <div class="sampleModeRow" role="group" aria-label="Sample quantity">
+              <button id="sampleModeMeanBtn" class="tinyBtn" type="button">Mean</button>
+              <button id="sampleModeStdBtn" class="tinyBtn" type="button" aria-label="Standard deviation" title="Standard deviation">
+                <span class="mathGlyph" aria-hidden="true">σ</span>
+              </button>
+              <button id="sampleModeSamplesBtn" class="tinyBtn" type="button">Samples</button>
+              <button id="sampleModeRelBtn" class="tinyBtn" type="button" aria-label="Relative uncertainty" title="Relative uncertainty">
+                <span class="mathGlyph" aria-hidden="true">σ / μ</span>
+              </button>
+            </div>
+          </div>
+          <div id="themeControl" class="themeControl" role="group" aria-label="Appearance">
+            <button type="button" data-theme-choice="light" aria-label="Light appearance" title="Light" aria-pressed="false"><span aria-hidden="true">☀</span></button>
+            <button type="button" data-theme-choice="system" aria-label="Use system appearance" title="System" aria-pressed="false"><span aria-hidden="true">◐</span></button>
+            <button type="button" data-theme-choice="dark" aria-label="Dark appearance" title="Dark" aria-pressed="false"><span aria-hidden="true">☾</span></button>
+          </div>
         </div>
       </header>
 
@@ -30,18 +62,25 @@
       </section>
 
       <div id="workspaceRow" class="workspaceRow">
-      <section class="panel controls">
-        <h2 class="panelTitle">Controls</h2>
-        <div id="dataControlGroup" class="controlGroup">
-          <h2>Data</h2>
-          <label>
-            Dataset
-            <select id="datasetSelect"></select>
-          </label>
-          <label id="sceneLayerLabel" hidden>
-            Scene Layer
-            <select id="sceneLayerSelect"></select>
-          </label>
+      <section class="panel controls" aria-labelledby="domainsTitle">
+        <div class="domainIndex">
+          <h2 id="domainsTitle" class="panelTitle">Domains</h2>
+          <nav id="domainNav" class="domainNav" aria-label="Analytical domains">
+            <button class="domainNavBtn isActive" type="button" data-domain="spatial" aria-current="page">
+              <span>01</span>Spatial
+            </button>
+            <button class="domainNavBtn" type="button" data-domain="temporal"><span>02</span>Time</button>
+            <button class="domainNavBtn" type="button" data-domain="spectral"><span>03</span>Spectrum</button>
+            <button class="domainNavBtn" type="button" data-domain="polarization"><span>04</span>Polarization</button>
+            <button class="domainNavBtn" type="button" data-domain="uncertainty"><span>05</span>Uncertainty</button>
+          </nav>
+        </div>
+        <details id="dataControlGroup" class="controlGroup contextControlGroup">
+          <summary>
+            <span>Display &amp; operations</span>
+            <small>Map, range, backend, ingest</small>
+          </summary>
+          <div class="contextControlBody">
           <div class="buttonRow">
             <button id="systemPickerBtn" type="button">Load Data</button>
           </div>
@@ -53,9 +92,13 @@
               <option value="plasma">Plasma</option>
               <option value="inferno">Inferno</option>
               <option value="afmhot_us">afmhot_us</option>
+              <option value="oslo">oslo</option>
+              <option value="cyan_coral.paper">cyan / coral · paper</option>
+              <option value="cyan_coral.night">cyan / coral · night</option>
+              <option value="phase_c3">ColorCET C3 · half-turn</option>
               <option value="gray">Gray</option>
-              <option value="diverging">Diverging</option>
-              <option value="circular">Circular</option>
+              <option value="diverging">Diverging (legacy)</option>
+              <option value="circular">Circular (legacy)</option>
             </select>
           </label>
           <label id="colorNormalizationModeLabel">
@@ -104,48 +147,6 @@
           <div class="buttonRow">
             <button id="axisSettingsBtn" class="tinyBtn" type="button">Axis Settings</button>
           </div>
-          <div id="sampleModeBlock" class="sampleModeBlock">
-            <span class="sampleModeTitle">Sample Mode</span>
-            <div class="sampleModeRow">
-              <button id="sampleModeMeanBtn" class="tinyBtn" type="button">Mean</button>
-              <button id="sampleModeStdBtn" class="tinyBtn" type="button">STD</button>
-              <button id="sampleModeSamplesBtn" class="tinyBtn" type="button">Samples</button>
-              <button id="sampleModeRelBtn" class="tinyBtn" type="button">rel. uncertainty</button>
-            </div>
-            <div id="sampleViewControls" class="sampleViewControls">
-              <span>Samples View</span>
-              <div class="miniGroup">
-                <button id="sampleViewMosaicBtn" class="tinyBtn" type="button">Mosaic</button>
-                <button id="sampleViewMorphBtn" class="tinyBtn" type="button">Morph</button>
-              </div>
-            </div>
-            <div id="sampleMosaicControls" class="sampleMosaicControls">
-              <label>
-                # Samples
-                <select id="sampleGridCountSelect">
-                  <option value="1">1</option>
-                  <option value="4" selected>4</option>
-                  <option value="9">9</option>
-                  <option value="16">16</option>
-                </select>
-              </label>
-              <button id="resampleSamplesBtn" class="tinyBtn" type="button">Resample</button>
-            </div>
-            <div id="sampleMorphControls" class="sampleMorphControls">
-              <label>
-                Sample Δt (between samples)
-                <select id="sampleMorphDeltaSelect">
-                  <option value="0.05">0.05s</option>
-                  <option value="0.1">0.1s</option>
-                  <option value="0.25">0.25s</option>
-                  <option value="0.5" selected>0.5s</option>
-                  <option value="1">1s</option>
-                  <option value="2">2s</option>
-                </select>
-              </label>
-              <span id="sampleMorphStatus" class="sampleMorphStatus"></span>
-            </div>
-          </div>
           <div id="playbackTimingControls" class="playbackTimingControls">
             <label id="playSpeedLabel">
               Render FPS
@@ -163,10 +164,11 @@
               </select>
             </label>
           </div>
-        </div>
+          </div>
+        </details>
 
-        <div id="spatialControlGroup" class="controlGroup">
-          <h2>Spatial</h2>
+        <div id="spatialControlGroup" class="controlGroup" data-domain-panel="spatial" tabindex="-1">
+          <h2><span class="domainNumber">01</span> Spatial</h2>
           <label>
             Resolution Scale
             <select id="spatialResolutionSelect">
@@ -344,8 +346,8 @@
           </div>
         </div>
 
-        <div id="temporalControlGroup" class="controlGroup">
-          <h2>Temporal</h2>
+        <div id="temporalControlGroup" class="controlGroup" data-domain-panel="temporal" tabindex="-1">
+          <h2><span class="domainNumber">02</span> Time</h2>
           <label>
             Resolution Scale
             <select id="temporalResolutionSelect">
@@ -376,8 +378,8 @@
           </div>
         </div>
 
-        <div id="spectralControlGroup" class="controlGroup">
-          <h2>Spectral</h2>
+        <div id="spectralControlGroup" class="controlGroup" data-domain-panel="spectral" tabindex="-1">
+          <h2><span class="domainNumber">03</span> Spectrum</h2>
           <label>
             Resolution Scale
             <select id="spectralResolutionSelect">
@@ -494,8 +496,8 @@
           </div>
         </div>
 
-        <div id="polarizationControlGroup" class="controlGroup">
-          <h2>Polarisation</h2>
+        <div id="polarizationControlGroup" class="controlGroup" data-domain-panel="polarization" tabindex="-1">
+          <h2><span class="domainNumber">04</span> Polarization</h2>
           <div class="polJump">
             <div class="pillRow stokesRow">
               <button id="polBtn0" type="button" data-pol="0">I</button>
@@ -537,14 +539,56 @@
             <div id="polValue" class="polCurrent"></div>
           </div>
         </div>
+
+        <div id="uncertaintyControlGroup" class="controlGroup" data-domain-panel="uncertainty" tabindex="-1">
+          <h2><span class="domainNumber">05</span> Uncertainty</h2>
+          <p class="domainIntro">Choose the quantity in the app bar. Sample-specific view controls appear here.</p>
+          <div id="sampleViewControls" class="sampleViewControls">
+            <span>Samples View</span>
+            <div class="miniGroup">
+              <button id="sampleViewMosaicBtn" class="tinyBtn" type="button">Mosaic</button>
+              <button id="sampleViewMorphBtn" class="tinyBtn" type="button">Morph</button>
+            </div>
+          </div>
+          <div id="sampleMosaicControls" class="sampleMosaicControls">
+            <label>
+              # Samples
+              <select id="sampleGridCountSelect">
+                <option value="1">1</option>
+                <option value="4" selected>4</option>
+                <option value="9">9</option>
+                <option value="16">16</option>
+              </select>
+            </label>
+            <button id="resampleSamplesBtn" class="tinyBtn" type="button">Resample</button>
+          </div>
+          <div id="sampleMorphControls" class="sampleMorphControls">
+            <label>
+              Sample Δt (between samples)
+              <select id="sampleMorphDeltaSelect">
+                <option value="0.05">0.05s</option>
+                <option value="0.1">0.1s</option>
+                <option value="0.25">0.25s</option>
+                <option value="0.5" selected>0.5s</option>
+                <option value="1">1s</option>
+                <option value="2">2s</option>
+              </select>
+            </label>
+            <span id="sampleMorphStatus" class="sampleMorphStatus"></span>
+          </div>
+        </div>
       </section>
 
       <div id="leftSplitter" class="colSplitter" role="separator" aria-orientation="vertical" aria-label="Resize left panel"></div>
 
-      <section class="panel viewer">
+      <section class="panel viewer" aria-labelledby="scientificViewTitle">
+        <header class="regionHeader viewerRegionHeader">
+          <span>Scientific view</span>
+          <h2 id="scientificViewTitle">Active field</h2>
+        </header>
         <canvas id="sliceCanvas" width="640" height="640"></canvas>
         <div class="colorbarPanel">
-          <canvas id="colorbarCanvas" class="colorbarCanvas" width="640" height="26"></canvas>
+          <canvas id="colorbarCanvas" class="colorbarCanvas" width="640" height="10"></canvas>
           <div class="colorbarLabels">
             <span id="colorbarMin"></span>
             <span id="colorbarMid"></span>
@@ -578,7 +622,11 @@
 
       <div id="rightSplitter" class="colSplitter" role="separator" aria-orientation="vertical" aria-label="Resize right panel"></div>
 
-      <section id="metricsPanel" class="panel metrics">
+      <section id="metricsPanel" class="panel metrics" aria-labelledby="measurementSurfaceTitle">
+        <header class="regionHeader measurementRegionHeader">
+          <span>Measurements &amp; evidence</span>
+          <h2 id="measurementSurfaceTitle">Selection</h2>
+        </header>
         <h2 id="metricsTitle">Inspect</h2>
         <p id="metricsHint">Click for point or drag for area.</p>
         <div id="hoverReadout" class="hoverReadout">Move cursor over the image to inspect coordinates and flux.</div>
@@ -838,6 +886,7 @@
           <input id="saveImagesTransparentBgChk" type="checkbox" />
           Transparent background
         </label>
+        <span class="exportFormatNote">The viewer image includes the current selection and scientific overlays.</span>
         <div id="saveImagesStatus" class="exportStatus"></div>
         <div class="exportDialogActions">
           <button id="saveImagesCancelBtn" class="tinyBtn" type="button">Cancel</button>
@@ -965,6 +1014,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="static/app.js?v=20260804g"></script>
+    <script type="module" src="static/app.js?v=20260807c"></script>
   </body>
 </html>

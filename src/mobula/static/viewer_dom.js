@@ -15,6 +15,7 @@ export function lookupViewerElements(doc = document) {
     temporalControlGroup: byId("temporalControlGroup"),
     spectralControlGroup: byId("spectralControlGroup"),
     polarizationControlGroup: byId("polarizationControlGroup"),
+    uncertaintyControlGroup: byId("uncertaintyControlGroup"),
     datasetTabs: byId("datasetTabs"),
 
     datasetSelect: byId("datasetSelect"),

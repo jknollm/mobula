@@ -4,6 +4,36 @@ This document is the product contract for observable viewer behavior. It should 
 
 Keep entries concrete, user-facing, and testable. When a behavior changes intentionally, update this file in the same change.
 
+## Application Shell And Appearance
+
+- Mobula presents one connected three-region workbench:
+  - domain navigation and local controls on the left
+  - the dominant scientific view in the center
+  - measurements, linked profiles, performance evidence, and provenance on the right
+- The domain index uses the stable Spatial, Time, Spectrum, Polarization, and Uncertainty identities, but exposes
+  only domains applicable to the active dataset. Unavailable domains do not occupy rows or compact-grid columns.
+- Only the active domain's local controls are prominent in the left rail. Display, range, backend, axis, and ingest
+  operations remain available in the named `Display & operations` disclosure instead of lengthening every domain.
+- Opening a domain reveals its existing controls. It does not change the dataset, sample treatment, ROI,
+  coordinates, axes, map, normalization, projection, playback window, zoom, or rendered quantity.
+- Dataset scope and sample quantity remain global and available in the app bar. The interface offers button controls
+  for `Light`, `System`, and `Dark` appearance preferences. The preference persists locally and
+  `System` follows the operating-system color-scheme setting without a light/dark flash during page load.
+- Appearance changes preserve the complete applicable option inventory and all compatible explicit viewer choices.
+  They change interface surfaces, the unused canvas field, canvas annotations, and measurement-chart framing. They
+  never recolor the scientific raster itself or change a held color-map profile.
+- Interface fonts load from Mobula's packaged static assets. Atkinson Hyperlegible Next is used for interface labels
+  and controls; Martian Mono is used for coordinates, values, units, provenance, and canvas data labels, including
+  nested dialogs. STIX Two Math owns mathematical Greek such as `σ` and `μ`; the Latin subsets do not provide an
+  uncontrolled fallback. Running the local viewer does not require a public font service or other presentation CDN.
+- With no dataset selected, the central field identifies itself and names the dataset selector as the action that
+  unblocks it. A pending field request is identified on the same theme-aware canvas.
+- A transient modal backdrop may temporarily obscure the scientific view while the modal owns interaction. Changing
+  appearance or holding a scientific display profile may not recolor the raster itself.
+- At viewport widths from compact mobile through wide desktop, the application shell does not create horizontal
+  document overflow. The resizable three-column workbench becomes a single connected column when panel resizing is
+  no longer practical.
+
 ## Dataset And Tab Switching
 
 - Mobula works at the origin root and under an owning application's path prefix. Static assets, API and binary requests,
@@ -59,6 +89,10 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
 - In inspect mode, clicking creates a point selection and dragging creates a rectangular ROI on the rendered data region.
 - Creating a new ROI replaces the previous selection. The current product does not expose separate move/resize handles for an existing ROI.
 - Releasing the pointer commits the current ROI and refreshes linked profiles for the selection.
+- A committed point or ROI remains marked in the field. A point uses a lightweight focus-colored circle and crosshair;
+  an ROI uses a focus-colored dashed rectangle. The marker locates the selected evidence without adding a heavy
+  contrast keyline. Viewer snapshots include the current selection overlay; numerical data cutout exports do not
+  rasterize interface overlays into the data.
 - Selection outside the rendered image does not create a ROI.
 - Shift-click outside the canvas clears the active ROI.
 - Selection-driven profile panels update from the current ROI:
@@ -69,6 +103,25 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
 - Profile zoom is local to each profile axis and can be reset independently.
 
 ## Color Normalization
+
+- The default viewer colorbar is a compact attached horizontal rail. Its ramp is `10px` high, sits across a `3px`
+  optical gap, and follows the active viewer width. The same attached proportion is retained in snapshots,
+  rendered frames, and recordings. This remains a configurable presentation default rather than a restriction on
+  provider-defined orientations or Mobula's wider scientific-map and normalization inventory.
+- The selectable map inventory comes from Mobula's versioned scientific-color registry. Viridis, Plasma, Inferno,
+  `afmhot_us`, Gray, and the legacy Diverging/Circular maps remain available; Resolve adds `oslo`,
+  `cyan_coral.paper`, `cyan_coral.night`, and the half-turned ColorCET C3 phase profile without removing choices.
+- Each registry record owns an explicit-length LUT (256 for the retained general maps and 257 for Resolve cyan/coral profiles), map/profile identity, quantity structure, normalization support,
+  center or seam where applicable, under/over behavior, invalid policy, source version, license, and provenance.
+  The Resolve cyan/coral records preserve the exact accepted Uniform Vivid Ink and Uniform Vivid Neon LUTs,
+  including their `resolve-cyan-coral-1.0` source version and canonical hashes; Mobula does not reconstruct them
+  from preview anchors or interpolate them from interface colors.
+- Invalid, masked, missing, unevaluated, and outside-domain scalar samples render with alpha `0` in CPU, WebGL,
+  sphere, and volume sources. Transparency-preserving snapshots retain that alpha; destinations without alpha,
+  including encoded movies, composite the same source over the current observation field.
+- Quantity recommendations are `afmhot_us` for positive intensity, `oslo` for ordered uncertainty, a theme-matched
+  named cyan/coral profile for signed circular polarization, and half-turned C3 for phase/orientation. A user map
+  choice is retained as an explicit override for that quantity and is not replaced by an appearance change.
 
 - Color normalization uses the currently selected range policy:
   - `None`: current slice only

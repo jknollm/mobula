@@ -5,8 +5,8 @@ from typing import Any
 import numpy as np
 from fastapi import HTTPException
 
-from mobula.data.schema import CubeDataset
 from mobula.data.scene import RenderedSceneSlice, SceneDescriptor
+from mobula.data.schema import CubeDataset
 from mobula.service.api_compute import _extract_2d_slice
 from mobula.service.api_models import RangeMode, SampleMode
 from mobula.service.api_utils import (
@@ -87,7 +87,6 @@ def build_scene_slice_payload(
 ) -> ScalarArrayPayload:
     """Adapt a source-rendered plane to the unchanged browser wire payload."""
     rendered.validate()
-    axes = {axis.axis_id: axis for axis in descriptor.axes}
     coords: dict[str, Any] = {}
     for axis in rendered.plane_axes:
         coords[axis] = np.asarray(rendered.plane_coords[axis]).reshape(-1).tolist()

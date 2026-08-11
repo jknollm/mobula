@@ -17,8 +17,8 @@ import pytest
 
 from mobula.data.scene import SceneProfilesRequest, SceneSliceRequest
 from mobula.data.scene_remote import (
-    SCENE_SOURCE_PROTOCOL_VERSION,
     SCENE_SLICE_MEDIA_TYPE,
+    SCENE_SOURCE_PROTOCOL_VERSION,
     encode_scene_profiles_payload,
     encode_scene_slice_payload,
 )
@@ -187,9 +187,7 @@ def sparse_scene_app_url() -> Iterator[str]:
                         **raw,
                         "profile_axes": tuple(raw["profile_axes"]),
                         "plane_axes": tuple(raw["plane_axes"]),
-                        "spatial_window": {
-                            axis: tuple(bounds) for axis, bounds in raw["spatial_window"].items()
-                        },
+                        "spatial_window": {axis: tuple(bounds) for axis, bounds in raw["spatial_window"].items()},
                     }
                 )
                 rendered = asyncio.run(source.render_profiles(request))
@@ -293,6 +291,23 @@ def _choose_dataset(page: object, dataset_id: str) -> None:
     page.wait_for_timeout(1500)
 
 
+def _activate_domain(page: object, domain: str) -> None:
+    button = page.locator(f'.domainNavBtn[data-domain="{domain}"]')
+    assert button.is_enabled()
+    button.click()
+    page.wait_for_function(
+        "(expected) => document.querySelector('.controls')?.dataset.activeDomain === expected",
+        arg=domain,
+    )
+
+
+def _open_display_controls(page: object) -> None:
+    details = page.locator("#dataControlGroup")
+    if not details.evaluate("(node) => node.open"):
+        details.locator("summary").click()
+    page.wait_for_function("() => document.querySelector('#dataControlGroup')?.open === true")
+
+
 def _drag_roi(page: object, rel_start: tuple[float, float], rel_end: tuple[float, float]) -> None:
     canvas = page.locator("#sliceCanvas:visible").first
     box = canvas.bounding_box()
@@ -339,6 +354,7 @@ def _canvas_foreground_bounds(page: object, selector: str) -> dict[str, int]:
           const ctx = canvas.getContext('2d', { willReadFrequently: true });
           const { width, height } = canvas;
           const img = ctx.getImageData(0, 0, width, height);
+          const background = Array.from(ctx.getImageData(1, 1, 1, 1).data.slice(0, 3));
           let minX = width;
           let maxX = -1;
           let minY = height;
@@ -349,7 +365,8 @@ def _canvas_foreground_bounds(page: object, selector: str) -> dict[str, int]:
               const r = img.data[idx + 0];
               const g = img.data[idx + 1];
               const b = img.data[idx + 2];
-              if (r <= 16 && g <= 20 && b <= 28) continue;
+              const distance = Math.abs(r - background[0]) + Math.abs(g - background[1]) + Math.abs(b - background[2]);
+              if (distance <= 30) continue;
               if (x < minX) minX = x;
               if (x > maxX) maxX = x;
               if (y < minY) minY = y;
@@ -377,13 +394,15 @@ def _wait_for_canvas_foreground(page: object, selector: str, timeout_ms: int = 8
           const { width, height } = canvas;
           if (!width || !height) return false;
           const img = ctx.getImageData(0, 0, width, height);
+          const background = Array.from(ctx.getImageData(1, 1, 1, 1).data.slice(0, 3));
           for (let y = 0; y < height; y += 1) {
             for (let x = 0; x < width; x += 1) {
               const idx = (y * width + x) * 4;
               const r = img.data[idx + 0];
               const g = img.data[idx + 1];
               const b = img.data[idx + 2];
-              if (r > 16 || g > 20 || b > 28) return true;
+              const distance = Math.abs(r - background[0]) + Math.abs(g - background[1]) + Math.abs(b - background[2]);
+              if (distance > 30) return true;
             }
           }
           return false;
@@ -399,6 +418,297 @@ def test_app_loads(page: object, app_url: str) -> None:
     assert page.locator("#sliceCanvas:visible").first.is_visible()
     option_count = page.locator("#datasetSelect option").count()
     assert option_count > 1
+
+
+@pytest.mark.browser
+def test_resolve_shell_uses_local_fonts_and_persistent_complete_themes(page: object, app_url: str) -> None:
+    requested_urls: list[str] = []
+    page.on("request", lambda request: requested_urls.append(request.url))
+    page.emulate_media(color_scheme="dark")
+    _wait_ui_ready(page, app_url)
+
+    assert page.locator(".appIdentity").get_by_text("Mobula", exact=True).is_visible()
+    assert page.locator(".brandBanner").count() == 0
+    assert page.locator('[data-theme-choice="system"]').get_attribute("aria-pressed") == "true"
+    assert page.locator("html").get_attribute("data-resolve-theme") == "dark"
+    assert "Atkinson Hyperlegible Next" in page.locator("body").evaluate("(body) => getComputedStyle(body).fontFamily")
+    assert any("/static/fonts/AtkinsonHyperlegibleNext-Latin.woff2" in url for url in requested_urls)
+    assert any("/static/fonts/MartianMono-Width100-Latin.woff2" in url for url in requested_urls)
+    assert any("/static/fonts/STIXTwoMath-Regular.woff2" in url for url in requested_urls)
+    assert not any("fonts.googleapis.com" in url or "fonts.gstatic.com" in url for url in requested_urls)
+    assert page.locator("html").evaluate("(element) => getComputedStyle(element).fontSynthesis") == "none"
+    _choose_dataset(page, "movie-2d-pol-hd")
+    assert "Atkinson Hyperlegible Next" in page.locator(".domainNavBtn:visible").first.evaluate(
+        "(element) => getComputedStyle(element).fontFamily"
+    )
+    assert "STIX Two Math" in page.locator("#sampleModeStdBtn .mathGlyph").evaluate(
+        "(element) => getComputedStyle(element).fontFamily"
+    )
+    assert page.locator(".productIdentity small").evaluate("(element) => getComputedStyle(element).fontSize") == "10px"
+    assert (
+        page.locator(".domainNavBtn:visible").first.evaluate("(element) => getComputedStyle(element).fontSize")
+        == "11px"
+    )
+    assert page.locator(".datasetTabBtn").first.evaluate("(element) => getComputedStyle(element).fontSize") == "10px"
+    for selector in [".datasetTabBtn", ".hoverReadout", ".colorbarLabels"]:
+        assert "Martian Mono" in page.locator(selector).first.evaluate(
+            "(element) => getComputedStyle(element).fontFamily"
+        )
+    _open_display_controls(page)
+    page.locator("#axisSettingsBtn").click()
+    page.wait_for_selector("#axisSettingsDialog[open]")
+    assert "Atkinson Hyperlegible Next" in page.locator("#axisSettingsDialog").evaluate(
+        "(element) => getComputedStyle(element).fontFamily"
+    )
+    assert "Martian Mono" in page.locator(".axisSettingsMeta").first.evaluate(
+        "(element) => getComputedStyle(element).fontFamily"
+    )
+    page.locator("#axisSettingsCloseBtn").click()
+    dark_dialog_background = page.locator("#axisSettingsDialog").evaluate(
+        "(dialog) => getComputedStyle(dialog).backgroundColor"
+    )
+
+    option_inventory = page.locator("select").evaluate_all(
+        """(selects) => Object.fromEntries(selects.map((select) => [
+          select.id,
+          Array.from(select.options, (option) => option.value),
+        ]))"""
+    )
+    scientific_pixels = page.locator("#sliceCanvas").evaluate(
+        """(canvas) => {
+          const ctx = canvas.getContext('2d');
+          return Array.from(ctx.getImageData(canvas.width >> 1, canvas.height >> 1, 1, 1).data);
+        }"""
+    )
+    dark_canvas_background = page.locator("#sliceCanvas").evaluate(
+        "(canvas) => Array.from(canvas.getContext('2d').getImageData(2, 2, 1, 1).data)"
+    )
+
+    page.locator('[data-theme-choice="light"]').click()
+    page.wait_for_function("() => document.documentElement.dataset.resolveTheme === 'bright'")
+    assert (
+        page.locator("select").evaluate_all(
+            """(selects) => Object.fromEntries(selects.map((select) => [
+          select.id,
+          Array.from(select.options, (option) => option.value),
+        ]))"""
+        )
+        == option_inventory
+    )
+    assert (
+        page.locator("#sliceCanvas").evaluate(
+            """(canvas) => {
+              const ctx = canvas.getContext('2d');
+              return Array.from(ctx.getImageData(canvas.width >> 1, canvas.height >> 1, 1, 1).data);
+            }"""
+        )
+        == scientific_pixels
+    )
+    assert (
+        page.locator("#sliceCanvas").evaluate(
+            "(canvas) => Array.from(canvas.getContext('2d').getImageData(2, 2, 1, 1).data)"
+        )
+        != dark_canvas_background
+    )
+    assert (
+        page.locator("#axisSettingsDialog").evaluate("(dialog) => getComputedStyle(dialog).backgroundColor")
+        != dark_dialog_background
+    )
+
+    page.reload(wait_until="networkidle")
+    page.wait_for_selector('[data-theme-choice="light"]:visible')
+    assert page.locator('[data-theme-choice="light"]').get_attribute("aria-pressed") == "true"
+    assert page.locator("html").get_attribute("data-resolve-theme") == "bright"
+
+
+@pytest.mark.browser
+def test_scientific_registry_and_invalid_scalar_transparency(page: object, app_url: str) -> None:
+    _wait_ui_ready(page, app_url)
+    registry = page.evaluate("() => window.__mobulaDebug.getScientificColorRegistry()")
+    expected_maps = {
+        "viridis",
+        "plasma",
+        "inferno",
+        "afmhot_us",
+        "gray",
+        "diverging",
+        "circular",
+        "oslo",
+        "cyan_coral.paper",
+        "cyan_coral.night",
+        "phase_c3",
+    }
+    assert registry["version"] == "mobula-science-colors-1"
+    assert registry["invalid"] == {"alpha": 0, "policy": "transparent"}
+    assert set(registry["maps"]) == expected_maps
+    assert all(
+        record["lutLength"] == (771 if name.startswith("cyan_coral.") else 768)
+        for name, record in registry["maps"].items()
+    )
+    assert registry["maps"]["afmhot_us"]["lutFirst"] == [0, 0, 0]
+    assert registry["maps"]["afmhot_us"]["lutLast"] == [255, 254, 253]
+    assert registry["maps"]["cyan_coral.paper"]["calibration"] == "uniform vivid ink"
+    assert registry["maps"]["cyan_coral.night"]["calibration"] == "uniform vivid neon"
+    assert registry["maps"]["cyan_coral.paper"]["lutEntries"] == 257
+    assert registry["maps"]["cyan_coral.night"]["lutEntries"] == 257
+
+    _open_display_controls(page)
+    assert (
+        set(page.locator("#colorMapSelect option").evaluate_all("options => options.map(option => option.value)"))
+        == expected_maps
+    )
+
+    results: dict[str, dict[str, list[list[int]]]] = {}
+    for theme in ["dark", "light"]:
+        page.locator(f'[data-theme-choice="{theme}"]').click()
+        page.wait_for_function(
+            "expected => document.documentElement.dataset.resolveTheme === expected",
+            arg="dark" if theme == "dark" else "bright",
+        )
+        results[theme] = {}
+        for backend in ["cpu", "gpu"]:
+            fixture = page.evaluate("backend => window.__mobulaDebug.renderInvalidScalarFixture(backend)", backend)
+            assert fixture is not None
+            pixels = fixture["pixels"]
+            assert sorted(pixel[3] for pixel in pixels) == [0, 0, 255, 255, 255, 255]
+            assert all(pixel == [0, 0, 0, 0] for pixel in pixels if pixel[3] == 0)
+            results[theme][backend] = pixels
+
+    assert results["dark"] == results["light"]
+
+    _choose_dataset(page, "movie-2d-pol-hd")
+    page.wait_for_function("() => document.querySelector('#colorMapSelect').value === 'afmhot_us'")
+    page.locator("#sampleModeStdBtn").click()
+    page.wait_for_function("() => document.querySelector('#colorMapSelect').value === 'oslo'")
+    page.locator("#sampleModeMeanBtn").click()
+    page.wait_for_function("() => document.querySelector('#colorMapSelect').value === 'afmhot_us'")
+
+    _choose_dataset(page, "xy-nu-pol-radio-galaxy")
+    page.wait_for_function("() => document.querySelector('#colorMapSelect').value === 'afmhot_us'")
+    page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().viewerBusy === false")
+    snapshot = page.evaluate("() => window.__mobulaDebug.captureTransparentViewerSnapshot()")
+    assert snapshot["cornerAlpha"] == 0
+    assert snapshot["minAlpha"] == 0
+    assert snapshot["maxAlpha"] == 255
+
+    _choose_dataset(page, "volume-3d-spiral-galaxy")
+    page.wait_for_function("() => document.querySelector('#colorMapSelect').value === 'afmhot_us'")
+    page.locator("#colorMapSelect").select_option("inferno")
+    page.locator('[data-theme-choice="dark"]').click()
+    page.locator('[data-theme-choice="light"]').click()
+    assert page.locator("#colorMapSelect").input_value() == "inferno"
+
+
+@pytest.mark.browser
+def test_domain_navigation_preserves_analytical_context(page: object, app_url: str) -> None:
+    _wait_ui_ready(page, app_url)
+    _choose_dataset(page, "movie-2d-pol-hd")
+    _drag_roi(page, (0.32, 0.35), (0.58, 0.62))
+    page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().selection !== null")
+    before = _debug_state(page)
+
+    domain_labels = [" ".join(label.split()) for label in page.locator(".domainNavBtn:visible").all_inner_texts()]
+    assert domain_labels == ["01 Spatial", "02 Time", "04 Polarization", "05 Uncertainty"]
+    assert page.locator('.domainNavBtn[data-domain="spectral"]').is_hidden()
+    time_button = page.locator('.domainNavBtn[data-domain="temporal"]')
+    assert time_button.is_enabled()
+    time_button.click()
+    page.wait_for_function("() => document.activeElement?.id === 'temporalControlGroup'")
+    after = _debug_state(page)
+
+    assert time_button.get_attribute("aria-current") == "page"
+    for key in ["dataId", "plane", "sampleMode", "colorMap", "colorRangeMode", "selection", "view"]:
+        assert after[key] == before[key]
+
+
+@pytest.mark.browser
+def test_only_dataset_domains_are_exposed(page: object, app_url: str) -> None:
+    _wait_ui_ready(page, app_url)
+    assert page.locator(".domainIndex").is_hidden()
+    expected = {
+        "movie-2d-pol-hd": ["spatial", "temporal", "polarization", "uncertainty"],
+        "time-5d-volume-samples-hd": ["spatial", "temporal", "uncertainty"],
+        "xy-nu-pol-radio-galaxy": ["spatial", "spectral", "polarization", "uncertainty"],
+        "volume-3d-spiral-galaxy": ["spatial"],
+        "healpix-sky-time-nu-hd": ["spatial", "temporal", "spectral", "uncertainty"],
+    }
+    for dataset_id, available_domains in expected.items():
+        _choose_dataset(page, dataset_id)
+        assert (
+            page.locator(".domainNavBtn:visible").evaluate_all(
+                "(buttons) => buttons.map((button) => button.dataset.domain)"
+            )
+            == available_domains
+        )
+
+    _choose_dataset(page, "movie-2d-pol-hd")
+    _activate_domain(page, "temporal")
+    _choose_dataset(page, "volume-3d-spiral-galaxy")
+    assert page.locator('.domainNavBtn[data-domain="spatial"]').get_attribute("aria-current") == "page"
+    assert page.locator(".controls").get_attribute("data-active-domain") == "spatial"
+
+
+@pytest.mark.browser
+def test_committed_point_uses_lightweight_focus_location_marker(page: object, app_url: str) -> None:
+    _wait_ui_ready(page, app_url)
+    _choose_dataset(page, "movie-2d-pol-hd")
+    page.locator("#modeInspectBtn:visible").first.click()
+    canvas = page.locator("#sliceCanvas:visible").first
+
+    def center_crop() -> list[int]:
+        return canvas.evaluate(
+            """(canvas) => {
+              const ctx = canvas.getContext('2d', { willReadFrequently: true });
+              const size = 48;
+              const x = Math.round(canvas.width / 2 - size / 2);
+              const y = Math.round(canvas.height / 2 - size / 2);
+              return Array.from(ctx.getImageData(x, y, size, size).data);
+            }"""
+        )
+
+    before = center_crop()
+    _click_canvas_relative(page, "#sliceCanvas", 0.5, 0.5)
+    page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().selection !== null")
+    page.wait_for_timeout(200)
+    after = center_crop()
+    changed = [
+        index // 4 for index in range(0, len(before), 4) if before[index : index + 4] != after[index : index + 4]
+    ]
+    changed_pixels = len(changed)
+    changed_x = [index % 48 for index in changed]
+    changed_y = [index // 48 for index in changed]
+
+    assert 20 <= changed_pixels <= 450
+    assert max(changed_x) - min(changed_x) >= 36
+    assert max(changed_y) - min(changed_y) >= 36
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize("width,height", [(1600, 1000), (1100, 900), (760, 900), (390, 844)])
+def test_resolve_shell_has_no_horizontal_document_overflow(
+    page: object,
+    app_url: str,
+    width: int,
+    height: int,
+) -> None:
+    page.set_viewport_size({"width": width, "height": height})
+    _wait_ui_ready(page, app_url)
+    _choose_dataset(page, "movie-2d-pol-hd")
+    dimensions = page.evaluate(
+        """() => ({
+          documentWidth: document.documentElement.scrollWidth,
+          viewportWidth: document.documentElement.clientWidth,
+          viewerBottom: document.querySelector('#sliceCanvas').getBoundingClientRect().bottom,
+          colorbarTop: document.querySelector('#colorbarCanvas').getBoundingClientRect().top,
+          colorbarHeight: document.querySelector('#colorbarCanvas').getBoundingClientRect().height,
+          colorbarLabelsBottom: document.querySelector('.colorbarLabels').getBoundingClientRect().bottom,
+          toolbarTop: document.querySelector('.viewerToolbar').getBoundingClientRect().top,
+        })"""
+    )
+    assert dimensions["documentWidth"] <= dimensions["viewportWidth"] + 1
+    assert dimensions["colorbarHeight"] == pytest.approx(10, abs=0.5)
+    assert dimensions["colorbarTop"] - dimensions["viewerBottom"] == pytest.approx(3, abs=1)
+    assert dimensions["colorbarLabelsBottom"] <= dimensions["toolbarTop"] + 1
 
 
 @pytest.mark.browser
@@ -468,14 +778,12 @@ def test_sparse_scene_profiles_keep_roi_and_axis_navigation_in_flow(
     )
     page.goto(sparse_scene_app_url, wait_until="networkidle")
     page.wait_for_function(
-        "() => {"
-        "  const s = window.__mobulaDebug?.getStateSnapshot?.();"
-        "  return !!s?.dataId && s.viewProfilesActive;"
-        "}"
+        "() => {  const s = window.__mobulaDebug?.getStateSnapshot?.();  return !!s?.dataId && s.viewProfilesActive;}"
     )
     assert page.locator("#timeProfileBlock:visible").count() == 1
     assert page.locator("#spectrumProfileBlock:visible").count() == 1
     assert page.locator("#spatialVolumeBtn:visible").count() == 0
+    _activate_domain(page, "spectral")
     multispectral_button = page.locator("#multiSpectralBtn:visible").first
     assert multispectral_button.is_enabled()
     with page.expect_response(lambda response: "/multispectral?" in response.url and response.status == 200):
@@ -500,10 +808,11 @@ def test_sparse_scene_profiles_keep_roi_and_axis_navigation_in_flow(
     assert "Spectral index" in page.locator("#colorbarMid").inner_text()
     assert page.locator("#colorbarMin").inner_text().startswith("α ")
     with page.expect_response(
-        lambda response: "/multispectral?" in response.url
-        and "intensity_scale=log" in response.url
-        and response.status == 200
+        lambda response: (
+            "/multispectral?" in response.url and "intensity_scale=log" in response.url and response.status == 200
+        )
     ):
+        _open_display_controls(page)
         page.locator("#fluxScaleLogBtn:visible").click()
     assert _debug_state(page)["fluxScale"] == "log"
     assert artifact_state["brightnessReference"] > 0
@@ -527,22 +836,18 @@ def test_sparse_scene_profiles_keep_roi_and_axis_navigation_in_flow(
 
     _drag_roi(page, (0.2, 0.2), (0.7, 0.7))
     page.wait_for_function(
-        "() => {"
-        "  const s = window.__mobulaDebug.getStateSnapshot();"
-        "  return !!s.selection && s.profilesActive;"
-        "}"
+        "() => {  const s = window.__mobulaDebug.getStateSnapshot();  return !!s.selection && s.profilesActive;}"
     )
     page.wait_for_function("() => window.__mobulaProfileLabels.includes('Flux [Jy]')")
     selection_before = _debug_state(page)["selection"]
 
+    _activate_domain(page, "temporal")
     _wait_for_canvas_foreground(page, "#timeNavCanvas")
     page.locator("#timePlayBtn:visible").first.click()
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().values.t > 0")
     page.locator("#timePlayBtn:visible").first.click()
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().playback.active === false")
-    assert _debug_state(page)["multispectralArtifact"]["brightnessReference"] == pytest.approx(
-        brightness_reference
-    )
+    assert _debug_state(page)["multispectralArtifact"]["brightnessReference"] == pytest.approx(brightness_reference)
     assert _debug_state(page)["multispectralArtifact"]["brightnessReferenceContext"] == brightness_context
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().profilesActive")
     assert _debug_state(page)["selection"] == selection_before
@@ -569,8 +874,10 @@ def test_dataset_change_resets_dataset_state_and_keeps_preferences(page: object,
     _wait_ui_ready(page, app_url)
     _choose_dataset(page, "time-5d-volume-samples-hd")
 
+    _open_display_controls(page)
     page.locator("#colorMapSelect").first.select_option("inferno")
     page.locator("#fluxScaleLogBtn:visible").first.click()
+    _activate_domain(page, "temporal")
     page.locator("#timePlayBtn:visible").first.click()
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().values.t > 0")
     page.locator("#timePlayBtn:visible").first.click()
@@ -623,14 +930,17 @@ def test_plane_change_clears_plane_state_but_preserves_axis_indices(page: object
     _wait_ui_ready(page, app_url)
     _choose_dataset(page, "time-5d-volume-samples-hd")
 
+    _activate_domain(page, "temporal")
     page.locator("#timePlayBtn:visible").first.click()
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().values.t > 0")
     page.locator("#timePlayBtn:visible").first.click()
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().playback.active === false")
+    _activate_domain(page, "spatial")
     page.locator("#hiddenPlayBtn:visible").first.click()
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().values.z > 0")
     page.locator("#hiddenPlayBtn:visible").first.click()
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().playback.active === false")
+    _activate_domain(page, "temporal")
     _zoom_canvas_relative(page, "#timeNavCanvas", 0.12, 0.62)
     page.wait_for_function("() => !!window.__mobulaDebug.getStateSnapshot().axisWindow.t")
     _drag_roi(page, (0.28, 0.22), (0.66, 0.61))
@@ -653,6 +963,7 @@ def test_plane_change_clears_plane_state_but_preserves_axis_indices(page: object
     )
     before = _debug_state(page)
 
+    _activate_domain(page, "spatial")
     page.locator("#planeSelect").first.select_option("yz")
     page.wait_for_function(
         "(expected) => {"
@@ -679,6 +990,7 @@ def test_playback_stop_triggers_refine_pass(page: object, app_url: str) -> None:
         "}"
     )
 
+    _activate_domain(page, "temporal")
     page.locator("#timePlayBtn:visible").first.click()
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().playback.active === true")
     page.wait_for_function(
@@ -710,6 +1022,7 @@ def test_playback_axes_are_exclusive(page: object, app_url: str) -> None:
     _wait_ui_ready(page, app_url)
     _choose_dataset(page, "time-5d-volume-samples-hd")
 
+    _activate_domain(page, "temporal")
     page.locator("#timePlayBtn:visible").first.click()
     page.wait_for_function(
         "() => {"
@@ -718,6 +1031,7 @@ def test_playback_axes_are_exclusive(page: object, app_url: str) -> None:
         "}"
     )
 
+    _activate_domain(page, "spatial")
     page.locator("#hiddenPlayBtn:visible").first.click()
     page.wait_for_function(
         "() => {"
@@ -747,6 +1061,7 @@ def test_sample_morph_autoplay_pauses_for_axis_playback_and_resumes(page: object
 
     page.locator("#sampleModeSamplesBtn:visible").first.click()
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().sampleMode === 'single'")
+    _activate_domain(page, "uncertainty")
     page.locator("#sampleViewMorphBtn:visible").first.click()
     page.wait_for_function(
         "() => {"
@@ -755,6 +1070,7 @@ def test_sample_morph_autoplay_pauses_for_axis_playback_and_resumes(page: object
         "}"
     )
 
+    _activate_domain(page, "temporal")
     page.locator("#timePlayBtn:visible").first.click()
     page.wait_for_function(
         "() => {"
@@ -777,6 +1093,7 @@ def test_offline_render_runs_and_restores_state(page: object, app_url: str) -> N
     _wait_ui_ready(page, app_url)
     _choose_dataset(page, "movie-2d-pol-hd")
 
+    _activate_domain(page, "temporal")
     page.locator("#timePlayBtn:visible").first.click()
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().values.t > 0")
     page.locator("#timePlayBtn:visible").first.click()
@@ -875,11 +1192,13 @@ def test_playback_defaults_and_prefetch_cache_are_exposed(page: object, app_url:
     _wait_ui_ready(page, app_url)
     _choose_dataset(page, "movie-2d-pol-hd")
 
+    _open_display_controls(page)
     assert page.locator("#playSpeedSelect").input_value() == "10"
     option_values = page.locator("#playSpeedSelect option").evaluate_all("(nodes) => nodes.map((node) => node.value)")
     assert "30" in option_values
     assert "45" in option_values
 
+    _activate_domain(page, "temporal")
     page.locator("#timePlayBtn:visible").first.click()
     page.wait_for_function(
         "() => {"
@@ -911,6 +1230,7 @@ def test_sphere_playback_keeps_outside_projection_circular(page: object, app_url
     assert paused_bounds["width"] > 0
     assert paused_bounds["height"] > 0
 
+    _activate_domain(page, "temporal")
     page.locator("#timePlayBtn:visible").first.click()
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().playback.active === true")
     _wait_for_canvas_foreground(page, "#sliceCanvas")
@@ -933,6 +1253,7 @@ def test_sphere_axis_settings_can_toggle_left_right_flip(page: object, app_url: 
     page.wait_for_function("() => window.__mobulaDebug.getStateSnapshot().sphere.flipX === true")
     before = page.locator("#sliceCanvas").evaluate("(canvas) => canvas.toDataURL()")
 
+    _open_display_controls(page)
     page.locator("#axisSettingsBtn:visible").first.click()
     page.locator("#axisSettingsDialog:visible").get_by_role("button", name="Flip left/right").click()
 
@@ -955,9 +1276,7 @@ def test_resolve_tangent_plane_metadata_defaults_to_north_up(page: object, app_u
     _wait_ui_ready(page, app_url)
     _choose_dataset(page, "movie-2d-pol-hd")
 
-    page.wait_for_function(
-        "() => document.querySelector('#axisSettingsBtn')?.textContent === 'Axis Settings (1)'"
-    )
+    page.wait_for_function("() => document.querySelector('#axisSettingsBtn')?.textContent === 'Axis Settings (1)'")
 
 
 @pytest.mark.browser

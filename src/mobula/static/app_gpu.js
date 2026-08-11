@@ -7,6 +7,8 @@ const {
     resolveColorNormStats,
     volumeQualityConfig,
     clamp,
+    activeColorMapIsCyclic,
+    activeColorMapIsDiverging,
     isDerivedPolModeActive,
     volumeRenderModeInt,
     volumeTfModeInt,
@@ -344,6 +346,10 @@ class GpuSphereRenderer {
         int vx = idx % max(1, u_values_w);
         int vy = idx / max(1, u_values_w);
         float sampleV = texelFetch(u_values, ivec2(vx, vy), 0).r;
+        if (isnan(sampleV) || isinf(sampleV)) {
+          outColor = vec4(0.0);
+          return;
+        }
         float norm = sampleToNorm(sampleV);
         norm = clamp(norm, 0.0, 1.0);
         vec3 rgb = texture(u_cmap, vec2(norm, 0.5)).rgb;
@@ -751,8 +757,8 @@ class GpuSphereRenderer {
         maxPositiveB: 1,
       };
     }
-    const useDiverging = state.colorMap === "diverging" && mmMin < 0 && mmMax > 0;
-    const useCircularBfield = state.colorMap === "circular" && isDerivedPolModeActive() && state.derivedPolMode === "bfield";
+    const useDiverging = activeColorMapIsDiverging() && mmMin < 0 && mmMax > 0;
+    const useCircularBfield = activeColorMapIsCyclic() && isDerivedPolModeActive() && state.derivedPolMode === "bfield";
     const fluxScale = scalarMode ? (state.fluxScale === "log" ? 1 : state.fluxScale === "sqrt" ? 2 : 0) : 0;
     const projectionMode = projection === "inside" ? 1 : projection === "outside" ? 2 : 0;
 
@@ -880,7 +886,7 @@ class GpuSliceRenderer {
     this.canvas = document.createElement("canvas");
     this.gl = this.canvas.getContext("webgl2", {
       antialias: false,
-      alpha: false,
+      alpha: true,
       premultipliedAlpha: false,
       preserveDrawingBuffer: false,
       depth: false,
@@ -967,6 +973,10 @@ class GpuSliceRenderer {
 
       void main() {
         float sampleV = texture(u_values, vec2(1.0 - v_uv.y, v_uv.x)).r;
+        if (isnan(sampleV) || isinf(sampleV)) {
+          outColor = vec4(0.0);
+          return;
+        }
         float norm = sampleToNorm(sampleV);
         norm = clamp(norm, 0.0, 1.0);
         vec3 rgb = texture(u_cmap, vec2(norm, 0.5)).rgb;
@@ -1072,8 +1082,8 @@ class GpuSliceRenderer {
     const minPositive = Math.max(0, mm.min);
     const maxPositive = Math.max(minPositive, mm.max);
     const maxAbs = Math.max(Math.abs(mm.min), Math.abs(mm.max), 1.0e-9);
-    const useDiverging = state.colorMap === "diverging" && mm.min < 0 && mm.max > 0;
-    const useCircularBfield = state.colorMap === "circular" && isDerivedPolModeActive() && state.derivedPolMode === "bfield";
+    const useDiverging = activeColorMapIsDiverging() && mm.min < 0 && mm.max > 0;
+    const useCircularBfield = activeColorMapIsCyclic() && isDerivedPolModeActive() && state.derivedPolMode === "bfield";
 
     const gl = this.gl;
     this.canvas.width = width;
@@ -1083,7 +1093,7 @@ class GpuSliceRenderer {
 
     gl.viewport(0, 0, width, height);
     gl.disable(gl.BLEND);
-    gl.clearColor(0, 0, 0, 1);
+    gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(this.program);
     gl.bindVertexArray(this.vao);
@@ -1119,7 +1129,7 @@ class GpuRgbRenderer {
     this.canvas = document.createElement("canvas");
     this.gl = this.canvas.getContext("webgl2", {
       antialias: false,
-      alpha: false,
+      alpha: true,
       premultipliedAlpha: false,
       preserveDrawingBuffer: false,
       depth: false,
@@ -1326,7 +1336,7 @@ class GpuVolumeRenderer {
     this.canvas = document.createElement("canvas");
     this.gl = this.canvas.getContext("webgl2", {
       antialias: false,
-      alpha: false,
+      alpha: true,
       premultipliedAlpha: false,
       preserveDrawingBuffer: false,
       depth: false,
@@ -1507,7 +1517,7 @@ class GpuVolumeRenderer {
           float py = float(max(1, u_out_height)) - gl_FragCoord.y - 0.5;
           vec3 camRay;
           if (!sphereCameraRay(px, py, camRay)) {
-            outColor = vec4(0.0, 0.0, 0.0, 1.0);
+            outColor = vec4(0.0);
             return;
           }
           sphericalDir = normalize(rotatePos(camRay));
@@ -1521,6 +1531,7 @@ class GpuVolumeRenderer {
         float bestMin = 1e20;
         float sumNorm = 0.0;
         float sumCount = 0.0;
+        float validCount = 0.0;
         vec3 isoColor = vec3(0.0);
         float isoHit = 0.0;
 
@@ -1542,9 +1553,11 @@ class GpuVolumeRenderer {
 
           vec3 uvw = pos * 0.5 + 0.5;
           float sampleV = sampleVolume(uvw);
+          if (isnan(sampleV) || isinf(sampleV)) continue;
           float norm = sampleToNorm(sampleV);
           if (norm < 0.0) continue;
           norm = clamp01(norm);
+          validCount += 1.0;
 
           vec3 color = texture(u_cmap, vec2(norm, 0.5)).rgb;
           float density;
@@ -1606,11 +1619,11 @@ class GpuVolumeRenderer {
         }
 
         if (u_render_mode == 1) {
-          outColor = vec4(rgbAcc, 1.0);
+          outColor = vec4(rgbAcc, bestMax > -1e19 ? 1.0 : 0.0);
           return;
         }
         if (u_render_mode == 2) {
-          outColor = vec4(rgbAcc, 1.0);
+          outColor = vec4(rgbAcc, bestMin < 1e19 ? 1.0 : 0.0);
           return;
         }
         if (u_render_mode == 3) {
@@ -1618,16 +1631,16 @@ class GpuVolumeRenderer {
             float av = clamp01(sumNorm / sumCount);
             outColor = vec4(texture(u_cmap, vec2(av, 0.5)).rgb, 1.0);
           } else {
-            outColor = vec4(0.0, 0.0, 0.0, 1.0);
+            outColor = vec4(0.0);
           }
           return;
         }
         if (u_render_mode == 4) {
-          outColor = vec4(isoColor, 1.0);
+          outColor = vec4(isoColor, isoHit);
           return;
         }
 
-        outColor = vec4(rgbAcc, 1.0);
+        outColor = vec4(rgbAcc, validCount > 0.0 ? aAcc : 0.0);
       }
     `;
     this.program = createWebGlProgram(gl, vs, fs);
@@ -1775,12 +1788,12 @@ class GpuVolumeRenderer {
     const maxAbs = Math.max(Math.abs(mmMin), Math.abs(mmMax), 1.0e-9);
     const qCfg = volumeQualityConfig();
     const steps = clamp(Math.round(Math.max(nx, ny, nz) * qCfg.stepMul), 24, GPU_VOLUME_MAX_STEPS);
-    const isDiverging = state.colorMap === "diverging" && mmMin < 0 && mmMax > 0;
-    const isBfieldCircular = state.colorMap === "circular" && isDerivedPolModeActive() && state.derivedPolMode === "bfield";
+    const isDiverging = activeColorMapIsDiverging() && mmMin < 0 && mmMax > 0;
+    const isBfieldCircular = activeColorMapIsCyclic() && isDerivedPolModeActive() && state.derivedPolMode === "bfield";
 
     gl.viewport(0, 0, outWidth, outHeight);
     gl.disable(gl.BLEND);
-    gl.clearColor(0, 0, 0, 1);
+    gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(this.program);
     gl.bindVertexArray(this.vao);

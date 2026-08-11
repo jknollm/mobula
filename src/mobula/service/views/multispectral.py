@@ -198,9 +198,7 @@ def _apply_spectral_artifact_control(
         raise HTTPException(status_code=400, detail="spectral-index bounds must be finite")
     if spectral_index_max <= spectral_index_min:
         raise HTTPException(status_code=400, detail="spectral_index_max must be larger than spectral_index_min")
-    if brightness_reference is not None and (
-        not np.isfinite(brightness_reference) or brightness_reference <= 0.0
-    ):
+    if brightness_reference is not None and (not np.isfinite(brightness_reference) or brightness_reference <= 0.0):
         raise HTTPException(status_code=400, detail="artifact_brightness_reference must be positive and finite")
 
     effective_floor = float(confidence_floor)
@@ -244,10 +242,14 @@ def _apply_spectral_artifact_control(
     total_flux = np.sum(np.maximum(np.asarray(spectral_cube, dtype=np.float64), 0.0), axis=0)
     finite_total = np.isfinite(total_flux)
     positive_total = total_flux[finite_total & (total_flux > 0.0)]
-    reference = float(brightness_reference) if brightness_reference is not None else (
-        float(np.quantile(positive_total, _BRIGHTNESS_REFERENCE_QUANTILE))
-        if positive_total.size >= 16
-        else (float(np.max(positive_total)) if positive_total.size else 0.0)
+    reference = (
+        float(brightness_reference)
+        if brightness_reference is not None
+        else (
+            float(np.quantile(positive_total, _BRIGHTNESS_REFERENCE_QUANTILE))
+            if positive_total.size >= 16
+            else (float(np.max(positive_total)) if positive_total.size else 0.0)
+        )
     )
     diagnostics["brightness_reference"] = reference if reference > 0.0 else None
     brightness_fraction = np.zeros_like(total_flux, dtype=np.float64)
@@ -285,9 +287,7 @@ def _apply_spectral_artifact_control(
     diagnostics["artifact_affected_fraction"] = (
         float(np.mean(color_confidence[visible] < 0.999)) if np.any(visible) else 0.0
     )
-    diagnostics["spectral_index_valid_fraction"] = (
-        float(np.mean(alpha_valid)) if spectral_index_available else 0.0
-    )
+    diagnostics["spectral_index_valid_fraction"] = float(np.mean(alpha_valid)) if spectral_index_available else 0.0
     return rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2], diagnostics
 
 
@@ -463,9 +463,7 @@ def build_multispectral_response(
         compute_backend_requested = compute_backend_mode
         compute_backend_used = "cpu"
         compute_fallback_reason = (
-            None
-            if compute_backend_mode == "cpu"
-            else "spectral-index coloring uses the CPU spectral fit"
+            None if compute_backend_mode == "cpu" else "spectral-index coloring uses the CPU spectral fit"
         )
         compute_capability_snapshot = probe_compute_capabilities()
         deslope_ref = None
@@ -550,8 +548,7 @@ def build_multispectral_response(
         if spectral_index_result is not None:
             alpha, alpha_valid = spectral_index_result
             values["spectral_index"] = [
-                float(value) if valid else None
-                for value, valid in zip(alpha.ravel(), alpha_valid.ravel(), strict=True)
+                float(value) if valid else None for value, valid in zip(alpha.ravel(), alpha_valid.ravel(), strict=True)
             ]
 
     return {

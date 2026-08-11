@@ -1,0 +1,140 @@
+/* Mobula-owned adapter for Resolve identity tokens 0.3.0-draft.
+ * Canonical source: design/resolve-cd/tokens/resolve.tokens.css
+ * Source SHA-256: 0ce5c1a8a70d0620084ca71db1fdaaf0c34f1e4a9011032b8d370873b4d8c1d2
+ */
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  src: url("fonts/AtkinsonHyperlegibleNext-Latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Martian Mono";
+  src: url("fonts/MartianMono-Width100-Latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "STIX Two Math";
+  src: url("fonts/STIXTwoMath-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+:root {
+  --r-font-editorial: "STIX Two Text", Georgia, serif;
+  --r-font-interface: "Atkinson Hyperlegible Next", Arial, sans-serif;
+  --r-font-data: "Martian Mono", "Roboto Mono", monospace;
+  --r-font-math: "STIX Two Math", "STIX Two Text", serif;
+  --r-weight-regular: 400;
+  --r-weight-medium: 500;
+  --r-weight-semibold: 600;
+  --r-data-width: 100;
+
+  --r-type-meta-size: 10px;
+  --r-type-meta-line: 15px;
+  --r-type-label-size: 11px;
+  --r-type-label-line: 16px;
+  --r-type-body-small-size: 12px;
+  --r-type-body-small-line: 18px;
+  --r-type-body-size: 14px;
+  --r-type-body-line: 20px;
+  --r-type-panel-title-size: 13px;
+  --r-type-panel-title-line: 18px;
+
+  --r-space-1: 4px;
+  --r-space-2: 8px;
+  --r-space-3: 12px;
+  --r-space-4: 16px;
+  --r-space-6: 24px;
+  --r-space-8: 32px;
+  --r-radius-none: 0;
+  --r-radius-compact: 2px;
+  --r-radius-control: 3px;
+  --r-border-hairline: 0.5px;
+  --r-border-focus: 2px;
+
+  --r-category-1: #18699b;
+  --r-category-2: #007971;
+  --r-category-3: #ad6600;
+  --r-category-4: #ba4431;
+  --r-category-5: #6f4c95;
+  --r-category-6: #307845;
+  --r-category-7: #aa417c;
+  --r-category-8: #1686a7;
+  --r-map-positive: "afmhot_us";
+  --r-map-uncertainty: "oslo";
+  --r-map-residual: "cyan_coral";
+  --r-map-structure: "cyan_coral.structure";
+  --r-map-residual-paper: "cyan_coral.paper";
+  --r-map-residual-night: "cyan_coral.night";
+  --r-map-phase: "phase_c3";
+  --r-invalid-alpha: 0;
+}
+
+:root[data-resolve-theme="bright"] {
+  color-scheme: light;
+  --r-field: oklch(94.5% 0.009 86);
+  --r-face: oklch(98.2% 0.006 86);
+  --r-raised: oklch(99.5% 0.003 86);
+  --r-overlay: oklch(100% 0 0);
+  --r-ink: oklch(22% 0.020 220);
+  --r-text-secondary: oklch(42% 0.018 220);
+  --r-text-tertiary: oklch(58% 0.014 220);
+  --r-text-muted: oklch(70% 0.012 210);
+  --r-line: oklch(83% 0.014 205);
+  --r-line-strong: oklch(70% 0.025 210);
+  --r-focus: oklch(50% 0.145 205);
+  --r-focus-soft: oklch(50% 0.145 205 / 0.11);
+  --r-success: oklch(48% 0.140 150);
+  --r-warning: oklch(57% 0.150 76);
+  --r-fault: oklch(54% 0.180 30);
+  --r-shadow-transient: 0 8px 24px rgb(34 43 47 / 0.16);
+  --r-graph-1: #236997;
+  --r-graph-2: #007971;
+  --r-graph-3: #ac670c;
+  --r-graph-4: #b54937;
+  --r-graph-5: #6e4e91;
+  --r-graph-6: #367748;
+  --r-graph-7: #aa417c;
+  --r-graph-point-radius: 1.90;
+  --r-graph-point-alpha: 0.78;
+  --r-graph-context-alpha: 0.30;
+  --r-observed-mark: #111315;
+}
+
+:root[data-resolve-theme="dark"] {
+  color-scheme: dark;
+  --r-field: oklch(12.5% 0.024 250);
+  --r-face: oklch(17% 0.028 248);
+  --r-raised: oklch(21.5% 0.032 246);
+  --r-overlay: oklch(25% 0.034 245);
+  --r-ink: oklch(93% 0.014 235);
+  --r-text-secondary: oklch(75% 0.020 235);
+  --r-text-tertiary: oklch(58% 0.025 238);
+  --r-text-muted: oklch(45% 0.025 240);
+  --r-line: oklch(27% 0.032 250);
+  --r-line-strong: oklch(39% 0.050 245);
+  --r-focus: oklch(78% 0.115 195);
+  --r-focus-soft: oklch(78% 0.115 195 / 0.10);
+  --r-success: oklch(75% 0.110 155);
+  --r-warning: oklch(79% 0.120 75);
+  --r-fault: oklch(73% 0.140 28);
+  --r-shadow-transient: 0 10px 28px rgb(0 0 0 / 0.48);
+  --r-graph-1: #65b2dc;
+  --r-graph-2: #4ccdbe;
+  --r-graph-3: #e8b554;
+  --r-graph-4: #ec806b;
+  --r-graph-5: #bf92e2;
+  --r-graph-6: #77c384;
+  --r-graph-7: #e77fba;
+  --r-graph-point-radius: 1.55;
+  --r-graph-point-alpha: 0.84;
+  --r-graph-context-alpha: 0.34;
+  --r-observed-mark: #f4f7f8;
+}

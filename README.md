@@ -1,9 +1,6 @@
-<p>
-  <picture>
-    <source srcset="./src/mobula/static/assets/mobula_banner_black.svg" type="image/svg+xml" />
-    <img src="./src/mobula/static/assets/mobula_banner_black.png" alt="MOBULA - Navigating Domains" width="780" />
-  </picture>
-</p>
+# Mobula
+
+**Domain exploration for complex scientific data.**
 
 mobula is a local-first viewer for exploring complex scientific cube data without breaking analytical context.
 
@@ -36,6 +33,7 @@ The app currently provides:
 - Selection-driven time, spectral, and hidden-axis profiles
 - Sample-aware viewing modes including `single`, `mean`, `std`, `rel_uncert`, mosaics, and morph playback
 - Polarization workflows including `I/Q/U/V`, EVPA overlays, and derived polarization quantities
+- A versioned, provenance-bearing scientific color registry with transparent invalid samples across CPU and GPU paths
 - Local export and snapshot flows tied to the currently rendered state
 
 ## Quick Start
@@ -118,11 +116,24 @@ source .venv/bin/activate
 python scripts/benchmark.py --dataset movie-2d-pol-hd --n 40 --warmup 10
 ```
 
-Regenerate brand banners:
+Inspect the scientific-color generator interface (the generated browser adapter is committed):
 
 ```bash
-python scripts/generate_brand_banners.py
+python scripts/generate_scientific_colormaps.py --help
 ```
+
+The full generator consumes the canonical Resolve scientific-color registry
+through `--resolve-cd-registry`. When only the Resolve-owned profiles change,
+refresh them without re-downloading the other upstream color packages:
+
+```bash
+python scripts/sync_resolve_cd_profiles.py \
+  --registry ../../design/resolve-cd/scientific-color/registry.json \
+  --output src/mobula/static/scientific_colormaps.js
+```
+
+The packaged font hashes, role ownership, licenses, and required science glyphs are recorded in
+[`src/mobula/static/fonts/MANIFEST.md`](./src/mobula/static/fonts/MANIFEST.md).
 
 ## Scope And Delivery
 
