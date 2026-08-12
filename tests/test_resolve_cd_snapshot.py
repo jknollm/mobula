@@ -16,6 +16,7 @@ def test_resolve_identity_snapshot_records_current_canonical_source() -> None:
     )
     assert "--r-type-meta-size: 10px" in tokens
     assert "--r-type-label-size: 11px" in tokens
+    assert '--r-map-structure: "cyan_coral.structure"' in tokens
     assert '--r-map-residual-paper: "cyan_coral.paper"' in tokens
     assert '--r-map-residual-night: "cyan_coral.night"' in tokens
 
@@ -27,5 +28,6 @@ def test_resolve_scientific_color_snapshot_records_current_registry() -> None:
         '"resolveCdRegistry":"be3fe277215d5721ce8a68990e3698f1e73048f6567fa59590218a312fd2a34b"'
         in colors
     )
-    assert colors.count('"sourceVersion":"resolve-cyan-coral-1.0"') == 2
-    assert colors.count('"lutEntries":257') == 2
+    assert '"id":"cyan_coral.structure"' in colors
+    assert colors.count('"sourceVersion":"resolve-cyan-coral-1.0"') == 3
+    assert colors.count('"lutEntries":257') == 3

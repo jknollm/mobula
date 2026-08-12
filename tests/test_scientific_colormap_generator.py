@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 
 _GENERATOR_PATH = Path(__file__).parents[1] / "scripts/generate_scientific_colormaps.py"
@@ -8,6 +9,7 @@ _GENERATOR = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_GENERATOR)
 read_float_table = _GENERATOR.read_float_table
 hex_lut = _GENERATOR.hex_lut
+resolve_cd_records = _GENERATOR.resolve_cd_records
 
 
 def test_normalized_table_uses_one_scale_for_small_float_excursions() -> None:
@@ -36,3 +38,44 @@ def test_hex_lut_preserves_257_entry_resolve_profile() -> None:
     assert len(encoded) == 257 * 6
     assert encoded[:6] == "00ff80"
     assert encoded[-6:] == "00ff80"
+
+
+def test_resolve_profiles_include_distinct_structure_identity(tmp_path: Path) -> None:
+    lut = tmp_path / "cyan-coral.txt"
+    lut.write_text("\n".join(["0 0.5 1"] * 257), encoding="utf-8")
+    profiles = []
+    for profile_id in (
+        "cyan_coral.paper",
+        "cyan_coral.structure",
+        "cyan_coral.night",
+    ):
+        profiles.append(
+            {
+                "id": profile_id,
+                "label": profile_id,
+                "kind": "diverging",
+                "quantity": "signed scalar",
+                "normalization": ["linear", "sqrt"],
+                "center": 0,
+                "license": "Resolve project",
+                "provenance": "test registry",
+                "sourceVersion": "test-1",
+                "calibration": "test calibration",
+                "lut": {
+                    "path": lut.name,
+                    "entries": 257,
+                    "sha256": "test-sha256",
+                },
+            }
+        )
+    registry = tmp_path / "registry.json"
+    registry.write_text(json.dumps({"maps": profiles}), encoding="utf-8")
+
+    records = resolve_cd_records(registry)
+
+    assert tuple(records) == (
+        "cyan_coral.paper",
+        "cyan_coral.structure",
+        "cyan_coral.night",
+    )
+    assert records["cyan_coral.structure"]["lutEntries"] == 257

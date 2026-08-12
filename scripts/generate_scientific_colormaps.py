@@ -15,6 +15,11 @@ from pathlib import Path
 from typing import Any
 
 REGISTRY_VERSION = "mobula-science-colors-1"
+RESOLVE_PROFILE_IDS = (
+    "cyan_coral.paper",
+    "cyan_coral.structure",
+    "cyan_coral.night",
+)
 
 LEGACY_DIVERGING = [[58, 76, 192], [141, 175, 253], [247, 247, 247], [244, 109, 67], [180, 4, 38]]
 LEGACY_CIRCULAR = [
@@ -99,7 +104,7 @@ def resolve_cd_records(registry_path: Path) -> dict[str, dict[str, Any]]:
 
     registry = json.loads(registry_path.read_text())
     result: dict[str, dict[str, Any]] = {}
-    for profile_id in ("cyan_coral.paper", "cyan_coral.night"):
+    for profile_id in RESOLVE_PROFILE_IDS:
         source = next(record for record in registry["maps"] if record["id"] == profile_id)
         lut_path = registry_path.parent / source["lut"]["path"]
         raw_rows = [line.split() for line in lut_path.read_text().splitlines() if line]
@@ -288,6 +293,7 @@ def generate(args: argparse.Namespace) -> str:
             normalization=["linear", "log", "sqrt"],
         ),
         resolve_profiles["cyan_coral.paper"],
+        resolve_profiles["cyan_coral.structure"],
         resolve_profiles["cyan_coral.night"],
         record(
             "phase_c3",

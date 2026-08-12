@@ -535,6 +535,7 @@ def test_scientific_registry_and_invalid_scalar_transparency(page: object, app_u
         "circular",
         "oslo",
         "cyan_coral.paper",
+        "cyan_coral.structure",
         "cyan_coral.night",
         "phase_c3",
     }
@@ -548,8 +549,10 @@ def test_scientific_registry_and_invalid_scalar_transparency(page: object, app_u
     assert registry["maps"]["afmhot_us"]["lutFirst"] == [0, 0, 0]
     assert registry["maps"]["afmhot_us"]["lutLast"] == [255, 254, 253]
     assert registry["maps"]["cyan_coral.paper"]["calibration"] == "uniform vivid ink"
+    assert registry["maps"]["cyan_coral.structure"]["calibration"] == "uniform vivid ink"
     assert registry["maps"]["cyan_coral.night"]["calibration"] == "uniform vivid neon"
     assert registry["maps"]["cyan_coral.paper"]["lutEntries"] == 257
+    assert registry["maps"]["cyan_coral.structure"]["lutEntries"] == 257
     assert registry["maps"]["cyan_coral.night"]["lutEntries"] == 257
 
     _open_display_controls(page)

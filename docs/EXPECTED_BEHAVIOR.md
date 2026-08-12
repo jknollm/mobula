@@ -110,7 +110,8 @@ Keep entries concrete, user-facing, and testable. When a behavior changes intent
   provider-defined orientations or Mobula's wider scientific-map and normalization inventory.
 - The selectable map inventory comes from Mobula's versioned scientific-color registry. Viridis, Plasma, Inferno,
   `afmhot_us`, Gray, and the legacy Diverging/Circular maps remain available; Resolve adds `oslo`,
-  `cyan_coral.paper`, `cyan_coral.night`, and the half-turned ColorCET C3 phase profile without removing choices.
+  `cyan_coral.paper`, `cyan_coral.structure`, `cyan_coral.night`, and the half-turned ColorCET C3 phase profile
+  without removing choices.
 - Each registry record owns an explicit-length LUT (256 for the retained general maps and 257 for Resolve cyan/coral profiles), map/profile identity, quantity structure, normalization support,
   center or seam where applicable, under/over behavior, invalid policy, source version, license, and provenance.
   The Resolve cyan/coral records preserve the exact accepted Uniform Vivid Ink and Uniform Vivid Neon LUTs,
