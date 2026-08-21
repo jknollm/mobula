@@ -43,3 +43,14 @@ This repository exists to build a local, trustworthy tool for exploring complex 
 - When feedback is received about how the app should work, capture the expected behavior there in user-facing terms.
 - Use that document as a periodic check against the actual product so drift becomes visible and discussable.
 - If code, UI, and `docs/EXPECTED_BEHAVIOR.md` disagree, make the mismatch explicit and resolve it deliberately.
+
+## Repository Skill
+
+- Use `.agents/skills/develop-mobula/SKILL.md` for Mobula feature development,
+  ingestion, scientific views, state coherence, uncertainty presentation, and
+  browser interaction work.
+- The skill is part of this repository's versioned development contract. Keep
+  it portable: it may refer conditionally to a parent workspace, but it must
+  remain usable from a standalone clone.
+- Run `python scripts/validate_skills.py` whenever repository-owned skills or
+  their routing change.
