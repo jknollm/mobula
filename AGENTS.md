@@ -54,3 +54,14 @@ This repository exists to build a local, trustworthy tool for exploring complex 
   remain usable from a standalone clone.
 - Run `python scripts/validate_skills.py` whenever repository-owned skills or
   their routing change.
+
+## Pull Request Review
+
+- Every tracked change uses a topic branch and pull request linked to a durable
+  issue. Classify it through `.github/pull_request_template.md`.
+- Routine changes may merge after required checks. Review-sensitive or
+  ambiguous changes stop for explicit human acceptance.
+- Direct pushes to `main` are exceptional maintainer actions and require a
+  recorded reason.
+- Run `python scripts/validate_collaboration.py` after changing collaboration
+  policy files.

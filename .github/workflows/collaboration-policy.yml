@@ -1,0 +1,20 @@
+name: Collaboration policy
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  policy:
+    name: collaboration-policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate collaboration policy
+        run: python scripts/validate_collaboration.py

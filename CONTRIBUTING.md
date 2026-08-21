@@ -27,10 +27,28 @@ mobula is released under the MIT License.
 ## Development Workflow
 
 1. Create a branch for your change.
-2. Keep scope tight (one feature/fix per PR when possible).
-3. Add or update tests for behavior changes.
-4. Update docs when API/UI behavior changes.
-5. Run the local checks before opening a PR.
+2. Link a durable issue and open a pull request before changing `main`.
+3. Classify the pull request as routine, review-sensitive, or ambiguous.
+4. Keep scope tight (one feature/fix per PR when possible).
+5. Add or update tests for behavior changes.
+6. Update docs when API/UI behavior changes.
+7. Run the local checks before opening a PR.
+
+Routine changes may merge after required checks when the pull request explains
+why human acceptance is unnecessary. Scientific meaning, public interfaces,
+architecture, access and security policy, substantial UI behavior, and
+ambiguous scope require explicit human acceptance. CI validates the declared
+classification but cannot prove that a checkbox was set by a human.
+
+When automation and the acceptance owner share one GitHub identity, GitHub
+cannot record a self-approval. Record human acceptance in the pull-request or
+issue conversation before a maintainer bypass, and do not describe that bypass
+as an approving review. Use a distinct GitHub App or bot identity for agent
+publication before treating required approvals as technically enforced.
+
+Direct pushes to `main` are exceptional maintainer actions and require a
+recorded reason. Run `python scripts/validate_collaboration.py` after changing
+collaboration policy files.
 
 ## Coding Expectations
 
