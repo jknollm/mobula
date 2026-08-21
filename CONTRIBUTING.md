@@ -40,6 +40,12 @@ architecture, access and security policy, substantial UI behavior, and
 ambiguous scope require explicit human acceptance. CI validates the declared
 classification but cannot prove that a checkbox was set by a human.
 
+When automation and the acceptance owner share one GitHub identity, GitHub
+cannot record a self-approval. Record human acceptance in the pull-request or
+issue conversation before a maintainer bypass, and do not describe that bypass
+as an approving review. Use a distinct GitHub App or bot identity for agent
+publication before treating required approvals as technically enforced.
+
 Direct pushes to `main` are exceptional maintainer actions and require a
 recorded reason. Run `python scripts/validate_collaboration.py` after changing
 collaboration policy files.
