@@ -7,9 +7,9 @@ Thanks for contributing to mobula.
 - Read [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md)
 - Confirm local app start and test run
 
-## Agentic Development
+## Contribution standards
 
-mobula is an agentically coded project. Contributions can be human-authored, agent-assisted, or a mix of both, but every change merged here should still be easy to inspect, explain, and verify.
+Every merged change should be easy to inspect, explain, and verify.
 
 - Keep diffs focused and readable
 - Update docs when behavior or project messaging changes
@@ -43,8 +43,8 @@ mobula is released under the MIT License.
 
 - `pytest`
 - `pytest tests/browser -q`
-- `ruff check src/mobula/main.py src/mobula/service/view_service.py src/mobula/service/views src/mobula/service/ingest src/mobula/service/ingest_service.py tests/browser/test_smoke.py tests/conftest.py tests/test_api_endpoints.py scripts/generate_brand_banners.py`
-- `ruff format --check src/mobula/main.py src/mobula/service/view_service.py src/mobula/service/views src/mobula/service/ingest src/mobula/service/ingest_service.py tests/browser/test_smoke.py tests/conftest.py tests/test_api_endpoints.py scripts/generate_brand_banners.py`
+- `ruff check src/mobula/main.py src/mobula/service/view_service.py src/mobula/service/views src/mobula/service/ingest src/mobula/service/ingest_service.py tests/browser/test_smoke.py tests/conftest.py tests/test_api_endpoints.py scripts/generate_scientific_colormaps.py`
+- `ruff format --check src/mobula/main.py src/mobula/service/view_service.py src/mobula/service/views src/mobula/service/ingest src/mobula/service/ingest_service.py tests/browser/test_smoke.py tests/conftest.py tests/test_api_endpoints.py scripts/generate_scientific_colormaps.py`
 - `mypy src/mobula/data/schema.py src/mobula/service/api_models.py src/mobula/service/api_utils.py`
 
 ## Pull Request Checklist

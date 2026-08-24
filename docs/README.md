@@ -1,8 +1,8 @@
 # mobula Documentation
 
-This project ships a FastAPI backend and a browser-based viewer for local high-dimensional cubes.
-
-mobula is an agentically coded project: the repository is developed through human direction plus coding agents, and public changes should remain understandable, reviewable, and test-backed.
+This project ships a FastAPI backend and a browser-based viewer for local
+high-dimensional cubes. Public changes should remain understandable,
+reviewable, and backed by tests.
 
 ## Read This First
 

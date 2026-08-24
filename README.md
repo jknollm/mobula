@@ -6,8 +6,6 @@ mobula is a local-first viewer for exploring complex scientific cube data withou
 
 It is built for workflows where spatial structure, time, spectrum, polarization, sample variation, and uncertainty all matter at once. Instead of treating those as separate tools or post-hoc checks, mobula keeps them linked in one interactive workspace so you can pivot between views without rebuilding your interpretation from scratch.
 
-mobula is also an agentically coded project. Development happens through human direction plus coding agents, with the expectation that behavior, docs, and tests stay inspectable and reviewable.
-
 Today that means a FastAPI backend plus a browser UI for loading local datasets, inspecting them in slice/volume/sphere views, and moving fluidly between spatial, temporal, spectral, polarization, and uncertainty-oriented analysis.
 
 ## What We Are Building

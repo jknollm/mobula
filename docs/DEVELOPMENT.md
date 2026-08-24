@@ -33,8 +33,8 @@ pytest tests/browser -q
 Run lint, format, and targeted type checks:
 
 ```bash
-ruff check src/mobula/main.py src/mobula/service/view_service.py src/mobula/service/views src/mobula/service/ingest src/mobula/service/ingest_service.py tests/browser/test_smoke.py tests/conftest.py tests/test_api_endpoints.py scripts/generate_brand_banners.py
-ruff format --check src/mobula/main.py src/mobula/service/view_service.py src/mobula/service/views src/mobula/service/ingest src/mobula/service/ingest_service.py tests/browser/test_smoke.py tests/conftest.py tests/test_api_endpoints.py scripts/generate_brand_banners.py
+ruff check src/mobula/main.py src/mobula/service/view_service.py src/mobula/service/views src/mobula/service/ingest src/mobula/service/ingest_service.py tests/browser/test_smoke.py tests/conftest.py tests/test_api_endpoints.py scripts/generate_scientific_colormaps.py
+ruff format --check src/mobula/main.py src/mobula/service/view_service.py src/mobula/service/views src/mobula/service/ingest src/mobula/service/ingest_service.py tests/browser/test_smoke.py tests/conftest.py tests/test_api_endpoints.py scripts/generate_scientific_colormaps.py
 mypy src/mobula/data/schema.py src/mobula/service/api_models.py src/mobula/service/api_utils.py
 ```
 
@@ -108,9 +108,10 @@ window.__mobulaDebug.getStateSnapshot()
 - `requirements.txt` is a secondary compatibility wrapper for local tooling; do not edit it as the primary dependency definition.
 - Frontend assets live in `src/mobula/static/`.
 
-## Agentic Development Policy
+## Change policy
 
-mobula is an agentically coded project. We use coding agents as part of normal development, but the repository standard stays the same: changes should be understandable, testable, and documented when they affect user-visible behavior or contributor expectations.
+Changes should be understandable and testable. Document changes that affect
+user-visible behavior or contributor expectations.
 
 ## License Header Policy
 
