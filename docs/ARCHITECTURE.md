@@ -12,6 +12,11 @@ conventions, uncertainty meaning, and provenance where supplied. An operation
 that requires missing scientific meaning must report that limitation rather
 than infer it from a filename, axis shape, or display choice.
 
+Uncertainty is an exploration domain. Posterior or model uncertainty,
+measurement weights, variation across samples, missing values, and values not
+yet evaluated have different meanings and must remain distinguishable in data
+contracts and presentation.
+
 Mobula owns the linked exploration state and rendering within its data
 contract. Scientific transformations, coordinate interpretation,
 normalization inputs, and uncertainty calculations belong in Python. The
