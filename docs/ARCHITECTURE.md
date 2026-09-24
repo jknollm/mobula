@@ -2,6 +2,25 @@
 
 mobula is a single-process FastAPI app serving both API endpoints and static browser UI.
 
+## Scientific ownership
+
+Mobula is an independent, domain-neutral tool for linked exploration of spatial,
+temporal, spectral, polarization, sample, and uncertainty dimensions. It does
+not acquire a producer's domain-specific interpretation when it opens that
+producer's data. External data contracts preserve axes, coordinates, units,
+conventions, uncertainty meaning, and provenance where supplied. An operation
+that requires missing scientific meaning must report that limitation rather
+than infer it from a filename, axis shape, or display choice.
+
+Mobula owns the linked exploration state and rendering within its data
+contract. Scientific transformations, coordinate interpretation,
+normalization inputs, and uncertainty calculations belong in Python. The
+browser presents their results and manages interaction state; it does not
+derive a second scientific interpretation. A producer remains responsible for
+the scientific meaning and provenance of the data it supplies. Integration
+with another application uses an explicit contract and does not make that
+application a Mobula runtime dependency.
+
 ## Runtime Topology
 
 - FastAPI app in `src/mobula/main.py`
